@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="theme-color" content="#0d0f1c" />
+    <title>Hexfall</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="hud">
+        <div class="hud-left">
+          <span class="label">SCORE</span>
+          <span id="score" class="value">0</span>
+        </div>
+        <div class="hud-right">
+          <span class="label">BEST</span>
+          <span id="best" class="value">0</span>
+        </div>
+      </header>
+
+      <main class="stage">
+        <canvas id="game"></canvas>
+
+        <div id="overlay" class="overlay">
+          <h1>HEXFALL</h1>
+          <p class="tagline">Move. Rotate. Survive.</p>
+          <p class="hint desktop-only">
+            <kbd>A</kbd>/<kbd>&larr;</kbd> <kbd>D</kbd>/<kbd>&rarr;</kbd> move
+            &nbsp;&middot;&nbsp; <kbd>Q</kbd>/<kbd>E</kbd> rotate
+            &nbsp;&middot;&nbsp; <kbd>P</kbd> pause
+          </p>
+          <p class="hint">Press <kbd>Space</kbd> or tap to start</p>
+        </div>
+      </main>
+
+      <nav id="touchbar" class="touchbar" aria-hidden="true">
+        <button class="tbtn" data-action="left" aria-label="Move left">&#9664;</button>
+        <button class="tbtn" data-action="rotateCcw" aria-label="Rotate counter-clockwise">&#8634;</button>
+        <button class="tbtn" data-action="rotateCw" aria-label="Rotate clockwise">&#8635;</button>
+        <button class="tbtn" data-action="right" aria-label="Move right">&#9654;</button>
+      </nav>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
