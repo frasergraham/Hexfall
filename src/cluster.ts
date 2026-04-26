@@ -1,81 +1,105 @@
-import { axialToPixel, pathHex, rotateShape, SHAPES } from "./hex";
+import { Bodies, Body, type IChamferableBodyDefinition } from "matter-js";
+import { axialToPixel, pathHex, SHAPES } from "./hex";
 import type { Axial, ClusterKind, Shape } from "./types";
 
 export class FallingCluster {
-  // Logical cells, in axial coordinates relative to (0,0). Cells may be
-  // removed individually after a partial collision.
-  cells: Axial[];
-  // Pixel position of the cluster's local origin.
-  x: number;
-  y: number;
-  speed: number; // px/sec, positive = downward
+  body: Body;
   kind: ClusterKind;
-  scored: boolean = false;
-  alive: boolean = true;
-  // Once a cluster has had any contact with the player, its remaining cells
-  // continue falling but cannot stick again.
-  contacted: boolean = false;
-  // For visual flair on sticky clusters.
-  pulse: number = Math.random() * Math.PI * 2;
+  // Map from Matter part body id → axial coord (which logical hex this part is).
+  partAxial = new Map<number, Axial>();
+  scored = false;
+  contacted = false;
+  alive = true;
+  pulse = Math.random() * Math.PI * 2;
 
-  constructor(opts: {
+  constructor(body: Body, kind: ClusterKind, partAxial: Map<number, Axial>) {
+    this.body = body;
+    this.kind = kind;
+    this.partAxial = partAxial;
+  }
+
+  static spawn(opts: {
     shape: Shape;
     x: number;
     y: number;
-    speed: number;
+    hexSize: number;
     kind: ClusterKind;
-  }) {
-    this.cells = opts.shape.map((c) => ({ ...c }));
-    this.x = opts.x;
-    this.y = opts.y;
-    this.speed = opts.speed;
-    this.kind = opts.kind;
-  }
+    initialSpeedY: number;
+    initialSpin: number;
+  }): FallingCluster {
+    const { shape, x, y, hexSize, kind, initialSpeedY, initialSpin } = opts;
 
-  update(dt: number): void {
-    this.y += this.speed * dt;
-    this.pulse += dt * 4;
-  }
+    const partAxial = new Map<number, Axial>();
+    const parts: Body[] = [];
 
-  // Pixel center of a particular cell.
-  cellCenter(cell: Axial, hexSize: number): { x: number; y: number } {
-    const local = axialToPixel(cell, hexSize);
-    return { x: this.x + local.x, y: this.y + local.y };
-  }
+    const partOpts: IChamferableBodyDefinition = {
+      friction: 0.2,
+      frictionAir: 0.001,
+      restitution: 0.35,
+      density: 0.0015,
+    };
 
-  removeCell(cell: Axial): void {
-    this.cells = this.cells.filter((c) => !(c.q === cell.q && c.r === cell.r));
-    if (this.cells.length === 0) this.alive = false;
-  }
-
-  // Returns the pixel y of the lowest point of any cell — used to detect
-  // when the cluster has passed the player.
-  bottomY(hexSize: number): number {
-    let max = -Infinity;
-    for (const c of this.cells) {
-      const p = this.cellCenter(c, hexSize);
-      if (p.y + hexSize > max) max = p.y + hexSize;
+    for (const cell of shape) {
+      const local = axialToPixel(cell, hexSize);
+      // Pointy-top hex polygon: Matter's Bodies.polygon with 6 sides has the
+      // first vertex at angle 0 (right), giving a pointy-top hex naturally.
+      const part = Bodies.polygon(
+        x + local.x,
+        y + local.y,
+        6,
+        hexSize,
+        partOpts,
+      );
+      parts.push(part);
     }
-    return max;
+
+    const body = Body.create({
+      parts,
+      label: "cluster",
+    });
+
+    // After Body.create with parts, the parent body's parts[0] is the parent
+    // itself; parts[1..] are the original parts. Map part id → axial cell.
+    for (let i = 1; i < body.parts.length; i++) {
+      partAxial.set(body.parts[i]!.id, shape[i - 1]!);
+    }
+
+    Body.setVelocity(body, { x: 0, y: initialSpeedY });
+    Body.setAngularVelocity(body, initialSpin);
+
+    return new FallingCluster(body, kind, partAxial);
   }
 
-  draw(ctx: CanvasRenderingContext2D, hexSize: number): void {
+  // Pixel center of a particular part body (not affected by parent transform —
+  // Matter keeps part positions in world space).
+  partWorldPositions(): Array<{ partId: number; x: number; y: number; angle: number; axial: Axial }> {
+    const out: Array<{ partId: number; x: number; y: number; angle: number; axial: Axial }> = [];
+    for (let i = 1; i < this.body.parts.length; i++) {
+      const p = this.body.parts[i]!;
+      const axial = this.partAxial.get(p.id);
+      if (!axial) continue;
+      out.push({ partId: p.id, x: p.position.x, y: p.position.y, angle: p.angle, axial });
+    }
+    return out;
+  }
+
+  draw(ctx: CanvasRenderingContext2D, hexSize: number, dt: number): void {
+    this.pulse += dt * 4;
+
     const isSticky = this.kind === "sticky";
-    const pulseT = (Math.sin(this.pulse) + 1) * 0.5; // 0..1
     const baseFill = isSticky ? "#d23a8a" : "#5b8bff";
     const accent = isSticky ? "#ff8ad1" : "#aac4ff";
     const stroke = isSticky ? "#ffd6ee" : "#1c2348";
+    const pulseT = (Math.sin(this.pulse) + 1) * 0.5;
 
-    for (const cell of this.cells) {
-      const p = this.cellCenter(cell, hexSize);
-      pathHex(ctx, p.x, p.y, hexSize - 1);
+    for (const p of this.partWorldPositions()) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.angle);
 
-      const grad = ctx.createLinearGradient(
-        p.x,
-        p.y - hexSize,
-        p.x,
-        p.y + hexSize,
-      );
+      pathHex(ctx, 0, 0, hexSize - 1);
+
+      const grad = ctx.createLinearGradient(0, -hexSize, 0, hexSize);
       grad.addColorStop(0, accent);
       grad.addColorStop(1, baseFill);
       ctx.fillStyle = grad;
@@ -88,9 +112,6 @@ export class FallingCluster {
       ctx.stroke();
 
       if (isSticky) {
-        // Spike/star glyph for color-blind accessibility.
-        ctx.save();
-        ctx.translate(p.x, p.y);
         ctx.strokeStyle = "rgba(255,255,255,0.95)";
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -101,15 +122,14 @@ export class FallingCluster {
           ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
         }
         ctx.stroke();
-        ctx.restore();
       }
+
+      ctx.restore();
     }
   }
 }
 
 export function pickShape(rng: () => number): Shape {
   const idx = Math.floor(rng() * SHAPES.length);
-  // Random rotation for variety.
-  const rot = Math.floor(rng() * 6);
-  return rotateShape(SHAPES[idx]!, rot);
+  return SHAPES[idx]!.map((c) => ({ ...c }));
 }

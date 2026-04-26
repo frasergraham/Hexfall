@@ -13,3 +13,6 @@ export type InputAction =
   | "rotateCcw"
   | "confirm"
   | "pause";
+
+// Custom labels we attach to Matter bodies so collision handlers can route.
+export type BodyTag = "player" | "cluster" | "debris" | "wall";
