@@ -373,7 +373,9 @@ export class Game {
       this.overlay.classList.add("hidden");
       return;
     }
-    if (this.state !== "playing") return;
+    // Movement holds are accepted in menu too so the player can try the
+    // controls before starting a run. Paused / gameover ignore them.
+    if (this.state !== "playing" && this.state !== "menu") return;
 
     switch (action) {
       case "left":
@@ -392,10 +394,21 @@ export class Game {
   }
 
   private update(dt: number): void {
-    if (this.state === "menu" || this.state === "paused") return;
+    if (this.state === "paused") return;
 
-    // Starfield drifts downward in real time during play and gameover.
+    // Starfield drifts downward in real time during menu, play and gameover.
     this.starScrollY += dt;
+
+    if (this.state === "menu") {
+      // Pre-game test drive: accept input + step physics so the player can
+      // try out the controls. No spawning, no scoring, no wave system.
+      this.applyMovementInput();
+      Engine.update(this.engine, Math.min(dt * 1000, 1000 / 30));
+      this.player.clampToRail(this.playerY);
+      this.player.clampBoundsX(this.currentRailLeft(), this.currentRailRight());
+      this.player.update(dt);
+      return;
+    }
 
     if (this.state === "gameover") {
       // After death, keep stepping physics + clusters + debris so the
@@ -433,31 +446,7 @@ export class Game {
 
     // Player input → physics velocities (input applied in real time so the
     // controls always feel responsive even during slow-mo).
-    if (this.slideTarget !== null) {
-      const halfBoundsW =
-        (this.player.body.bounds.max.x - this.player.body.bounds.min.x) / 2;
-      const railLeft = this.currentRailLeft();
-      const railRight = this.currentRailRight();
-      const railCenter = (railLeft + railRight) / 2;
-      const usableHalfWidth = Math.max(0, (railRight - railLeft) / 2 - halfBoundsW);
-      const targetX = railCenter + this.slideTarget * usableHalfWidth;
-      this.player.setX(targetX);
-    } else {
-      const wantLeft = this.holds.left.active;
-      const wantRight = this.holds.right.active;
-      let vx = 0;
-      if (wantLeft && !wantRight) vx = -PLAYER_MOVE_SPEED;
-      else if (wantRight && !wantLeft) vx = PLAYER_MOVE_SPEED;
-      this.player.setHorizontalVelocity(vx);
-    }
-
-    if (!this.rotationDragActive) {
-      if (this.holds.rotateCw.active && !this.holds.rotateCcw.active) {
-        this.player.setAngularVelocity(PLAYER_ROT_SPEED);
-      } else if (this.holds.rotateCcw.active && !this.holds.rotateCw.active) {
-        this.player.setAngularVelocity(-PLAYER_ROT_SPEED);
-      }
-    }
+    this.applyMovementInput();
 
     this.player.inDanger = this.player.size() >= DANGER_SIZE;
 
@@ -542,13 +531,22 @@ export class Game {
         drewAny = true;
       }
       const palette = hintPalette(c.kind);
-      const cx = (c.body.bounds.min.x + c.body.bounds.max.x) / 2;
-      // Hover the label above the cluster's bounding box; clamp to the top
-      // of the play area + a small inset so it doesn't disappear when the
-      // cluster has just spawned.
+      // Hover above the cluster, clamped both horizontally and vertically
+      // so the word never spills off the canvas. The textAlign is
+      // "center", so the constraint on cx is "half the text width away
+      // from each edge, plus a small margin".
+      const margin = 6;
+      const halfTextW = ctx.measureText(c.hintLabel).width / 2;
+      const cxIdeal = (c.body.bounds.min.x + c.body.bounds.max.x) / 2;
+      const cxMin = this.boardOriginX + halfTextW + margin;
+      const cxMax = this.boardOriginX + this.boardWidth - halfTextW - margin;
+      const cx = cxMin <= cxMax ? Math.max(cxMin, Math.min(cxMax, cxIdeal)) : cxIdeal;
+
       const yIdeal = c.body.bounds.min.y - this.hexSize * 1.0;
       const yMin = this.boardOriginY + fontSize * 0.9;
-      const y = Math.max(yMin, yIdeal);
+      const yMax = this.boardOriginY + this.boardHeight - margin;
+      const y = Math.max(yMin, Math.min(yMax, yIdeal));
+
       ctx.shadowColor = palette.glow;
       ctx.shadowBlur = 26;
       ctx.fillStyle = palette.fill;
@@ -560,6 +558,36 @@ export class Game {
     }
 
     if (drewAny) ctx.restore();
+  }
+
+  // Apply touch / keyboard movement + rotation hold to the player. Touch
+  // rotation drag itself is applied inside the rotate-pad input callback,
+  // not here.
+  private applyMovementInput(): void {
+    if (this.slideTarget !== null) {
+      const halfBoundsW =
+        (this.player.body.bounds.max.x - this.player.body.bounds.min.x) / 2;
+      const railLeft = this.currentRailLeft();
+      const railRight = this.currentRailRight();
+      const railCenter = (railLeft + railRight) / 2;
+      const usableHalfWidth = Math.max(0, (railRight - railLeft) / 2 - halfBoundsW);
+      const targetX = railCenter + this.slideTarget * usableHalfWidth;
+      this.player.setX(targetX);
+    } else {
+      const wantLeft = this.holds.left.active;
+      const wantRight = this.holds.right.active;
+      let vx = 0;
+      if (wantLeft && !wantRight) vx = -PLAYER_MOVE_SPEED;
+      else if (wantRight && !wantLeft) vx = PLAYER_MOVE_SPEED;
+      this.player.setHorizontalVelocity(vx);
+    }
+    if (!this.rotationDragActive) {
+      if (this.holds.rotateCw.active && !this.holds.rotateCcw.active) {
+        this.player.setAngularVelocity(PLAYER_ROT_SPEED);
+      } else if (this.holds.rotateCcw.active && !this.holds.rotateCw.active) {
+        this.player.setAngularVelocity(-PLAYER_ROT_SPEED);
+      }
+    }
   }
 
   // Trim off-screen clusters and debris during the gameover dwell so the
