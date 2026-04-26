@@ -70,27 +70,11 @@ interface Star {
   a: number;
 }
 
-interface CharBoom {
-  vx: number;
-  vy: number;
-  rot: number;
-  spin: number;
-}
-
-interface Hint {
-  text: string;
-  kind: ClusterKind;
-  sourceBodyId: number;
-  state: "fadeIn" | "showing" | "exploding";
-  stateTime: number;
-  charBoom: CharBoom[];
-}
-
 const PARALLAX_BACK = 8; // px max shift of the back plane
 const PARALLAX_FRONT = 22; // px max shift of the front plane
 
-const HINT_FADE_IN = 0.45; // seconds
-const HINT_EXPLODE = 1.0; // seconds for the explosion + fade-out
+const HINT_TIMESCALE = 0.5; // game runs at this rate while a hint cluster is on screen
+const HINT_STORAGE_KEY = "hexfall.seenKinds";
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -120,13 +104,12 @@ export class Game {
   // Touch slider value [-1..1]. Null = inactive (fall back to keyboard).
   private slideTarget: number | null = null;
 
-  // Cluster kinds the player has seen at least once this run. The first
-  // spawn of any new kind triggers a big on-screen hint label.
-  private seenKinds = new Set<ClusterKind>();
-  // Active first-appearance hint banners, drawn ~30% from the top of the
-  // play area. They fade in, hold while the source cluster is alive, then
-  // explode (per-character scatter) once it leaves the play area.
-  private hints: Hint[] = [];
+  // Cluster kinds the player has ever seen across all runs on this device.
+  // The first cluster of a never-seen kind gets a big glowing label above
+  // it that follows the cluster down. Persisted to localStorage so the
+  // hints only appear on the very first play (and not on subsequent runs
+  // or restarts, even after game-over).
+  private seenKinds: Set<ClusterKind> = loadSeenKinds();
 
   // Wave/calm cycle. During waves spawns are faster + more varied; during
   // calm there's a breather. One column is kept clear of new spawns while
@@ -333,8 +316,8 @@ export class Game {
     this.timeEffectTimer = 0;
     this.timeEffectMax = 1;
     this.timeScale = 1;
-    this.seenKinds.clear();
-    this.hints = [];
+    // Note: seenKinds is *not* cleared — hints only show on the very first
+    // play of the game on this device, never on restarts.
     this.pinch = 0;
     this.pinchTarget = 0;
     this.rotationDragActive = false;
@@ -410,11 +393,6 @@ export class Game {
   private update(dt: number): void {
     if (this.state === "menu" || this.state === "paused") return;
 
-    // Tick the hint banner lifecycle every frame regardless of state, so
-    // the "fade-in / show / explode" animation keeps running behind the
-    // game-over overlay too.
-    this.updateHints(dt);
-
     if (this.state === "gameover") {
       // After death, keep stepping physics + clusters + debris so the
       // wreckage scatters and the falling pieces continue behind the
@@ -438,8 +416,16 @@ export class Game {
     const pinchLerp = 1 - Math.exp(-dt * 4);
     this.pinch += (this.pinchTarget - this.pinch) * pinchLerp;
 
+    // While a hint cluster is on screen, force a 0.5x slow so the player
+    // can read the label and absorb what to do. This stacks on top of the
+    // power-up timeScale by taking the lower (slower) of the two.
+    const hintActive = this.clusters.some((c) => c.hintLabel && c.alive);
+    const effectiveScale = hintActive
+      ? Math.min(this.timeScale, HINT_TIMESCALE)
+      : this.timeScale;
+
     // gameDt drives physics + spawn + wave so slow-mo really slows everything.
-    const gameDt = dt * this.timeScale;
+    const gameDt = dt * effectiveScale;
 
     // Player input → physics velocities (input applied in real time so the
     // controls always feel responsive even during slow-mo).
@@ -534,126 +520,43 @@ export class Game {
     });
   }
 
-  // ----- First-appearance hint banner -----
-
-  private spawnHint(kind: ClusterKind, sourceBodyId: number): void {
-    const text = kindLabel(kind);
-    const charBoom: CharBoom[] = [];
-    for (let i = 0; i < text.length; i++) {
-      charBoom.push({
-        vx: (Math.random() - 0.5) * 380,
-        vy: -120 - Math.random() * 280,
-        rot: (Math.random() - 0.5) * 0.6,
-        spin: (Math.random() - 0.5) * 6,
-      });
-    }
-    this.hints.push({
-      text,
-      kind,
-      sourceBodyId,
-      state: "fadeIn",
-      stateTime: 0,
-      charBoom,
-    });
-  }
-
-  private updateHints(dt: number): void {
-    const screenBottom = this.boardOriginY + this.boardHeight;
-    for (const h of this.hints) {
-      h.stateTime += dt;
-      if (h.state === "fadeIn") {
-        if (h.stateTime >= HINT_FADE_IN) {
-          h.state = "showing";
-          h.stateTime = 0;
-        }
-      } else if (h.state === "showing") {
-        const cluster = this.clusterByBodyId.get(h.sourceBodyId);
-        const sourceGone =
-          !cluster || !cluster.alive || cluster.body.bounds.min.y > screenBottom;
-        if (sourceGone) {
-          h.state = "exploding";
-          h.stateTime = 0;
-        }
-      }
-    }
-    this.hints = this.hints.filter(
-      (h) => !(h.state === "exploding" && h.stateTime >= HINT_EXPLODE),
-    );
-  }
-
-  private drawHints(): void {
-    if (this.hints.length === 0) return;
+  // Big block-cap hint label drawn above each cluster that carries one.
+  // Rendered outside the board clip so it can hover above the play area
+  // when a cluster is near the top of the board.
+  private drawClusterHints(): void {
     const ctx = this.ctx;
-    const fontSize = Math.max(40, Math.round(this.hexSize * 2.6));
-    const baseX = this.boardOriginX + this.boardWidth / 2;
-    const baseY = this.boardOriginY + this.boardHeight * 0.3;
-    const lineH = fontSize * 1.2;
+    const fontSize = Math.max(36, Math.round(this.hexSize * 2.2));
+    let drewAny = false;
 
-    ctx.save();
-    ctx.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    this.hints.forEach((h, idx) => {
-      const palette = hintPalette(h.kind);
-      const yCenter = baseY + idx * lineH;
-
-      let alpha = 1;
-      if (h.state === "fadeIn") {
-        alpha = Math.min(1, h.stateTime / HINT_FADE_IN);
-      } else if (h.state === "exploding") {
-        alpha = Math.max(0, 1 - h.stateTime / HINT_EXPLODE);
-      }
-
-      if (h.state === "exploding") {
-        // Per-character scatter: each letter flies along its own random
-        // velocity vector with light gravity, spinning around its centre.
-        const t = h.stateTime;
-        const widths = h.text.split("").map((c) => ctx.measureText(c).width);
-        const total = widths.reduce((s, w) => s + w, 0);
-        let cursorX = baseX - total / 2;
-        for (let i = 0; i < h.text.length; i++) {
-          const ch = h.text[i]!;
-          const w = widths[i]!;
-          const cx = cursorX + w / 2;
-          const cb = h.charBoom[i]!;
-          const dx = cb.vx * t;
-          const dy = cb.vy * t + 380 * t * t; // light gravity pulling letters down
-          const rot = cb.rot + cb.spin * t;
-          ctx.save();
-          ctx.translate(cx + dx, yCenter + dy);
-          ctx.rotate(rot);
-          ctx.globalAlpha = alpha;
-          ctx.shadowColor = palette.glow;
-          ctx.shadowBlur = 28 * alpha;
-          ctx.fillStyle = palette.fill;
-          ctx.fillText(ch, 0, 0);
-          ctx.shadowBlur = 0;
-          ctx.lineWidth = 3;
-          ctx.strokeStyle = palette.stroke;
-          ctx.strokeText(ch, 0, 0);
-          ctx.restore();
-          cursorX += w;
-        }
-      } else {
+    for (const c of this.clusters) {
+      if (!c.hintLabel || !c.alive) continue;
+      if (!drewAny) {
         ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.shadowColor = palette.glow;
-        ctx.shadowBlur = 28;
-        ctx.fillStyle = palette.fill;
-        ctx.fillText(h.text, baseX, yCenter);
-        ctx.shadowBlur = 0;
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = palette.stroke;
-        ctx.strokeText(h.text, baseX, yCenter);
-        ctx.restore();
+        ctx.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "alphabetic";
+        drewAny = true;
       }
-    });
+      const palette = hintPalette(c.kind);
+      const cx = (c.body.bounds.min.x + c.body.bounds.max.x) / 2;
+      // Hover the label above the cluster's bounding box; clamp to the top
+      // of the play area + a small inset so it doesn't disappear when the
+      // cluster has just spawned.
+      const yIdeal = c.body.bounds.min.y - this.hexSize * 1.0;
+      const yMin = this.boardOriginY + fontSize * 0.9;
+      const y = Math.max(yMin, yIdeal);
+      ctx.shadowColor = palette.glow;
+      ctx.shadowBlur = 26;
+      ctx.fillStyle = palette.fill;
+      ctx.fillText(c.hintLabel, cx, y);
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = palette.stroke;
+      ctx.strokeText(c.hintLabel, cx, y);
+    }
 
-    ctx.restore();
+    if (drewAny) ctx.restore();
   }
-
-  // ----- end hint banner -----
 
   // Trim off-screen clusters and debris during the gameover dwell so the
   // physics world doesn't accumulate dead bodies while the overlay is up.
@@ -1033,12 +936,13 @@ export class Game {
       cluster.body.parts[i]!.collisionFilter.mask = CAT_PLAYER | CAT_CLUSTER;
     }
 
-    // First time the player sees this kind in this run, queue a big
-    // glowing hint banner (AVOID / HEAL / SLOW / FAST / COLLECT) tied to
-    // this cluster's body.
+    // First time this kind is ever seen, attach a big glowing label to
+    // this specific cluster (AVOID / HEAL / SLOW / FAST / COLLECT). Once
+    // the kind has been shown, it never shows again on this device.
     if (!this.seenKinds.has(kind)) {
-      this.spawnHint(kind, cluster.body.id);
+      cluster.hintLabel = kindLabel(kind);
       this.seenKinds.add(kind);
+      saveSeenKinds(this.seenKinds);
     }
 
     this.clusters.push(cluster);
@@ -1317,10 +1221,10 @@ export class Game {
     // from the world and replaced with debris that's already animating.
     if (this.state !== "gameover") this.player.draw(ctx);
 
-    // Big first-appearance hint banner (AVOID / HEAL / SLOW / FAST /
-    // COLLECT). Drawn after the play-area contents so the glow lifts
-    // above falling pieces, but before the time-effect HUD.
-    this.drawHints();
+    // Big first-appearance hint label above each cluster that carries
+    // one. Drawn outside the board clip so it can hover above the play
+    // area when the cluster is near the top.
+    this.drawClusterHints();
 
     // Time-effect HUD: a small countdown bar at the top of the play area.
     if (this.timeEffect !== null) {
@@ -1379,4 +1283,32 @@ function drawStarLayer(
   ctx.globalAlpha = 1;
   ctx.restore();
   void canvasH;
+}
+
+const ALL_KINDS: ClusterKind[] = ["normal", "sticky", "slow", "fast", "coin"];
+
+function loadSeenKinds(): Set<ClusterKind> {
+  try {
+    const raw = localStorage.getItem(HINT_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return new Set();
+    const out = new Set<ClusterKind>();
+    for (const k of parsed) {
+      if (typeof k === "string" && (ALL_KINDS as string[]).includes(k)) {
+        out.add(k as ClusterKind);
+      }
+    }
+    return out;
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeenKinds(seen: Set<ClusterKind>): void {
+  try {
+    localStorage.setItem(HINT_STORAGE_KEY, JSON.stringify([...seen]));
+  } catch {
+    /* localStorage may be unavailable (private mode etc.) — ignore. */
+  }
 }

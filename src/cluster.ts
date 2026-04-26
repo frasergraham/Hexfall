@@ -11,6 +11,10 @@ export class FallingCluster {
   contacted = false;
   alive = true;
   pulse = Math.random() * Math.PI * 2;
+  // First-appearance hint label drawn big and glowing above the cluster
+  // while it falls. Set by Game when this is the first cluster of its kind
+  // ever played on this device.
+  hintLabel: string | null = null;
 
   constructor(body: Body, kind: ClusterKind, partAxial: Map<number, Axial>) {
     this.body = body;
