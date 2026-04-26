@@ -717,15 +717,27 @@ export class Game {
   // floater. Called when the fast effect timer expires cleanly. After
   // the award, the bonus pool resets to 0; the multiplier level (and
   // therefore future stacking) is preserved for the rest of the run.
+  // Where the fast-bonus tally is drawn in the HUD (just under the
+  // countdown bar). Award and loss floaters originate here so the
+  // visual feedback stays at the score readout instead of erupting
+  // around the player and breaking concentration on the dodge.
+  private fastBonusHudPos(): { x: number; y: number } {
+    const fontSize = Math.max(20, Math.round(this.hexSize * 1.05));
+    return {
+      x: this.boardOriginX + this.boardWidth / 2,
+      y: this.boardOriginY + 6 + 12 + fontSize / 2,
+    };
+  }
+
   private awardFastBonus(): void {
     if (this.fastBonus <= 0) return;
     this.score += this.fastBonus;
     this.scoreEl.textContent = String(this.score);
-    const com = this.player.body.position;
+    const p = this.fastBonusHudPos();
     this.spawnFloater(
       `+${this.fastBonus}`,
-      com.x,
-      com.y - this.hexSize * 1.6,
+      p.x,
+      p.y,
       "#c8ffd5",
       "rgba(120, 255, 170, 0.95)",
     );
@@ -733,28 +745,28 @@ export class Game {
   }
 
   // The player got hit while fast was active. Scatter the lost bonus as
-  // red fragments, end the fast effect, and reset both the bonus pool
-  // and the multiplier level so the next pickup starts fresh at 3x.
+  // red fragments from the bonus HUD, end the fast effect, and reset
+  // both the bonus pool and the multiplier level so the next pickup
+  // starts fresh at 3x.
   private loseFastBonus(): void {
     if (this.timeEffect !== "fast") return;
     const lost = this.fastBonus;
-    const com = this.player.body.position;
+    const p = this.fastBonusHudPos();
     if (lost > 0) {
       this.spawnFloater(
         `-${lost}`,
-        com.x,
-        com.y - this.hexSize * 1.6,
+        p.x,
+        p.y,
         "#ffb0b0",
         "rgba(255, 80, 80, 0.95)",
         { vy: 60, vx: 0, lifetime: 1.0, shake: true },
       );
-      // A few small fragments scatter outward to sell the loss.
       for (let i = 0; i < 5; i++) {
         const a = (i / 5) * Math.PI * 2 + Math.random() * 0.4;
         this.spawnFloater(
           `-${Math.max(1, Math.round(lost / 5))}`,
-          com.x,
-          com.y - this.hexSize * 0.8,
+          p.x,
+          p.y,
           "#ff8a8a",
           "rgba(255, 70, 70, 0.95)",
           {
