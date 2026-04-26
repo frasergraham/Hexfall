@@ -295,11 +295,15 @@ export class Player {
 
     // Iterate the part bodies directly so positions reflect the actual
     // physics-driven world transforms (CoM-based, post-rotation).
+    // NOTE: Matter's Body.update rotates each part's position around CoM but
+    // does not update part.angle — the parent body.angle is the source of
+    // truth for the compound's orientation.
+    const bodyAngle = this.body.angle;
     for (let i = 1; i < this.body.parts.length; i++) {
       const part = this.body.parts[i]!;
       ctx.save();
       ctx.translate(part.position.x, part.position.y);
-      ctx.rotate(part.angle);
+      ctx.rotate(bodyAngle);
 
       pathHex(ctx, 0, 0, sz);
       const grad = ctx.createLinearGradient(0, -sz, 0, sz);

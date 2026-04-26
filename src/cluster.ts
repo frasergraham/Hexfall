@@ -73,12 +73,16 @@ export class FallingCluster {
   // Pixel center of a particular part body (not affected by parent transform —
   // Matter keeps part positions in world space).
   partWorldPositions(): Array<{ partId: number; x: number; y: number; angle: number; axial: Axial }> {
+    // Matter's Body.update rotates each part's position around the parent CoM
+    // but does not refresh part.angle — the parent body's angle is the source
+    // of truth for orientation, shared rigidly across all parts.
+    const angle = this.body.angle;
     const out: Array<{ partId: number; x: number; y: number; angle: number; axial: Axial }> = [];
     for (let i = 1; i < this.body.parts.length; i++) {
       const p = this.body.parts[i]!;
       const axial = this.partAxial.get(p.id);
       if (!axial) continue;
-      out.push({ partId: p.id, x: p.position.x, y: p.position.y, angle: p.angle, axial });
+      out.push({ partId: p.id, x: p.position.x, y: p.position.y, angle, axial });
     }
     return out;
   }
