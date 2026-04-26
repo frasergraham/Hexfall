@@ -1,5 +1,5 @@
 import { Body, Composite, Engine, Events, type IEventCollision } from "matter-js";
-import { FallingCluster, pickShape } from "./cluster";
+import { COIN_SHAPE, FallingCluster, kindLabel, pickShape } from "./cluster";
 import { DebrisHex } from "./debris";
 import { SQRT3 } from "./hex";
 import { bindInput, bindRotatePad, bindSlider, isTouchDevice } from "./input";
@@ -26,6 +26,8 @@ const STICKY_SPAWN_CHANCE = 0.10;
 const STICKY_MIN_SCORE = 3;
 const SLOW_SPAWN_CHANCE = 0.05;
 const FAST_SPAWN_CHANCE = 0.05;
+const COIN_SPAWN_CHANCE = 0.07;
+const COIN_SCORE_BONUS = 5;
 const POWERUP_MIN_SCORE = 5;
 
 // Time-effect tuning.
@@ -88,6 +90,11 @@ export class Game {
   private prevRotateTouchAngle: number | null = null;
   // Touch slider value [-1..1]. Null = inactive (fall back to keyboard).
   private slideTarget: number | null = null;
+
+  // Cluster kinds the player has seen at least once this run. The first
+  // spawn of any new kind is decorated with a glowing hint label so the
+  // player learns what to do.
+  private seenKinds = new Set<ClusterKind>();
 
   // Wave/calm cycle. During waves spawns are faster + more varied; during
   // calm there's a breather. One column is kept clear of new spawns while
@@ -289,6 +296,7 @@ export class Game {
     this.timeEffectTimer = 0;
     this.timeEffectMax = 1;
     this.timeScale = 1;
+    this.seenKinds.clear();
     this.pinch = 0;
     this.pinchTarget = 0;
     this.rotationDragActive = false;
@@ -524,6 +532,8 @@ export class Game {
         this.handleNormalContact(cluster, contact);
       } else if (cluster.kind === "sticky") {
         this.handleStickyContact(cluster, contact);
+      } else if (cluster.kind === "coin") {
+        this.handleCoinContact(cluster);
       } else {
         // slow / fast power-up: activate the time effect, scatter the blob
         // into debris, and clear combo (helpful pickup).
@@ -668,6 +678,29 @@ export class Game {
     this.comboHits = 0;
   }
 
+  private handleCoinContact(cluster: FallingCluster): void {
+    // Coin pickup: +5 score, coin sparkles into debris, no other side
+    // effects. Doesn't trigger the slow-mo buffer or affect the combo.
+    this.score += COIN_SCORE_BONUS;
+    this.scoreEl.textContent = String(this.score);
+    const allParts = cluster.partWorldPositions();
+    for (const p of allParts) {
+      this.spawnDebris({
+        x: p.x,
+        y: p.y,
+        angle: p.angle,
+        velocity: cluster.body.velocity,
+        angularVelocity: cluster.body.angularVelocity,
+        impulse: {
+          x: (Math.random() - 0.5) * 5,
+          y: -2 - Math.random() * 3,
+        },
+        kind: cluster.kind,
+      });
+    }
+    cluster.alive = false;
+  }
+
   private handlePowerupContact(cluster: FallingCluster): void {
     if (cluster.kind === "slow") {
       this.timeEffect = "slow";
@@ -707,22 +740,27 @@ export class Game {
     // Swarm waves drop a stream of single hexes at varied speeds. Outside
     // a swarm, pick a 2-5 cell polyhex shape from the library.
     const isSwarmSpawn = this.wavePhase === "wave" && this.swarmWave;
-    const shape: Shape = isSwarmSpawn
-      ? [{ q: 0, r: 0 }]
-      : pickShape(Math.random);
 
-    // Power-ups: rare slow/fast/sticky pickups; never during swarms (we want
-    // those phases to feel pure dodge).
+    // Pick the cluster kind first so we know the shape (coins are always
+    // single-hex). Power-ups and coins are rare; never during a swarm.
     let kind: ClusterKind = "normal";
-    if (!isSwarmSpawn && this.score >= POWERUP_MIN_SCORE) {
+    if (!isSwarmSpawn) {
       const r = Math.random();
-      const slowEnd = SLOW_SPAWN_CHANCE;
+      const coinEnd = COIN_SPAWN_CHANCE;
+      const slowEnd = coinEnd + SLOW_SPAWN_CHANCE;
       const fastEnd = slowEnd + FAST_SPAWN_CHANCE;
       const stickyEnd = fastEnd + STICKY_SPAWN_CHANCE;
-      if (r < slowEnd) kind = "slow";
-      else if (r < fastEnd) kind = "fast";
-      else if (r < stickyEnd && this.score >= STICKY_MIN_SCORE) kind = "sticky";
+      if (r < coinEnd) {
+        kind = "coin";
+      } else if (this.score >= POWERUP_MIN_SCORE) {
+        if (r < slowEnd) kind = "slow";
+        else if (r < fastEnd) kind = "fast";
+        else if (r < stickyEnd && this.score >= STICKY_MIN_SCORE) kind = "sticky";
+      }
     }
+
+    const shape: Shape =
+      kind === "coin" || isSwarmSpawn ? COIN_SHAPE : pickShape(Math.random);
 
     // Side spawn: at high score the play also gets clusters flying in from
     // left/right at a downward angle. Sticky/slow/fast still drop from the
@@ -799,6 +837,13 @@ export class Game {
     for (let i = 1; i < cluster.body.parts.length; i++) {
       cluster.body.parts[i]!.collisionFilter.category = CAT_CLUSTER;
       cluster.body.parts[i]!.collisionFilter.mask = CAT_PLAYER | CAT_CLUSTER;
+    }
+
+    // Tag the cluster with a glowing hint label the first time the player
+    // sees this kind in this run (Blue=AVOID, Red=HEAL, etc).
+    if (!this.seenKinds.has(kind)) {
+      cluster.hintLabel = kindLabel(kind);
+      this.seenKinds.add(kind);
     }
 
     this.clusters.push(cluster);

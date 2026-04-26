@@ -53,10 +53,10 @@ export class DebrisHex {
     const t = this.age / this.lifetime;
     const alpha = Math.max(0, 1 - t);
 
-    const isSticky = this.kind === "sticky";
-    const baseFill = isSticky ? "#d23a8a" : "#5b8bff";
-    const accent = isSticky ? "#ff8ad1" : "#aac4ff";
-    const stroke = isSticky ? "#ffd6ee" : "#1c2348";
+    const palette = debrisPalette(this.kind);
+    const baseFill = palette.fill;
+    const accent = palette.accent;
+    const stroke = palette.stroke;
 
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -74,5 +74,20 @@ export class DebrisHex {
     ctx.stroke();
 
     ctx.restore();
+  }
+}
+
+function debrisPalette(kind: ClusterKind): { fill: string; accent: string; stroke: string } {
+  switch (kind) {
+    case "sticky":
+      return { fill: "#d23a8a", accent: "#ff8ad1", stroke: "#ffd6ee" };
+    case "slow":
+      return { fill: "#d3a000", accent: "#ffe46b", stroke: "#fff5b6" };
+    case "fast":
+      return { fill: "#1ea35e", accent: "#92ffb6", stroke: "#d4ffd6" };
+    case "coin":
+      return { fill: "#d97a18", accent: "#ffce6b", stroke: "#fff0c9" };
+    default:
+      return { fill: "#5b8bff", accent: "#aac4ff", stroke: "#1c2348" };
   }
 }

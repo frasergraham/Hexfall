@@ -11,6 +11,9 @@ export class FallingCluster {
   contacted = false;
   alive = true;
   pulse = Math.random() * Math.PI * 2;
+  // First-appearance hint label drawn above the cluster while it falls.
+  // Set by Game when this is the first cluster of its kind in the run.
+  hintLabel: string | null = null;
 
   constructor(body: Body, kind: ClusterKind, partAxial: Map<number, Axial>) {
     this.body = body;
@@ -103,7 +106,9 @@ export class FallingCluster {
   ): void {
     this.pulse += dt * 4;
 
-    if (this.isHelpful()) {
+    if (this.kind === "coin") {
+      this.drawAsCoin(ctx, hexSize);
+    } else if (this.isHelpful()) {
       this.drawAsBlob(ctx, hexSize);
     } else {
       this.drawAsHex(ctx, hexSize);
@@ -116,6 +121,86 @@ export class FallingCluster {
     } else if (timeEffect === "fast") {
       this.drawSpeedLines(ctx, hexSize);
     }
+
+    if (this.hintLabel) this.drawHintLabel(ctx, hexSize);
+  }
+
+  private drawAsCoin(ctx: CanvasRenderingContext2D, hexSize: number): void {
+    const r = hexSize * 0.7;
+    const glowR = hexSize * 1.55;
+
+    // Outer glow halo, additive blend.
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const p of this.partWorldPositions()) {
+      const halo = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowR);
+      halo.addColorStop(0, "rgba(255, 170, 70, 0.85)");
+      halo.addColorStop(0.5, "rgba(220, 130, 30, 0.45)");
+      halo.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, glowR, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Coin face: an ellipse whose horizontal radius oscillates with the
+    // pulse so the coin appears to spin in 3D.
+    for (const p of this.partWorldPositions()) {
+      const sx = Math.abs(Math.cos(this.pulse * 1.4));
+      const visibleSx = Math.max(0.18, sx);
+      const grad = ctx.createRadialGradient(p.x - r * 0.3, p.y - r * 0.3, 0, p.x, p.y, r);
+      grad.addColorStop(0, "#fff1c2");
+      grad.addColorStop(0.45, "#ffb255");
+      grad.addColorStop(1, "#a14e08");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y, r * visibleSx, r, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255, 240, 200, 0.95)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Star detail on the face, scaled with the spin so it tilts in/out.
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.scale(visibleSx, 1);
+      ctx.strokeStyle = "rgba(120, 50, 0, 0.85)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const dr = r * 0.42;
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI;
+        ctx.moveTo(-Math.cos(a) * dr, -Math.sin(a) * dr);
+        ctx.lineTo(Math.cos(a) * dr, Math.sin(a) * dr);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  private drawHintLabel(ctx: CanvasRenderingContext2D, hexSize: number): void {
+    if (!this.hintLabel) return;
+    const cx = (this.body.bounds.min.x + this.body.bounds.max.x) / 2;
+    const yTop = this.body.bounds.min.y - hexSize * 0.6;
+    const palette = hintPalette(this.kind);
+
+    ctx.save();
+    ctx.font = `700 ${Math.round(hexSize * 0.85)}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.letterSpacing = "0.18em";
+    // Glow.
+    ctx.shadowColor = palette.glow;
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = palette.fill;
+    ctx.fillText(this.hintLabel, cx, yTop);
+    // Re-stroke without shadow for a crisp outline.
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = palette.stroke;
+    ctx.strokeText(this.hintLabel, cx, yTop);
+    ctx.restore();
   }
 
   private drawAsHex(ctx: CanvasRenderingContext2D, hexSize: number): void {
@@ -264,6 +349,46 @@ function blobPalette(kind: ClusterKind): BlobPalette {
       };
   }
 }
+
+interface HintPalette {
+  fill: string;
+  stroke: string;
+  glow: string;
+}
+
+function hintPalette(kind: ClusterKind): HintPalette {
+  switch (kind) {
+    case "normal":
+      return { fill: "#dfe8ff", stroke: "rgba(20, 30, 70, 0.85)", glow: "rgba(120, 160, 255, 0.95)" };
+    case "sticky":
+      return { fill: "#ffe0f2", stroke: "rgba(80, 16, 50, 0.85)", glow: "rgba(255, 110, 190, 0.95)" };
+    case "slow":
+      return { fill: "#fff6c2", stroke: "rgba(80, 60, 0, 0.85)", glow: "rgba(255, 220, 110, 0.95)" };
+    case "fast":
+      return { fill: "#d4ffd6", stroke: "rgba(0, 60, 20, 0.85)", glow: "rgba(120, 255, 170, 0.95)" };
+    case "coin":
+      return { fill: "#ffeac2", stroke: "rgba(70, 35, 0, 0.85)", glow: "rgba(255, 175, 70, 0.95)" };
+  }
+}
+
+export function kindLabel(kind: ClusterKind): string {
+  switch (kind) {
+    case "normal":
+      return "AVOID";
+    case "sticky":
+      return "HEAL";
+    case "slow":
+      return "SLOW";
+    case "fast":
+      return "FAST";
+    case "coin":
+      return "COLLECT";
+  }
+}
+
+// A single hex used for coin clusters (and for swarm spawns). Coins are
+// always one cell so they look and behave like a discrete pickup.
+export const COIN_SHAPE: Shape = [{ q: 0, r: 0 }];
 
 export function pickShape(rng: () => number): Shape {
   const idx = Math.floor(rng() * SHAPES.length);
