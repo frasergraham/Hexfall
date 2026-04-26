@@ -741,8 +741,12 @@ export class Game {
 
     if (sideSpawn) {
       const fromLeft = Math.random() < 0.5;
-      const yBand = this.boardHeight * 0.45;
-      y = this.boardOriginY + this.hexSize * 2 + Math.random() * yBand;
+      // Always enter from the upper half of the play area so the player has
+      // enough vertical runway to react. Range: just-below-top → ~halfway.
+      const halfBoard = this.boardHeight * 0.5;
+      const yMin = this.hexSize * 2;
+      const yMax = Math.max(yMin + this.hexSize, halfBoard - this.hexSize);
+      y = this.boardOriginY + yMin + Math.random() * (yMax - yMin);
       const sideAngle = 0.25 + Math.random() * 0.25; // 14°-29° below horizontal
       const total = speed * 1.05;
       if (fromLeft) {
