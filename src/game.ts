@@ -69,6 +69,17 @@ interface Star {
   a: number;
 }
 
+interface Floater {
+  text: string;
+  x: number;
+  y: number;
+  age: number;
+  lifetime: number;
+  fillColor: string;
+  glowColor: string;
+  fontSize: number;
+}
+
 const PARALLAX_BACK = 8; // px max horizontal shift of the back plane
 const PARALLAX_FRONT = 22; // px max horizontal shift of the front plane
 const STAR_SCROLL_BACK = 6; // px/sec downward drift of the back plane
@@ -138,6 +149,10 @@ export class Game {
   private starsBack: Star[] = [];
   private starsFront: Star[] = [];
   private starScrollY = 0;
+
+  // Floating-text feedback (e.g. "+5" on coin pickup, "3X" on fast pickup).
+  // Each floater rises and fades over a short lifetime.
+  private floaters: Floater[] = [];
 
   private hexSize = HEX_SIZE_BASE;
   private boardWidth = 0;
@@ -317,6 +332,7 @@ export class Game {
     this.timeEffectTimer = 0;
     this.timeEffectMax = 1;
     this.timeScale = 1;
+    this.floaters = [];
     // Note: seenKinds is *not* cleared — hints only show on the very first
     // play of the game on this device, never on restarts.
     this.pinch = 0;
@@ -398,6 +414,15 @@ export class Game {
 
     // Starfield drifts downward in real time during menu, play and gameover.
     this.starScrollY += dt;
+
+    // Tick floating score popups (always real time so they don't slow with
+    // a slow-mo effect — UI feedback should be instantly readable).
+    if (this.floaters.length > 0) {
+      this.floaters = this.floaters.filter((f) => {
+        f.age += dt;
+        return f.age < f.lifetime;
+      });
+    }
 
     if (this.state === "menu") {
       // Pre-game test drive: accept input + step physics so the player can
@@ -485,7 +510,10 @@ export class Game {
       const bounds = c.body.bounds;
       if (!c.scored && !c.contacted && bounds.min.y > this.playerY + this.hexSize * 0.3) {
         c.scored = true;
-        this.score += 1;
+        // Fast power-up triples per-pass score for the duration of the
+        // effect, so picking one up is genuinely worth the chaos.
+        const passPoints = this.timeEffect === "fast" ? 3 : 1;
+        this.score += passPoints;
         this.comboHits = 0;
         this.scoreEl.textContent = String(this.score);
       }
@@ -558,6 +586,55 @@ export class Game {
     }
 
     if (drewAny) ctx.restore();
+  }
+
+  private spawnFloater(
+    text: string,
+    x: number,
+    y: number,
+    fillColor: string,
+    glowColor: string,
+  ): void {
+    this.floaters.push({
+      text,
+      x,
+      y,
+      age: 0,
+      lifetime: 1.0,
+      fillColor,
+      glowColor,
+      fontSize: Math.max(28, Math.round(this.hexSize * 1.6)),
+    });
+  }
+
+  private drawFloaters(): void {
+    if (this.floaters.length === 0) return;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const f of this.floaters) {
+      const t = f.age / f.lifetime;
+      const alpha = Math.max(0, 1 - t);
+      // Rise + slight ease-out scale so the popup punches in then drifts.
+      const yOffset = -t * 80;
+      const scale = 1 + 0.4 * Math.min(1, f.age / 0.18);
+      ctx.font = `900 ${f.fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+      ctx.globalAlpha = alpha;
+      ctx.shadowColor = f.glowColor;
+      ctx.shadowBlur = 20;
+      ctx.save();
+      ctx.translate(f.x, f.y + yOffset);
+      ctx.scale(scale, scale);
+      ctx.fillStyle = f.fillColor;
+      ctx.fillText(f.text, 0, 0);
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.65)";
+      ctx.strokeText(f.text, 0, 0);
+      ctx.restore();
+    }
+    ctx.restore();
   }
 
   // Apply touch / keyboard movement + rotation hold to the player. Touch
@@ -834,6 +911,7 @@ export class Game {
     this.score += COIN_SCORE_BONUS;
     this.scoreEl.textContent = String(this.score);
     const center = cluster.body.position;
+    this.spawnFloater(`+${COIN_SCORE_BONUS}`, center.x, center.y, "#ffe28a", "rgba(255, 175, 70, 0.95)");
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2 + Math.random() * 0.15;
       const speed = 5 + Math.random() * 2.5;
@@ -853,6 +931,7 @@ export class Game {
   }
 
   private handlePowerupContact(cluster: FallingCluster): void {
+    const center = cluster.body.position;
     if (cluster.kind === "slow") {
       this.timeEffect = "slow";
       this.timeScale = SLOW_TIMESCALE;
@@ -863,6 +942,8 @@ export class Game {
       this.timeScale = FAST_TIMESCALE;
       this.timeEffectTimer = FAST_EFFECT_DURATION;
       this.timeEffectMax = FAST_EFFECT_DURATION;
+      // Multiplier popup so the player notices the 3x is now active.
+      this.spawnFloater("3X", center.x, center.y, "#c8ffd5", "rgba(120, 255, 170, 0.95)");
     }
 
     // Burst the powerup into debris so the pickup feels punchy.
@@ -1292,6 +1373,9 @@ export class Game {
     // one. Drawn outside the board clip so it can hover above the play
     // area when the cluster is near the top.
     this.drawClusterHints();
+
+    // Floating score popups (+5 on coin pickup, 3X on fast pickup).
+    this.drawFloaters();
 
     // Time-effect HUD: a small countdown bar at the top of the play area.
     if (this.timeEffect !== null) {
