@@ -38,7 +38,7 @@ const DRONE_SIZE_FACTOR = 0.5; // multiplier on hexSize for the drone body
 const DRONE_OSCILLATION_SPEED = 0.7; // radians/sec for the back-and-forth
 
 // Time-effect tuning.
-const SLOW_EFFECT_DURATION = 10;
+const SLOW_EFFECT_DURATION = 5;
 const FAST_EFFECT_DURATION = 5;
 const STICK_SLOW_BUFFER = 2; // brief slow-mo after gaining a hex
 const SLOW_TIMESCALE = 0.5;
