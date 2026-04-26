@@ -96,7 +96,7 @@ export class Game {
     this.scoreEl = opts.scoreEl;
     this.bestEl = opts.bestEl;
 
-    this.best = Number(localStorage.getItem("hexfall.highScore") ?? 0) || 0;
+    this.best = Number(localStorage.getItem("hexrain.highScore") ?? 0) || 0;
     this.bestEl.textContent = String(this.best);
 
     this.engine = Engine.create({
@@ -504,7 +504,7 @@ export class Game {
     this.state = "gameover";
     if (this.score > this.best) {
       this.best = this.score;
-      localStorage.setItem("hexfall.highScore", String(this.best));
+      localStorage.setItem("hexrain.highScore", String(this.best));
       this.bestEl.textContent = String(this.best);
     }
     this.renderGameOver();

@@ -1,4 +1,4 @@
-# Hexfall
+# Hex Rain
 
 A small browser arcade game with real 2D physics (Matter.js). You control a
 hexagon at the bottom of the screen. Clusters of 2–5 hexagons fall from above
@@ -50,3 +50,32 @@ src/
   types.ts     shared types
   style.css    layout, HUD, touch buttons
 ```
+
+## iOS (Capacitor)
+
+The game is wrapped as a native iOS app via [Capacitor](https://capacitorjs.com/).
+The web build is copied into the iOS project as the embedded web view content.
+
+### Setup (macOS only)
+
+iOS development requires a Mac with Xcode 15+ and CocoaPods. The Xcode project
+lives under `ios/` and is committed. From a fresh clone:
+
+```sh
+npm install
+npm run ios:sync   # build web → copy into ios/App + pod install
+npm run ios:open   # opens the project in Xcode
+```
+
+From Xcode, choose a simulator or a connected device and press ▶︎. To produce a
+release `.ipa`, archive the `App` scheme (Product → Archive) and use the
+Organizer to export.
+
+If you ever need to regenerate the iOS project from scratch (e.g. after a major
+Capacitor upgrade), delete `ios/` and run `npm run ios:add`.
+
+### CI
+
+`.github/workflows/ios.yml` builds the iOS app on every push and pull request
+on a `macos-14` runner. It runs the web build, syncs Capacitor, and produces an
+unsigned simulator `.app` artefact.
