@@ -1,8 +1,13 @@
 import { defineConfig } from "vite";
 
-// Use relative asset URLs so the build works under any GitHub Pages path
-// (e.g. https://<user>.github.io/Hexfall/) without needing to hardcode the
-// repo name.
+// Absolute base matching the GitHub Pages sub-path so asset URLs resolve
+// correctly no matter how the page is navigated to.
 export default defineConfig({
-  base: "./",
+  base: "/Hexfall/",
+  build: {
+    // Output the build into /docs so GitHub Pages can serve it directly when
+    // configured as Source: "Deploy from a branch", folder "/docs".
+    outDir: "docs",
+    emptyOutDir: true,
+  },
 });
