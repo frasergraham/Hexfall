@@ -63,6 +63,16 @@ interface ContactInfo {
   partId: number;
 }
 
+interface Star {
+  x: number;
+  y: number;
+  r: number;
+  a: number;
+}
+
+const PARALLAX_BACK = 8; // px max shift of the back plane
+const PARALLAX_FRONT = 22; // px max shift of the front plane
+
 export class Game {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -117,6 +127,11 @@ export class Game {
   // 0 = full board, 1 = fully pinched. Animates on/off.
   private pinch = 0;
   private pinchTarget = 0;
+
+  // Two-plane starfield. Generated on resize, drawn behind everything with
+  // a small horizontal parallax offset based on the player's x position.
+  private starsBack: Star[] = [];
+  private starsFront: Star[] = [];
 
   private hexSize = HEX_SIZE_BASE;
   private boardWidth = 0;
@@ -1017,6 +1032,24 @@ export class Game {
     // the bounds touch the rail.
     this.player.setHexSize(this.hexSize);
     this.player.setCenter(this.boardOriginX + this.boardWidth / 2, this.playerY - this.hexSize);
+
+    // Regenerate starfield to fit the new canvas dimensions. Two planes:
+    // a denser back plane of small dim stars, and a sparser front plane of
+    // brighter ones that parallax further when the player moves.
+    this.starsBack = generateStars(cssW, cssH, Math.round(cssW * cssH / 4500), 0.4, 0.9, 0.25);
+    this.starsFront = generateStars(cssW, cssH, Math.round(cssW * cssH / 11000), 0.9, 1.7, 0.6);
+  }
+
+  private drawStarfield(canvasW: number, canvasH: number): void {
+    const ctx = this.ctx;
+    // Parallax driver: how far the player is from the centre of the rail,
+    // normalised to [-1, 1]. Negative = left, positive = right.
+    const cx = this.boardOriginX + this.boardWidth / 2;
+    const halfW = this.boardWidth / 2;
+    const offset = Math.max(-1, Math.min(1, halfW > 0 ? (this.player.body.position.x - cx) / halfW : 0));
+
+    drawStarLayer(ctx, this.starsBack, canvasW, canvasH, -offset * PARALLAX_BACK, "#7d97cc");
+    drawStarLayer(ctx, this.starsFront, canvasW, canvasH, -offset * PARALLAX_FRONT, "#ffffff");
   }
 
   private render(dt: number): void {
@@ -1024,8 +1057,12 @@ export class Game {
     const rect = this.canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, rect.width, rect.height);
 
-    // Board background.
-    ctx.fillStyle = "#0e1124";
+    // Two-plane parallax starfield, drawn first so everything else covers it.
+    this.drawStarfield(rect.width, rect.height);
+
+    // Board background — slightly translucent so stars subtly show through
+    // the play area instead of being limited to the side margins.
+    ctx.fillStyle = "rgba(14, 17, 36, 0.82)";
     ctx.fillRect(this.boardOriginX, this.boardOriginY, this.boardWidth, this.boardHeight);
 
     // Pinch panels: dim slabs slide in from the sides when the play area is
@@ -1085,4 +1122,48 @@ export class Game {
       ctx.fillRect(x0, y0, w * frac, 6);
     }
   }
+}
+
+function generateStars(
+  w: number,
+  h: number,
+  count: number,
+  minR: number,
+  maxR: number,
+  minA: number,
+): Star[] {
+  const out: Star[] = [];
+  for (let i = 0; i < count; i++) {
+    out.push({
+      x: Math.random() * w,
+      y: Math.random() * h,
+      r: minR + Math.random() * (maxR - minR),
+      a: minA + Math.random() * (1 - minA),
+    });
+  }
+  return out;
+}
+
+function drawStarLayer(
+  ctx: CanvasRenderingContext2D,
+  stars: Star[],
+  canvasW: number,
+  canvasH: number,
+  shiftX: number,
+  color: string,
+): void {
+  ctx.save();
+  ctx.fillStyle = color;
+  for (const s of stars) {
+    // Wrap horizontally so stars never disappear off one side as the player
+    // moves; positive modulo trick handles negative shifts.
+    const sx = ((s.x + shiftX) % canvasW + canvasW) % canvasW;
+    ctx.globalAlpha = s.a;
+    ctx.beginPath();
+    ctx.arc(sx, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+  void canvasH;
 }
