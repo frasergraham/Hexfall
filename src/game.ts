@@ -551,8 +551,11 @@ export class Game {
     this.overlay.innerHTML = `
       <h1>GAME OVER</h1>
       <p class="tagline">Score ${this.score} &middot; Best ${this.best}</p>
-      <p class="hint">Press <kbd>Space</kbd> or tap to play again</p>
-      <div id="achievementBadges" class="achievement-badges" aria-label="Earned achievements"></div>
+      <p class="hint">Tap to play again</p>
+      <section class="achievements">
+        <h2>Achievements</h2>
+        <div id="achievementBadges" class="achievement-badges" aria-label="Earned achievements"></div>
+      </section>
     `;
     this.overlay.classList.remove("hidden");
     this.renderAchievementBadges();
@@ -569,7 +572,7 @@ export class Game {
       this.state = "paused";
       this.overlay.innerHTML = `
         <h1>PAUSED</h1>
-        <p class="hint">Press <kbd>P</kbd> or tap to resume</p>
+        <p class="hint">Tap to resume</p>
       `;
       this.overlay.classList.remove("hidden");
       return;
@@ -853,7 +856,10 @@ export class Game {
       "#c8ffd5",
       "rgba(120, 255, 170, 0.95)",
       {
-        vy: -40,
+        // Stay put: the grand payout grows and fades in place. The
+        // drawer also clamps the rendered y so the text top can never
+        // overlap the canvas top edge, even at peakScale.
+        vy: 0,
         lifetime: 1.8,
         fontSize: Math.max(56, Math.round(this.hexSize * 3.2)),
         grand: true,
@@ -971,8 +977,15 @@ export class Game {
       ctx.globalAlpha = alpha;
       ctx.shadowColor = f.glowColor;
       ctx.shadowBlur = 20;
+      // Clamp the rendered y so the text top never overlaps the canvas
+      // top edge (text is drawn with middle baseline, so half-height
+      // sits above the position). Approximate cap-height as ~0.74 of
+      // the font size, plus a small breathing pad.
+      const halfH = f.fontSize * scale * 0.74 * 0.5;
+      const minY = halfH + 6;
+      const drawY = Math.max(minY, f.y + yOffset);
       ctx.save();
-      ctx.translate(f.x + xOffset, f.y + yOffset);
+      ctx.translate(f.x + xOffset, drawY);
       ctx.scale(scale, scale);
       ctx.fillStyle = f.fillColor;
       ctx.fillText(f.text, 0, 0);
