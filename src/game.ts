@@ -536,6 +536,11 @@ export class Game {
   private handleNormalContact(cluster: FallingCluster, contact: ContactInfo): void {
     const allParts = cluster.partWorldPositions();
 
+    // Snapshot pre-hit size so the lose check only counts hits taken while
+    // already in the danger zone. Otherwise a fast 5→6→7 combo would end
+    // the run before the danger glow ever appears.
+    const wasInDanger = this.player.size() >= DANGER_SIZE;
+
     const cell = this.player.findStickCell(contact.point.x, contact.point.y);
     if (cell) {
       this.player.addCell(cell);
@@ -572,9 +577,16 @@ export class Game {
 
     cluster.alive = false;
 
-    this.comboHits += 1;
-    if (this.player.size() >= DANGER_SIZE && this.comboHits >= LOSE_COMBO) {
-      this.endGame();
+    // Only hits taken *while already in danger* count toward the lose
+    // combo, so the player is guaranteed at least one frame of warning
+    // glow before a fatal sequence.
+    if (wasInDanger) {
+      this.comboHits += 1;
+      if (this.comboHits >= LOSE_COMBO) {
+        this.endGame();
+      }
+    } else {
+      this.comboHits = 0;
     }
   }
 
