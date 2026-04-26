@@ -63,7 +63,7 @@ export class DebrisHex {
     ctx.translate(this.body.position.x, this.body.position.y);
     ctx.rotate(this.body.angle);
 
-    pathHex(ctx, 0, 0, hexSize - 1);
+    pathHex(ctx, 0, 0, hexSize);
     const grad = ctx.createLinearGradient(0, -hexSize, 0, hexSize);
     grad.addColorStop(0, accent);
     grad.addColorStop(1, baseFill);

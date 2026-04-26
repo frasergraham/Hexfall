@@ -97,7 +97,7 @@ export class FallingCluster {
       ctx.translate(p.x, p.y);
       ctx.rotate(p.angle);
 
-      pathHex(ctx, 0, 0, hexSize - 1);
+      pathHex(ctx, 0, 0, hexSize);
 
       const grad = ctx.createLinearGradient(0, -hexSize, 0, hexSize);
       grad.addColorStop(0, accent);

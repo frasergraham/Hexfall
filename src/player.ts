@@ -301,7 +301,7 @@ export class Player {
       ctx.translate(part.position.x, part.position.y);
       ctx.rotate(part.angle);
 
-      pathHex(ctx, 0, 0, sz - 1);
+      pathHex(ctx, 0, 0, sz);
       const grad = ctx.createLinearGradient(0, -sz, 0, sz);
       grad.addColorStop(0, "#9bf0c2");
       grad.addColorStop(1, "#2ec27a");
