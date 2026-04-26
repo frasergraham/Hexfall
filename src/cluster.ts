@@ -96,7 +96,13 @@ export class FallingCluster {
   // tell at a glance "this one is for me". The body shape is still hex for
   // collision, only the visual changes.
   isHelpful(): boolean {
-    return this.kind === "sticky" || this.kind === "slow" || this.kind === "fast";
+    return (
+      this.kind === "sticky" ||
+      this.kind === "slow" ||
+      this.kind === "fast" ||
+      this.kind === "shield" ||
+      this.kind === "drone"
+    );
   }
 
   draw(
@@ -315,6 +321,20 @@ function blobPalette(kind: ClusterKind): BlobPalette {
         coreLight: "#c8ffd5",
         coreDark: "#0a7a3c",
       };
+    case "shield":
+      return {
+        haloInner: "rgba(120, 220, 255, 0.85)",
+        haloMid: "rgba(40, 160, 220, 0.45)",
+        coreLight: "#cdefff",
+        coreDark: "#0a4068",
+      };
+    case "drone":
+      return {
+        haloInner: "rgba(210, 170, 255, 0.85)",
+        haloMid: "rgba(140, 90, 220, 0.45)",
+        coreLight: "#e6d6ff",
+        coreDark: "#3c1a72",
+      };
     default:
       return {
         haloInner: "rgba(170, 196, 255, 0.7)",
@@ -343,6 +363,10 @@ export function hintPalette(kind: ClusterKind): HintPalette {
       return { fill: "#d4ffd6", stroke: "rgba(0, 60, 20, 0.85)", glow: "rgba(120, 255, 170, 0.95)" };
     case "coin":
       return { fill: "#ffeac2", stroke: "rgba(70, 35, 0, 0.85)", glow: "rgba(255, 175, 70, 0.95)" };
+    case "shield":
+      return { fill: "#dff2ff", stroke: "rgba(10, 60, 100, 0.85)", glow: "rgba(120, 220, 255, 0.95)" };
+    case "drone":
+      return { fill: "#eedfff", stroke: "rgba(50, 20, 90, 0.85)", glow: "rgba(210, 170, 255, 0.95)" };
   }
 }
 
@@ -358,6 +382,10 @@ export function kindLabel(kind: ClusterKind): string {
       return "FAST";
     case "coin":
       return "COLLECT";
+    case "shield":
+      return "SHIELD";
+    case "drone":
+      return "DRONE";
   }
 }
 

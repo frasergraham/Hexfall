@@ -1,4 +1,4 @@
-import { Body, Composite, Engine, Events, type IEventCollision } from "matter-js";
+import { Bodies, Body, Composite, Engine, Events, type IEventCollision } from "matter-js";
 import { COIN_SHAPE, FallingCluster, hintPalette, kindLabel, pickShape } from "./cluster";
 import { DebrisHex } from "./debris";
 import { SQRT3 } from "./hex";
@@ -28,6 +28,12 @@ const FAST_SPAWN_CHANCE = 0.05;
 const COIN_SPAWN_CHANCE = 0.07;
 const COIN_SCORE_BONUS = 5;
 const POWERUP_MIN_SCORE = 5;
+const SHIELD_SPAWN_CHANCE = 0.05;
+const SHIELD_MIN_SCORE = 200;
+const SHIELD_DURATION = 10; // seconds
+const DRONE_SPAWN_CHANCE = 0.05;
+const DRONE_MIN_SCORE = 400;
+const DRONE_DURATION = 10; // seconds
 
 // Time-effect tuning.
 const SLOW_EFFECT_DURATION = 10;
@@ -52,6 +58,7 @@ const RAIL_BOTTOM_INSET = 4; // px above the board bottom where the rail sits
 // Collision categories.
 const CAT_PLAYER = 0x0002;
 const CAT_CLUSTER = 0x0004;
+const CAT_DRONE = 0x0010;
 
 interface HoldState {
   active: boolean;
@@ -78,6 +85,19 @@ interface Floater {
   fillColor: string;
   glowColor: string;
   fontSize: number;
+}
+
+interface Drone {
+  body: Body;
+  // World y the drone stays pinned at; only x oscillates.
+  baseY: number;
+  // Horizontal oscillation centre + amplitude in pixels.
+  centreX: number;
+  amplitude: number;
+  phase: number; // radians, advances with time
+  speed: number; // radians per second
+  lifetime: number; // seconds remaining
+  pulse: number;
 }
 
 const PARALLAX_BACK = 8; // px max horizontal shift of the back plane
@@ -153,6 +173,15 @@ export class Game {
   // Floating-text feedback (e.g. "+5" on coin pickup, "3X" on fast pickup).
   // Each floater rises and fades over a short lifetime.
   private floaters: Floater[] = [];
+
+  // Shield power-up state. While shieldTimer > 0 a translucent bubble
+  // surrounds the player and any harmful contact (normal cluster or sticky)
+  // is absorbed at the cost of 1 second of shield time.
+  private shieldTimer = 0;
+
+  // Active drones — small mid-screen sentinels that intercept clusters
+  // and shatter them on contact. Multiple drones can be active.
+  private drones: Drone[] = [];
 
   private hexSize = HEX_SIZE_BASE;
   private boardWidth = 0;
@@ -333,6 +362,9 @@ export class Game {
     this.timeEffectMax = 1;
     this.timeScale = 1;
     this.floaters = [];
+    this.shieldTimer = 0;
+    for (const d of this.drones) Composite.remove(this.engine.world, d.body);
+    this.drones = [];
     // Note: seenKinds is *not* cleared — hints only show on the very first
     // play of the game on this device, never on restarts.
     this.pinch = 0;
@@ -474,6 +506,14 @@ export class Game {
     this.applyMovementInput();
 
     this.player.inDanger = this.player.size() >= DANGER_SIZE;
+
+    // Shield timer ticks in wall-clock seconds so its 10s feels real.
+    if (this.shieldTimer > 0) {
+      this.shieldTimer = Math.max(0, this.shieldTimer - dt);
+    }
+
+    // Drone update: oscillate horizontally, age out, despawn dead bodies.
+    this.updateDrones(dt);
 
     // Wave/calm phase progression — uses gameDt so wave length feels right
     // during slow-mo, but spawn cadence is the same dilation.
@@ -692,7 +732,6 @@ export class Game {
 
   private onCollisionStart(event: IEventCollision<Engine>): void {
     if (this.state !== "playing") return;
-    if (this.player.invulnTimer > 0) return;
 
     for (const pair of event.pairs) {
       const a = pair.bodyA;
@@ -703,6 +742,26 @@ export class Game {
       const bIsPlayer = parentB.label === "player";
       const aIsCluster = parentA.label === "cluster";
       const bIsCluster = parentB.label === "cluster";
+      const aIsDrone = parentA.label === "drone";
+      const bIsDrone = parentB.label === "drone";
+
+      // Drone vs cluster: drones shatter ANY cluster (helpful or harmful)
+      // they touch — they're a kinetic interceptor. Resolve immediately
+      // rather than queueing through pendingContacts since they don't
+      // touch the player at all.
+      if ((aIsDrone && bIsCluster) || (bIsDrone && aIsCluster)) {
+        const clusterParent = aIsCluster ? parentA : parentB;
+        const cluster = this.clusterByBodyId.get(clusterParent.id);
+        if (cluster && cluster.alive && !cluster.contacted) {
+          cluster.contacted = true;
+          this.shatterClusterMidair(cluster);
+        }
+        continue;
+      }
+
+      // Player vs cluster — defer to handlePendingContacts so a single
+      // frame's contacts route through the per-kind logic in one place.
+      if (this.player.invulnTimer > 0) continue;
 
       let clusterPart;
       let clusterParentId;
@@ -717,15 +776,34 @@ export class Game {
       const cluster = this.clusterByBodyId.get(clusterParentId);
       if (!cluster || cluster.contacted || !cluster.alive) continue;
 
-      // Use the contact support point if available; else midpoint.
       const support = pair.collision.supports[0];
       const point = support
         ? { x: support.x, y: support.y }
         : { x: clusterPart.position.x, y: clusterPart.position.y };
 
-      cluster.contacted = true; // mark immediately to dedupe within frame
+      cluster.contacted = true;
       this.pendingContacts.push({ cluster, contact: { point, partId: clusterPart.id } });
     }
+  }
+
+  // Cluster torn apart in mid-air by a drone. No player effect — just
+  // visual shatter.
+  private shatterClusterMidair(cluster: FallingCluster): void {
+    for (const p of cluster.partWorldPositions()) {
+      this.spawnDebris({
+        x: p.x,
+        y: p.y,
+        angle: p.angle,
+        velocity: cluster.body.velocity,
+        angularVelocity: cluster.body.angularVelocity,
+        impulse: {
+          x: (Math.random() - 0.5) * 6,
+          y: -2 - Math.random() * 4,
+        },
+        kind: cluster.kind,
+      });
+    }
+    cluster.alive = false;
   }
 
   private handlePendingContacts(): void {
@@ -734,12 +812,27 @@ export class Game {
 
       this.player.invulnTimer = STICK_INVULN_MS / 1000;
 
+      // Shield absorbs harmful contacts (normal + sticky) at the cost of
+      // 1s of shield time per absorbed hit. Helpful pickups are unaffected
+      // by the shield so the player can still grab them while bubbled.
+      if (
+        this.shieldTimer > 0 &&
+        (cluster.kind === "normal" || cluster.kind === "sticky")
+      ) {
+        this.absorbWithShield(cluster);
+        continue;
+      }
+
       if (cluster.kind === "normal") {
         this.handleNormalContact(cluster, contact);
       } else if (cluster.kind === "sticky") {
         this.handleStickyContact(cluster, contact);
       } else if (cluster.kind === "coin") {
         this.handleCoinContact(cluster);
+      } else if (cluster.kind === "shield") {
+        this.handleShieldContact(cluster);
+      } else if (cluster.kind === "drone") {
+        this.handleDroneContact(cluster);
       } else {
         // slow / fast power-up: activate the time effect, scatter the blob
         // into debris, and clear combo (helpful pickup).
@@ -747,6 +840,214 @@ export class Game {
       }
     }
     this.pendingContacts = [];
+  }
+
+  private absorbWithShield(cluster: FallingCluster): void {
+    // Shatter the cluster into debris and burn 1s off the shield. Combo is
+    // preserved (a deflected hit isn't a recovery moment).
+    const allParts = cluster.partWorldPositions();
+    for (const p of allParts) {
+      this.spawnDebris({
+        x: p.x,
+        y: p.y,
+        angle: p.angle,
+        velocity: cluster.body.velocity,
+        angularVelocity: cluster.body.angularVelocity,
+        impulse: {
+          x: (Math.random() - 0.5) * 5,
+          y: -1 - Math.random() * 3,
+        },
+        kind: cluster.kind,
+      });
+    }
+    cluster.alive = false;
+    this.shieldTimer = Math.max(0, this.shieldTimer - 1);
+  }
+
+  private handleShieldContact(cluster: FallingCluster): void {
+    this.shieldTimer = SHIELD_DURATION;
+    const center = cluster.body.position;
+    this.spawnFloater(
+      "SHIELD",
+      center.x,
+      center.y,
+      "#dff2ff",
+      "rgba(120, 220, 255, 0.95)",
+    );
+    this.scatterPickupDebris(cluster);
+    cluster.alive = false;
+    this.comboHits = 0;
+  }
+
+  private handleDroneContact(cluster: FallingCluster): void {
+    this.spawnDrone();
+    const center = cluster.body.position;
+    this.spawnFloater(
+      "DRONE",
+      center.x,
+      center.y,
+      "#eedfff",
+      "rgba(210, 170, 255, 0.95)",
+    );
+    this.scatterPickupDebris(cluster);
+    cluster.alive = false;
+    this.comboHits = 0;
+  }
+
+  private scatterPickupDebris(cluster: FallingCluster): void {
+    for (const p of cluster.partWorldPositions()) {
+      this.spawnDebris({
+        x: p.x,
+        y: p.y,
+        angle: p.angle,
+        velocity: cluster.body.velocity,
+        angularVelocity: cluster.body.angularVelocity,
+        impulse: {
+          x: (Math.random() - 0.5) * 6,
+          y: -3 - Math.random() * 3,
+        },
+        kind: cluster.kind,
+      });
+    }
+  }
+
+  private updateDrones(dt: number): void {
+    if (this.drones.length === 0) return;
+    for (const d of this.drones) {
+      d.lifetime -= dt;
+      d.phase += dt * d.speed;
+      d.pulse += dt * 4;
+      const x = d.centreX + Math.sin(d.phase) * d.amplitude;
+      Body.setPosition(d.body, { x, y: d.baseY });
+      Body.setAngle(d.body, Math.sin(d.phase * 0.5) * 0.4);
+    }
+    this.drones = this.drones.filter((d) => {
+      if (d.lifetime > 0) return true;
+      Composite.remove(this.engine.world, d.body);
+      return false;
+    });
+  }
+
+  private drawDrones(): void {
+    if (this.drones.length === 0) return;
+    const ctx = this.ctx;
+    const droneSize = this.hexSize * 0.7;
+    for (const d of this.drones) {
+      const px = d.body.position.x;
+      const py = d.body.position.y;
+      const pulseT = (Math.sin(d.pulse) + 1) * 0.5;
+
+      // Halo.
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const haloR = droneSize * 2.2;
+      const halo = ctx.createRadialGradient(px, py, 0, px, py, haloR);
+      halo.addColorStop(0, `rgba(210, 170, 255, ${0.6 + pulseT * 0.25})`);
+      halo.addColorStop(0.55, "rgba(140, 90, 220, 0.35)");
+      halo.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(px, py, haloR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Hex core.
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(d.body.angle);
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = (Math.PI / 180) * (60 * i - 30);
+        const x = droneSize * Math.cos(a);
+        const y = droneSize * Math.sin(a);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      const grad = ctx.createLinearGradient(0, -droneSize, 0, droneSize);
+      grad.addColorStop(0, "#e6d6ff");
+      grad.addColorStop(1, "#3c1a72");
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.6 + pulseT * 0.3})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+
+      // Lifetime ring around the drone.
+      const t = Math.max(0, d.lifetime / DRONE_DURATION);
+      ctx.save();
+      ctx.strokeStyle = "rgba(210, 170, 255, 0.6)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px, py, droneSize * 1.4, -Math.PI / 2, -Math.PI / 2 + t * Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  private drawShield(): void {
+    if (this.shieldTimer <= 0) return;
+    const ctx = this.ctx;
+    const com = this.player.body.position;
+    const bounds = this.player.body.bounds;
+    const dx = (bounds.max.x - bounds.min.x) / 2;
+    const dy = (bounds.max.y - bounds.min.y) / 2;
+    const radius = Math.hypot(dx, dy) + this.hexSize * 0.5;
+    const t = Math.min(1, this.shieldTimer / SHIELD_DURATION);
+    const pulse = (Math.sin(performance.now() * 0.006) + 1) * 0.5;
+
+    ctx.save();
+    // Soft fill.
+    ctx.globalCompositeOperation = "lighter";
+    const fill = ctx.createRadialGradient(com.x, com.y, 0, com.x, com.y, radius);
+    fill.addColorStop(0, "rgba(120, 220, 255, 0)");
+    fill.addColorStop(0.7, `rgba(120, 220, 255, ${0.05 + pulse * 0.05})`);
+    fill.addColorStop(1, `rgba(120, 220, 255, ${0.18 + pulse * 0.12})`);
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.arc(com.x, com.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Crisp ring + countdown arc.
+    ctx.save();
+    ctx.strokeStyle = `rgba(170, 230, 255, ${0.55 + pulse * 0.25})`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(com.x, com.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(220, 240, 255, 0.95)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(com.x, com.y, radius, -Math.PI / 2, -Math.PI / 2 + t * Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private spawnDrone(): void {
+    const baseY = this.boardOriginY + this.boardHeight * 0.5;
+    const centreX = this.boardOriginX + this.boardWidth / 2;
+    const amplitude = this.boardWidth * 0.35;
+    const droneSize = this.hexSize * 0.7;
+    const body = Bodies.polygon(centreX, baseY, 6, droneSize, {
+      isStatic: true,
+      isSensor: true,
+      label: "drone",
+      collisionFilter: { category: CAT_DRONE, mask: CAT_CLUSTER },
+    });
+    Composite.add(this.engine.world, body);
+    this.drones.push({
+      body,
+      baseY,
+      centreX,
+      amplitude,
+      phase: Math.random() * Math.PI * 2,
+      speed: 1.3,
+      lifetime: DRONE_DURATION,
+      pulse: Math.random() * Math.PI * 2,
+    });
   }
 
   private handleNormalContact(cluster: FallingCluster, contact: ContactInfo): void {
@@ -982,17 +1283,27 @@ export class Game {
       const slowEnd = coinEnd + SLOW_SPAWN_CHANCE;
       const fastEnd = slowEnd + FAST_SPAWN_CHANCE;
       const stickyEnd = fastEnd + STICKY_SPAWN_CHANCE;
+      const shieldEnd = stickyEnd + SHIELD_SPAWN_CHANCE;
+      const droneEnd = shieldEnd + DRONE_SPAWN_CHANCE;
       if (r < coinEnd) {
         kind = "coin";
       } else if (this.score >= POWERUP_MIN_SCORE) {
         if (r < slowEnd) kind = "slow";
         else if (r < fastEnd) kind = "fast";
         else if (r < stickyEnd && this.score >= STICKY_MIN_SCORE) kind = "sticky";
+        else if (r < shieldEnd && this.score >= SHIELD_MIN_SCORE) kind = "shield";
+        else if (r < droneEnd && this.score >= DRONE_MIN_SCORE) kind = "drone";
       }
     }
 
+    // Coin / shield / drone pickups and swarm hexes are always single-cell.
     const shape: Shape =
-      kind === "coin" || isSwarmSpawn ? COIN_SHAPE : pickShape(Math.random);
+      kind === "coin" ||
+      kind === "shield" ||
+      kind === "drone" ||
+      isSwarmSpawn
+        ? COIN_SHAPE
+        : pickShape(Math.random);
 
     // Side spawn: at high score the play also gets clusters flying in from
     // left/right at a downward angle. Sticky/slow/fast still drop from the
@@ -1065,10 +1376,10 @@ export class Game {
     Body.setVelocity(cluster.body, { x: vx, y: vy });
 
     cluster.body.collisionFilter.category = CAT_CLUSTER;
-    cluster.body.collisionFilter.mask = CAT_PLAYER | CAT_CLUSTER;
+    cluster.body.collisionFilter.mask = CAT_PLAYER | CAT_CLUSTER | CAT_DRONE;
     for (let i = 1; i < cluster.body.parts.length; i++) {
       cluster.body.parts[i]!.collisionFilter.category = CAT_CLUSTER;
-      cluster.body.parts[i]!.collisionFilter.mask = CAT_PLAYER | CAT_CLUSTER;
+      cluster.body.parts[i]!.collisionFilter.mask = CAT_PLAYER | CAT_CLUSTER | CAT_DRONE;
     }
 
     // First time this kind is seen this page session, attach a big
@@ -1362,12 +1673,16 @@ export class Game {
 
     for (const d of this.debris) d.draw(ctx, this.hexSize);
     for (const c of this.clusters) c.draw(ctx, this.hexSize, dt, this.timeEffect);
+    this.drawDrones();
 
     ctx.restore();
 
     // Skip drawing the player after game-over — the body has been removed
     // from the world and replaced with debris that's already animating.
-    if (this.state !== "gameover") this.player.draw(ctx);
+    if (this.state !== "gameover") {
+      this.drawShield();
+      this.player.draw(ctx);
+    }
 
     // Big first-appearance hint label above each cluster that carries
     // one. Drawn outside the board clip so it can hover above the play
