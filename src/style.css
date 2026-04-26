@@ -182,32 +182,24 @@ body {
   background: #aac4ff;
 }
 
-/* --- In-canvas rotate wheel (appears under the player's finger) --- */
+/* --- In-canvas slide indicator: a small dot under the finger --- */
 
 .canvas-wheel {
   position: absolute;
-  /* JS positions the centre at the touch point via left/top + the negative
-     margins below; a 96px ring keeps the visual compact under the thumb. */
-  width: 96px;
-  height: 96px;
-  margin-left: -48px;
-  margin-top: -48px;
-  border-radius: 50%;
-  border: 2px dashed rgba(155, 240, 194, 0.7);
-  background:
-    radial-gradient(
-      circle at center,
-      rgba(46, 194, 122, 0.05) 0%,
-      rgba(46, 194, 122, 0.18) 70%,
-      rgba(46, 194, 122, 0.05) 100%
-    );
+  /* JS positions the centre at the touch point via left/top + the
+     negative margins below. The element is invisible — its only job is
+     to host the dot child and be the anchor JS positions. */
+  width: 28px;
+  height: 28px;
+  margin-left: -14px;
+  margin-top: -14px;
   pointer-events: none;
   opacity: 0;
   transition: opacity 80ms;
 }
 
 .canvas-wheel.show {
-  opacity: 0.5;
+  opacity: 0.7;
 }
 
 .canvas-knob {
@@ -220,10 +212,9 @@ body {
   background: #2ec27a;
   border: 2px solid #9bf0c2;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
-  /* JS positions inside the wheel via left/top relative to the wheel's
-     top-left (margin pulls it to centre on the (left, top) coordinate). */
-  left: 48px;
-  top: 11px;
+  /* Centred inside the (28×28) parent. */
+  left: 14px;
+  top: 14px;
   pointer-events: none;
 }
 

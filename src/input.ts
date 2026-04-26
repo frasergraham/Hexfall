@@ -3,6 +3,9 @@ import type { InputAction } from "./types";
 export type InputHandler = (action: InputAction, pressed: boolean) => void;
 export type RotateHandler = (angle: number | null) => void;
 export type SlideHandler = (value: number | null) => void;
+// Per-frame horizontal-drag delta in pixels for the canvas slide-to-rotate
+// gesture. null fires on touchstart and touchend (no delta to apply).
+export type HSlideHandler = (deltaPx: number | null) => void;
 
 const KEY_MAP: Record<string, InputAction> = {
   ArrowLeft: "left",
@@ -85,15 +88,108 @@ export function isTouchDevice(): boolean {
   return "ontouchstart" in window || (navigator.maxTouchPoints ?? 0) > 0;
 }
 
-// Bind tap-anywhere-on-canvas as a rotate gesture. The wheel element is
-// positioned absolutely INSIDE the canvas's offset parent (e.g. .stage).
-//
-// To avoid a "pop" on first touch, the wheel is anchored off-centre from
-// the finger so that the knob sits exactly UNDER the finger at the
-// player's current angle (provided by getInitialAngle). Subsequent
-// touchmove samples report the angle from the wheel centre to the
-// current touch, so a frame-to-frame delta lines up directly with the
-// angular distance the finger has travelled.
+// Bind tap-anywhere-on-canvas as a horizontal slide-to-rotate gesture.
+// Drag right → onRotate fires with positive deltas (px since the previous
+// touch sample); drag left fires negatives. The indicator element is
+// just a positioning anchor (a small dot drawn by the knob child) that
+// sits under the finger throughout the gesture.
+export function bindCanvasSlide(
+  surface: HTMLElement,
+  indicator: HTMLElement,
+  onSlide: HSlideHandler,
+): () => void {
+  let active = false;
+  let activeTouchId: number | null = null;
+  let prevClientX = 0;
+
+  const positionIndicator = (clientX: number, clientY: number) => {
+    const rect = surface.getBoundingClientRect();
+    indicator.style.left = `${clientX - rect.left}px`;
+    indicator.style.top = `${clientY - rect.top}px`;
+  };
+
+  const start = (clientX: number, clientY: number) => {
+    active = true;
+    prevClientX = clientX;
+    positionIndicator(clientX, clientY);
+    indicator.classList.add("show");
+    onSlide(null);
+  };
+  const move = (clientX: number, clientY: number) => {
+    if (!active) return;
+    positionIndicator(clientX, clientY);
+    const dx = clientX - prevClientX;
+    prevClientX = clientX;
+    if (dx !== 0) onSlide(dx);
+  };
+  const end = () => {
+    if (!active) return;
+    active = false;
+    activeTouchId = null;
+    indicator.classList.remove("show");
+    onSlide(null);
+  };
+
+  const onTouchStart = (e: TouchEvent) => {
+    if (active) return;
+    const t = e.changedTouches[0];
+    if (!t) return;
+    e.preventDefault();
+    activeTouchId = t.identifier;
+    start(t.clientX, t.clientY);
+  };
+  const onTouchMove = (e: TouchEvent) => {
+    if (!active || activeTouchId === null) return;
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i]!;
+      if (t.identifier === activeTouchId) {
+        e.preventDefault();
+        move(t.clientX, t.clientY);
+        break;
+      }
+    }
+  };
+  const onTouchEnd = (e: TouchEvent) => {
+    if (!active || activeTouchId === null) return;
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      if (e.changedTouches[i]!.identifier === activeTouchId) {
+        e.preventDefault();
+        end();
+        break;
+      }
+    }
+  };
+  const onMouseDown = (e: MouseEvent) => {
+    if (active) return;
+    e.preventDefault();
+    start(e.clientX, e.clientY);
+  };
+  const onMouseMove = (e: MouseEvent) => {
+    if (active) move(e.clientX, e.clientY);
+  };
+  const onMouseUp = () => end();
+
+  surface.addEventListener("touchstart", onTouchStart, { passive: false });
+  surface.addEventListener("touchmove", onTouchMove, { passive: false });
+  surface.addEventListener("touchend", onTouchEnd, { passive: false });
+  surface.addEventListener("touchcancel", onTouchEnd, { passive: false });
+  surface.addEventListener("mousedown", onMouseDown);
+  document.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("mouseup", onMouseUp);
+
+  return () => {
+    surface.removeEventListener("touchstart", onTouchStart);
+    surface.removeEventListener("touchmove", onTouchMove);
+    surface.removeEventListener("touchend", onTouchEnd);
+    surface.removeEventListener("touchcancel", onTouchEnd);
+    surface.removeEventListener("mousedown", onMouseDown);
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+  };
+}
+
+// Legacy circular-wheel rotator. Currently unused — the canvas-slide
+// gesture above replaces it — but kept exported for future fallback.
 export function bindCanvasWheel(
   surface: HTMLElement,
   wheel: HTMLElement,

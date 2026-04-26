@@ -2,7 +2,7 @@ import { Bodies, Body, Composite, Engine, Events, type IEventCollision } from "m
 import { COIN_SHAPE, FallingCluster, hintPalette, kindLabel, pickShape } from "./cluster";
 import { DebrisHex } from "./debris";
 import { SQRT3 } from "./hex";
-import { bindCanvasWheel, bindInput, bindSlider, isTouchDevice } from "./input";
+import { bindCanvasSlide, bindInput, bindSlider, isTouchDevice } from "./input";
 import { Player } from "./player";
 import type { ClusterKind, GameState, InputAction, Shape } from "./types";
 
@@ -120,6 +120,7 @@ const STAR_SCROLL_FRONT = 18; // px/sec downward drift of the front plane
 
 const HINT_TIMESCALE = 0.5; // game runs at this rate while a hint cluster is on screen
 const ROTATE_TUTORIAL_TIMESCALE = 0.25; // even slower while teaching the rotate gesture
+const ROTATE_SLIDE_SENS = 0.02; // radians of player rotation per pixel of horizontal drag
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -141,11 +142,9 @@ export class Game {
   private clusterByBodyId = new Map<number, FallingCluster>();
   private pendingContacts: Array<{ cluster: FallingCluster; contact: ContactInfo }> = [];
   private player!: Player;
-  // Touch rotation pad — works like an iPod click wheel: dragging around the
-  // ring rotates the player by the angular delta of the drag (relative).
-  // We just track the previous touch angle to compute the delta each move.
+  // Tracks whether a horizontal slide-to-rotate gesture is currently
+  // active, so the touch path can suppress the keyboard rotation hold.
   private rotationDragActive = false;
-  private prevRotateTouchAngle: number | null = null;
   // Touch slider value [-1..1]. Null = inactive (fall back to keyboard).
   private slideTarget: number | null = null;
 
@@ -291,7 +290,6 @@ export class Game {
     const movePadEl = this.touchbar.querySelector<HTMLElement>("#movepad");
     const moveKnobEl = this.touchbar.querySelector<HTMLElement>("#moveknob");
     const wheelEl = document.querySelector<HTMLElement>("#canvasWheel");
-    const wheelKnobEl = document.querySelector<HTMLElement>("#canvasKnob");
 
     const extraUnbinds: Array<() => void> = [];
 
@@ -299,27 +297,23 @@ export class Game {
     // screen, an under-finger ghost wheel shows where you're rotating
     // around. Drag delta around the anchor → player rotates by the same
     // delta (iPod click-wheel feel).
-    if (wheelEl && wheelKnobEl) {
+    if (wheelEl) {
+      // Rotate gesture: any horizontal drag on the canvas. dx in pixels
+      // → delta angle in radians via ROTATE_SLIDE_SENS. Drag right
+      // rotates clockwise, drag left rotates CCW. A small indicator dot
+      // follows the finger to confirm the touch.
       extraUnbinds.push(
-        bindCanvasWheel(this.canvas, wheelEl, wheelKnobEl, () => this.player.body.angle, (angle) => {
-          if (angle === null) {
+        bindCanvasSlide(this.canvas, wheelEl, (deltaPx) => {
+          if (deltaPx === null) {
             this.rotationDragActive = false;
-            this.prevRotateTouchAngle = null;
-            return;
-          }
-          if (!this.rotationDragActive) {
-            this.rotationDragActive = true;
-            this.prevRotateTouchAngle = angle;
             this.holds.rotateCw.active = false;
             this.holds.rotateCcw.active = false;
             return;
           }
-          const prev = this.prevRotateTouchAngle ?? angle;
-          let delta = angle - prev;
-          if (delta > Math.PI) delta -= 2 * Math.PI;
-          else if (delta < -Math.PI) delta += 2 * Math.PI;
-          this.prevRotateTouchAngle = angle;
-          this.player.setAngle(this.player.body.angle + delta);
+          this.rotationDragActive = true;
+          this.player.setAngle(
+            this.player.body.angle + deltaPx * ROTATE_SLIDE_SENS,
+          );
         }),
       );
     }
@@ -437,7 +431,6 @@ export class Game {
     this.pinch = 0;
     this.pinchTarget = 0;
     this.rotationDragActive = false;
-    this.prevRotateTouchAngle = null;
     this.slideTarget = null;
 
     this.player = new Player({
@@ -1200,60 +1193,49 @@ export class Game {
     const ctx = this.ctx;
     const com = this.player.body.position;
     const bounds = this.player.body.bounds;
-    const dx = (bounds.max.x - bounds.min.x) / 2;
-    const dy = (bounds.max.y - bounds.min.y) / 2;
-    const radius = Math.hypot(dx, dy) + this.hexSize * 1.1;
+    const halfH = (bounds.max.y - bounds.min.y) / 2;
+    const halfArrow = this.hexSize * 2.6; // half-width of the straight arrow
+    const arrowY = bounds.min.y - this.hexSize * 1.1;
     const pulse = (Math.sin(performance.now() * 0.006) + 1) * 0.5;
 
     ctx.save();
-
-    // Curved double-headed arrow: a 240° arc with arrowheads at both ends,
-    // tilted so the arc spans symmetrically around the top of the player.
-    const arcSpan = Math.PI * 1.33;
-    const startA = -Math.PI / 2 - arcSpan / 2;
-    const endA = -Math.PI / 2 + arcSpan / 2;
-
     ctx.strokeStyle = `rgba(255, 230, 120, ${0.7 + pulse * 0.3})`;
     ctx.lineWidth = 4;
     ctx.lineCap = "round";
     ctx.shadowColor = "rgba(255, 200, 80, 0.85)";
     ctx.shadowBlur = 18;
 
+    // Straight horizontal shaft.
     ctx.beginPath();
-    ctx.arc(com.x, com.y, radius, startA, endA);
+    ctx.moveTo(com.x - halfArrow, arrowY);
+    ctx.lineTo(com.x + halfArrow, arrowY);
     ctx.stroke();
 
-    // Arrowheads — one at each end, tangent to the arc.
-    const drawHead = (a: number, dir: 1 | -1) => {
-      const tipX = com.x + Math.cos(a) * radius;
-      const tipY = com.y + Math.sin(a) * radius;
-      // Tangent direction along the arc.
-      const tx = -Math.sin(a) * dir;
-      const ty = Math.cos(a) * dir;
-      // Outward (radial) direction.
-      const ox = Math.cos(a);
-      const oy = Math.sin(a);
-      const head = this.hexSize * 0.7;
-      ctx.beginPath();
-      ctx.moveTo(tipX, tipY);
-      ctx.lineTo(tipX - tx * head + ox * head * 0.5, tipY - ty * head + oy * head * 0.5);
-      ctx.moveTo(tipX, tipY);
-      ctx.lineTo(tipX - tx * head - ox * head * 0.5, tipY - ty * head - oy * head * 0.5);
-      ctx.stroke();
-    };
-    drawHead(startA, -1);
-    drawHead(endA, 1);
+    // Arrowheads at both ends.
+    const head = this.hexSize * 0.55;
+    ctx.beginPath();
+    // Right tip pointing right.
+    ctx.moveTo(com.x + halfArrow, arrowY);
+    ctx.lineTo(com.x + halfArrow - head, arrowY - head * 0.7);
+    ctx.moveTo(com.x + halfArrow, arrowY);
+    ctx.lineTo(com.x + halfArrow - head, arrowY + head * 0.7);
+    // Left tip pointing left.
+    ctx.moveTo(com.x - halfArrow, arrowY);
+    ctx.lineTo(com.x - halfArrow + head, arrowY - head * 0.7);
+    ctx.moveTo(com.x - halfArrow, arrowY);
+    ctx.lineTo(com.x - halfArrow + head, arrowY + head * 0.7);
+    ctx.stroke();
 
     ctx.shadowBlur = 0;
 
-    // Big "ROTATE" label centred above the arc.
+    // Big "ROTATE" label above the arrow.
     const fontSize = Math.max(36, Math.round(this.hexSize * 2.4));
     ctx.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     const labelY = Math.max(
       this.boardOriginY + fontSize * 0.7,
-      com.y - radius - fontSize * 0.6,
+      arrowY - fontSize * 0.85,
     );
     ctx.shadowColor = "rgba(255, 220, 120, 0.95)";
     ctx.shadowBlur = 26;
@@ -1265,6 +1247,7 @@ export class Game {
     ctx.strokeText("ROTATE", com.x, labelY);
 
     ctx.restore();
+    void halfH; // reserved for future styling that anchors below the blob
   }
 
   private drawShield(): void {
@@ -1506,11 +1489,14 @@ export class Game {
   }
 
   private handleCoinContact(cluster: FallingCluster): void {
-    // Coin pickup: +5 score, burst of six tiny coin-coloured shards
-    // radiating outward then fading fast — visually unambiguous so the
-    // player knows it was collected (and not just dropped onto them).
+    // Coin pickup: base +5 always banks. While fast is active, the
+    // multiplier also applies — the *extra* points (5 × (mul - 1)) join
+    // the at-risk bonus pool, just like a passed cluster would.
     this.score += COIN_SCORE_BONUS;
     this.scoreEl.textContent = String(this.score);
+    if (this.timeEffect === "fast") {
+      this.fastBonus += COIN_SCORE_BONUS * (this.fastMultiplier() - 1);
+    }
     const center = cluster.body.position;
     this.spawnFloater(`+${COIN_SCORE_BONUS}`, center.x, center.y, "#ffe28a", "rgba(255, 175, 70, 0.95)");
     for (let i = 0; i < 6; i++) {
