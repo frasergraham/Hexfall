@@ -1381,9 +1381,8 @@ export class Game {
 
   private handleStickyContact(cluster: FallingCluster, contact: ContactInfo): void {
     const allParts = cluster.partWorldPositions();
-    // Sticky also counts as "getting hit" for the fast bonus — losing
-    // hexes scatters the bonus pool just like a normal hit.
-    this.loseFastBonus();
+    // Sticky red is a heal, not a hit — fast bonus survives this contact.
+    // Only a real blue-cluster collision ends fast mode.
     // A sticky cluster of N hexes rips off N-1 hexes from the player
     // (floor of 1, capped at player size - 1 so we always leave at least
     // one cell). The cells removed are the N-1 closest to the contact
