@@ -945,8 +945,11 @@ export class Game {
 
       // Drone vs cluster: drones only intercept blue (normal) clusters.
       // Power-ups, coins, and sticky red blocks pass through so the
-      // player can still grab (or be hit by) them.
+      // player can still grab (or be hit by) them. Each successful
+      // intercept also burns 1 second off this drone's lifetime, just
+      // like the shield burns shield time on absorbed hits.
       if ((aIsDrone && bIsCluster) || (bIsDrone && aIsCluster)) {
+        const droneParent = aIsDrone ? parentA : parentB;
         const clusterParent = aIsCluster ? parentA : parentB;
         const cluster = this.clusterByBodyId.get(clusterParent.id);
         if (
@@ -957,6 +960,8 @@ export class Game {
         ) {
           cluster.contacted = true;
           this.shatterClusterMidair(cluster);
+          const drone = this.drones.find((d) => d.body.id === droneParent.id);
+          if (drone) drone.lifetime = Math.max(0, drone.lifetime - 1);
         }
         continue;
       }
