@@ -85,10 +85,134 @@ export function isTouchDevice(): boolean {
   return "ontouchstart" in window || (navigator.maxTouchPoints ?? 0) > 0;
 }
 
-// Bind a circular touch pad: while a finger (or mouse) is on the pad, the
-// callback fires with the angle (in radians, atan2 convention: 0 = right,
-// +PI/2 = down) from the pad centre to the touch point. On release, the
-// callback fires with null.
+// Bind tap-anywhere-on-canvas as a rotate gesture. The wheel element is
+// positioned absolutely INSIDE the canvas's offset parent (e.g. .stage).
+// On touchstart it appears centred at the finger; on touchmove the
+// callback receives the angle from the anchor (touchstart point) to the
+// current touch, and the knob is drawn on the rim at that angle. On
+// release the wheel hides and the callback fires with null.
+export function bindCanvasWheel(
+  surface: HTMLElement,
+  wheel: HTMLElement,
+  knob: HTMLElement,
+  onRotate: RotateHandler,
+): () => void {
+  let active = false;
+  let activeTouchId: number | null = null;
+  let anchorX = 0;
+  let anchorY = 0;
+
+  // Position values are in the wheel's local coordinate space, where
+  // (left, top) is the centre because the wheel uses negative margins.
+  const WHEEL_RADIUS = 48; // matches CSS width/2
+  const KNOB_HALF = 11;
+
+  const positionWheelAt = (clientX: number, clientY: number) => {
+    const rect = surface.getBoundingClientRect();
+    const localX = clientX - rect.left;
+    const localY = clientY - rect.top;
+    wheel.style.left = `${localX}px`;
+    wheel.style.top = `${localY}px`;
+    anchorX = clientX;
+    anchorY = clientY;
+  };
+
+  const setKnob = (angleFromAnchor: number) => {
+    const r = WHEEL_RADIUS - KNOB_HALF;
+    const cx = WHEEL_RADIUS;
+    const cy = WHEEL_RADIUS;
+    knob.style.left = `${cx + Math.cos(angleFromAnchor) * r}px`;
+    knob.style.top = `${cy + Math.sin(angleFromAnchor) * r}px`;
+  };
+
+  const computeAngle = (clientX: number, clientY: number): number => {
+    const dx = clientX - anchorX;
+    const dy = clientY - anchorY;
+    if (dx === 0 && dy === 0) return -Math.PI / 2;
+    return Math.atan2(dy, dx);
+  };
+
+  const start = (clientX: number, clientY: number) => {
+    active = true;
+    positionWheelAt(clientX, clientY);
+    setKnob(-Math.PI / 2); // reset knob to top of wheel
+    wheel.classList.add("show");
+    onRotate(computeAngle(clientX, clientY));
+  };
+  const move = (clientX: number, clientY: number) => {
+    if (!active) return;
+    const angle = computeAngle(clientX, clientY);
+    setKnob(angle);
+    onRotate(angle);
+  };
+  const end = () => {
+    if (!active) return;
+    active = false;
+    activeTouchId = null;
+    wheel.classList.remove("show");
+    onRotate(null);
+  };
+
+  const onTouchStart = (e: TouchEvent) => {
+    if (active) return; // already tracking — ignore additional fingers here
+    const t = e.changedTouches[0];
+    if (!t) return;
+    e.preventDefault();
+    activeTouchId = t.identifier;
+    start(t.clientX, t.clientY);
+  };
+  const onTouchMove = (e: TouchEvent) => {
+    if (!active || activeTouchId === null) return;
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i]!;
+      if (t.identifier === activeTouchId) {
+        e.preventDefault();
+        move(t.clientX, t.clientY);
+        break;
+      }
+    }
+  };
+  const onTouchEnd = (e: TouchEvent) => {
+    if (!active || activeTouchId === null) return;
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      if (e.changedTouches[i]!.identifier === activeTouchId) {
+        e.preventDefault();
+        end();
+        break;
+      }
+    }
+  };
+  const onMouseDown = (e: MouseEvent) => {
+    if (active) return;
+    e.preventDefault();
+    start(e.clientX, e.clientY);
+  };
+  const onMouseMove = (e: MouseEvent) => {
+    if (active) move(e.clientX, e.clientY);
+  };
+  const onMouseUp = () => end();
+
+  surface.addEventListener("touchstart", onTouchStart, { passive: false });
+  surface.addEventListener("touchmove", onTouchMove, { passive: false });
+  surface.addEventListener("touchend", onTouchEnd, { passive: false });
+  surface.addEventListener("touchcancel", onTouchEnd, { passive: false });
+  surface.addEventListener("mousedown", onMouseDown);
+  document.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("mouseup", onMouseUp);
+
+  return () => {
+    surface.removeEventListener("touchstart", onTouchStart);
+    surface.removeEventListener("touchmove", onTouchMove);
+    surface.removeEventListener("touchend", onTouchEnd);
+    surface.removeEventListener("touchcancel", onTouchEnd);
+    surface.removeEventListener("mousedown", onMouseDown);
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+  };
+}
+
+// Legacy fixed-pad rotator. Currently unused now that the canvas itself
+// is the rotate surface, but kept exported for any future fallback.
 export function bindRotatePad(
   pad: HTMLElement,
   knob: HTMLElement,

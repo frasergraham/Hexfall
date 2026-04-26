@@ -25,6 +25,14 @@
       <main class="stage">
         <canvas id="game"></canvas>
 
+        <div
+          id="canvasWheel"
+          class="canvas-wheel"
+          aria-hidden="true"
+        >
+          <div id="canvasKnob" class="canvas-knob"></div>
+        </div>
+
         <div id="overlay" class="overlay">
           <h1>HEXFALL</h1>
           <p class="tagline">Move. Rotate. Survive.</p>
@@ -38,18 +46,6 @@
       </main>
 
       <nav id="touchbar" class="touchbar" aria-hidden="true">
-        <div
-          id="rotatepad"
-          class="rotatepad"
-          role="slider"
-          aria-label="Rotate (touch and drag)"
-          aria-valuemin="-180"
-          aria-valuemax="180"
-          aria-valuenow="0"
-        >
-          <div class="rotatepad-ring"></div>
-          <div id="rotateknob" class="rotateknob"></div>
-        </div>
         <div
           id="movepad"
           class="movepad"

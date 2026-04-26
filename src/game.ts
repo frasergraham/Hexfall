@@ -2,7 +2,7 @@ import { Bodies, Body, Composite, Engine, Events, type IEventCollision } from "m
 import { COIN_SHAPE, FallingCluster, hintPalette, kindLabel, pickShape } from "./cluster";
 import { DebrisHex } from "./debris";
 import { SQRT3 } from "./hex";
-import { bindInput, bindRotatePad, bindSlider, isTouchDevice } from "./input";
+import { bindCanvasWheel, bindInput, bindSlider, isTouchDevice } from "./input";
 import { Player } from "./player";
 import type { ClusterKind, GameState, InputAction, Shape } from "./types";
 
@@ -106,6 +106,7 @@ const STAR_SCROLL_BACK = 6; // px/sec downward drift of the back plane
 const STAR_SCROLL_FRONT = 18; // px/sec downward drift of the front plane
 
 const HINT_TIMESCALE = 0.5; // game runs at this rate while a hint cluster is on screen
+const ROTATE_TUTORIAL_TIMESCALE = 0.25; // even slower while teaching the rotate gesture
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -183,6 +184,15 @@ export class Game {
   // and shatter them on contact. Multiple drones can be active.
   private drones: Drone[] = [];
 
+  // ROTATE tutorial: fires once per page session the first time the
+  // player grows from 1 → 2 hexes. Slows the game to 0.25x and shows a
+  // big "ROTATE" label + curved double-headed arrow around the player
+  // until they rotate enough or the timer expires.
+  private rotateTutorialShown = false;
+  private rotateTutorialActive = false;
+  private rotateTutorialTimer = 0;
+  private rotateTutorialStartAngle = 0;
+
   private hexSize = HEX_SIZE_BASE;
   private boardWidth = 0;
   private boardHeight = 0;
@@ -256,33 +266,32 @@ export class Game {
       this.onInput(action, pressed),
     );
 
-    const rotatePadEl = this.touchbar.querySelector<HTMLElement>("#rotatepad");
-    const rotateKnobEl = this.touchbar.querySelector<HTMLElement>("#rotateknob");
     const movePadEl = this.touchbar.querySelector<HTMLElement>("#movepad");
     const moveKnobEl = this.touchbar.querySelector<HTMLElement>("#moveknob");
+    const wheelEl = document.querySelector<HTMLElement>("#canvasWheel");
+    const wheelKnobEl = document.querySelector<HTMLElement>("#canvasKnob");
 
     const extraUnbinds: Array<() => void> = [];
 
-    if (rotatePadEl && rotateKnobEl) {
+    // Rotate gesture: any tap/drag on the canvas. While the finger is on
+    // screen, an under-finger ghost wheel shows where you're rotating
+    // around. Drag delta around the anchor → player rotates by the same
+    // delta (iPod click-wheel feel).
+    if (wheelEl && wheelKnobEl) {
       extraUnbinds.push(
-        bindRotatePad(rotatePadEl, rotateKnobEl, (angle) => {
+        bindCanvasWheel(this.canvas, wheelEl, wheelKnobEl, (angle) => {
           if (angle === null) {
             this.rotationDragActive = false;
             this.prevRotateTouchAngle = null;
             return;
           }
           if (!this.rotationDragActive) {
-            // First sample of a new drag — anchor at the player's current
-            // angle so it doesn't jump.
             this.rotationDragActive = true;
             this.prevRotateTouchAngle = angle;
             this.holds.rotateCw.active = false;
             this.holds.rotateCcw.active = false;
             return;
           }
-          // Compute the angular delta between this and the previous touch
-          // sample, normalised to (-π, π] so wrapping at the top of the
-          // ring doesn't produce a 2π jump.
           const prev = this.prevRotateTouchAngle ?? angle;
           let delta = angle - prev;
           if (delta > Math.PI) delta -= 2 * Math.PI;
@@ -365,6 +374,11 @@ export class Game {
     this.shieldTimer = 0;
     for (const d of this.drones) Composite.remove(this.engine.world, d.body);
     this.drones = [];
+    // The "ever shown this session" flag (rotateTutorialShown) is *not*
+    // reset on restart — only on a full page reload, like seenKinds.
+    this.rotateTutorialActive = false;
+    this.rotateTutorialTimer = 0;
+    this.rotateTutorialStartAngle = 0;
     // Note: seenKinds is *not* cleared — hints only show on the very first
     // play of the game on this device, never on restarts.
     this.pinch = 0;
@@ -490,13 +504,26 @@ export class Game {
     const pinchLerp = 1 - Math.exp(-dt * 4);
     this.pinch += (this.pinchTarget - this.pinch) * pinchLerp;
 
+    // ROTATE tutorial: tick its timer and dismiss when the player has
+    // turned the blob enough or 5 seconds have passed.
+    if (this.rotateTutorialActive) {
+      this.rotateTutorialTimer += dt;
+      let turned = this.player.body.angle - this.rotateTutorialStartAngle;
+      turned = Math.atan2(Math.sin(turned), Math.cos(turned));
+      if (Math.abs(turned) >= Math.PI / 6 || this.rotateTutorialTimer > 5) {
+        this.rotateTutorialActive = false;
+      }
+    }
+
     // While a hint cluster is on screen, force a 0.5x slow so the player
-    // can read the label and absorb what to do. This stacks on top of the
-    // power-up timeScale by taking the lower (slower) of the two.
+    // can read the label and absorb what to do. The rotate tutorial drops
+    // it further to 0.25x. We always take the slowest of the active
+    // constraints stacked on top of the power-up timeScale.
     const hintActive = this.clusters.some((c) => c.hintLabel && c.alive);
-    const effectiveScale = hintActive
-      ? Math.min(this.timeScale, HINT_TIMESCALE)
-      : this.timeScale;
+    let effectiveScale = this.timeScale;
+    if (hintActive) effectiveScale = Math.min(effectiveScale, HINT_TIMESCALE);
+    if (this.rotateTutorialActive)
+      effectiveScale = Math.min(effectiveScale, ROTATE_TUTORIAL_TIMESCALE);
 
     // gameDt drives physics + spawn + wave so slow-mo really slows everything.
     const gameDt = dt * effectiveScale;
@@ -986,6 +1013,81 @@ export class Game {
     }
   }
 
+  // ROTATE tutorial overlay: a curved double-headed arrow ringing the
+  // player + a big "ROTATE" label, both pulsing softly. Drawn last over
+  // gameplay so it can't get hidden behind clusters.
+  private drawRotateTutorial(): void {
+    if (!this.rotateTutorialActive) return;
+    const ctx = this.ctx;
+    const com = this.player.body.position;
+    const bounds = this.player.body.bounds;
+    const dx = (bounds.max.x - bounds.min.x) / 2;
+    const dy = (bounds.max.y - bounds.min.y) / 2;
+    const radius = Math.hypot(dx, dy) + this.hexSize * 1.1;
+    const pulse = (Math.sin(performance.now() * 0.006) + 1) * 0.5;
+
+    ctx.save();
+
+    // Curved double-headed arrow: a 240° arc with arrowheads at both ends,
+    // tilted so the arc spans symmetrically around the top of the player.
+    const arcSpan = Math.PI * 1.33;
+    const startA = -Math.PI / 2 - arcSpan / 2;
+    const endA = -Math.PI / 2 + arcSpan / 2;
+
+    ctx.strokeStyle = `rgba(255, 230, 120, ${0.7 + pulse * 0.3})`;
+    ctx.lineWidth = 4;
+    ctx.lineCap = "round";
+    ctx.shadowColor = "rgba(255, 200, 80, 0.85)";
+    ctx.shadowBlur = 18;
+
+    ctx.beginPath();
+    ctx.arc(com.x, com.y, radius, startA, endA);
+    ctx.stroke();
+
+    // Arrowheads — one at each end, tangent to the arc.
+    const drawHead = (a: number, dir: 1 | -1) => {
+      const tipX = com.x + Math.cos(a) * radius;
+      const tipY = com.y + Math.sin(a) * radius;
+      // Tangent direction along the arc.
+      const tx = -Math.sin(a) * dir;
+      const ty = Math.cos(a) * dir;
+      // Outward (radial) direction.
+      const ox = Math.cos(a);
+      const oy = Math.sin(a);
+      const head = this.hexSize * 0.7;
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(tipX - tx * head + ox * head * 0.5, tipY - ty * head + oy * head * 0.5);
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(tipX - tx * head - ox * head * 0.5, tipY - ty * head - oy * head * 0.5);
+      ctx.stroke();
+    };
+    drawHead(startA, -1);
+    drawHead(endA, 1);
+
+    ctx.shadowBlur = 0;
+
+    // Big "ROTATE" label centred above the arc.
+    const fontSize = Math.max(36, Math.round(this.hexSize * 2.4));
+    ctx.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const labelY = Math.max(
+      this.boardOriginY + fontSize * 0.7,
+      com.y - radius - fontSize * 0.6,
+    );
+    ctx.shadowColor = "rgba(255, 220, 120, 0.95)";
+    ctx.shadowBlur = 26;
+    ctx.fillStyle = "#fff3c2";
+    ctx.fillText("ROTATE", com.x, labelY);
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(80, 50, 0, 0.85)";
+    ctx.strokeText("ROTATE", com.x, labelY);
+
+    ctx.restore();
+  }
+
   private drawShield(): void {
     if (this.shieldTimer <= 0) return;
     const ctx = this.ctx;
@@ -1060,6 +1162,7 @@ export class Game {
 
     const cell = this.player.findStickCell(contact.point.x, contact.point.y);
     if (cell) {
+      const sizeBefore = this.player.size();
       this.player.addCell(cell);
       // Brief slow-mo buffer so the player can recover their bearings after
       // a hit. Stacks with an existing slow effect by extending the timer
@@ -1072,6 +1175,18 @@ export class Game {
         this.timeScale = SLOW_TIMESCALE;
         this.timeEffectTimer = STICK_SLOW_BUFFER;
         this.timeEffectMax = STICK_SLOW_BUFFER;
+      }
+      // First time the blob ever grows past one hex this page session,
+      // teach the rotate gesture: big label + curved arrow + 0.25x slow.
+      if (
+        sizeBefore === 1 &&
+        this.player.size() === 2 &&
+        !this.rotateTutorialShown
+      ) {
+        this.rotateTutorialShown = true;
+        this.rotateTutorialActive = true;
+        this.rotateTutorialTimer = 0;
+        this.rotateTutorialStartAngle = this.player.body.angle;
       }
     }
 
@@ -1688,6 +1803,9 @@ export class Game {
     // one. Drawn outside the board clip so it can hover above the play
     // area when the cluster is near the top.
     this.drawClusterHints();
+
+    // Rotate-gesture tutorial (only fires once per page session).
+    this.drawRotateTutorial();
 
     // Floating score popups (+5 on coin pickup, 3X on fast pickup).
     this.drawFloaters();

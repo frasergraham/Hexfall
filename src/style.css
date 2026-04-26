@@ -130,10 +130,8 @@ body {
 
 .touchbar {
   display: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+  align-items: stretch;
+  padding: 8px 12px max(10px, env(safe-area-inset-bottom));
   background: #0d0f1c;
 }
 
@@ -141,66 +139,14 @@ body {
   display: flex;
 }
 
-/* --- Rotation pad (left thumb, iPod click-wheel style) --- */
-
-.rotatepad {
-  position: relative;
-  width: 130px;
-  height: 130px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  /* Ring: opaque outer band, transparent center. The hole is a visual cue
-     that your thumb slides along the rim. (The hit area covers the whole
-     pad and only the angle is read, so dragging anywhere still works.) */
-  background:
-    radial-gradient(
-      circle at center,
-      transparent 0,
-      transparent 38px,
-      #1f2440 39px,
-      #1f2440 100%
-    );
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.rotatepad-ring {
-  position: absolute;
-  inset: 6px;
-  border-radius: 50%;
-  border: 1px dashed rgba(155, 240, 194, 0.25);
-  pointer-events: none;
-}
-
-.rotateknob {
-  position: absolute;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: #2ec27a;
-  border: 2px solid #9bf0c2;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
-  /* Default: top of the ring. JS positions it on touch. */
-  top: 6px;
-  left: calc(50% - 15px);
-  pointer-events: none;
-  transition: background 80ms;
-}
-
-.rotatepad.active .rotateknob {
-  background: #9bf0c2;
-}
-
-/* --- Move slider (right thumb) --- */
+/* --- Move slider: full-width, slimmer --- */
 
 .movepad {
   position: relative;
   flex: 1 1 auto;
-  height: 64px;
-  max-width: 260px;
+  height: 44px;
   background: #1f2440;
-  border-radius: 32px;
+  border-radius: 22px;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -209,21 +155,21 @@ body {
 .movepad-track {
   position: absolute;
   top: 50%;
-  left: 16px;
-  right: 16px;
-  height: 4px;
-  margin-top: -2px;
-  background: rgba(170, 196, 255, 0.18);
+  left: 14px;
+  right: 14px;
+  height: 3px;
+  margin-top: -1.5px;
+  background: rgba(170, 196, 255, 0.2);
   border-radius: 2px;
   pointer-events: none;
 }
 
 .moveknob {
   position: absolute;
-  top: 8px;
-  left: calc(50% - 24px);
-  width: 48px;
-  height: 48px;
+  top: 5px;
+  left: calc(50% - 17px);
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   background: #5b8bff;
   border: 2px solid #aac4ff;
@@ -234,6 +180,51 @@ body {
 
 .movepad.active .moveknob {
   background: #aac4ff;
+}
+
+/* --- In-canvas rotate wheel (appears under the player's finger) --- */
+
+.canvas-wheel {
+  position: absolute;
+  /* JS positions the centre at the touch point via left/top + the negative
+     margins below; a 96px ring keeps the visual compact under the thumb. */
+  width: 96px;
+  height: 96px;
+  margin-left: -48px;
+  margin-top: -48px;
+  border-radius: 50%;
+  border: 2px dashed rgba(155, 240, 194, 0.7);
+  background:
+    radial-gradient(
+      circle at center,
+      rgba(46, 194, 122, 0.05) 0%,
+      rgba(46, 194, 122, 0.18) 70%,
+      rgba(46, 194, 122, 0.05) 100%
+    );
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 80ms;
+}
+
+.canvas-wheel.show {
+  opacity: 0.5;
+}
+
+.canvas-knob {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin-left: -11px;
+  margin-top: -11px;
+  border-radius: 50%;
+  background: #2ec27a;
+  border: 2px solid #9bf0c2;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  /* JS positions inside the wheel via left/top relative to the wheel's
+     top-left (margin pulls it to centre on the (left, top) coordinate). */
+  left: 48px;
+  top: 11px;
+  pointer-events: none;
 }
 
 .tbtn {
