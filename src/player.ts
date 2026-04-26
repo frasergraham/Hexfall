@@ -91,14 +91,12 @@ export class Player {
 
   private hexSize: number;
   private engine: Engine;
-  private playerY: number;
   private collisionCategory: number;
   private collisionMask: number;
 
   constructor(opts: PlayerOpts) {
     this.hexSize = opts.hexSize;
     this.engine = opts.engine;
-    this.playerY = opts.centerY;
     this.collisionCategory = opts.collisionCategory;
     this.collisionMask = opts.collisionMask;
     const built = buildPlayerBody(
@@ -126,33 +124,45 @@ export class Player {
   }
 
   setCenter(x: number, y: number): void {
-    this.playerY = y;
     Body.setPosition(this.body, { x, y });
     Body.setVelocity(this.body, { x: 0, y: 0 });
     Body.setAngularVelocity(this.body, 0);
     Body.setAngle(this.body, 0);
   }
 
-  setPlayerY(y: number): void {
-    this.playerY = y;
-  }
-
-  clampY(): void {
-    if (this.body.position.y !== this.playerY || this.body.velocity.y !== 0) {
-      Body.setPosition(this.body, { x: this.body.position.x, y: this.playerY });
+  // Keep the player's lowest pixel pinned to the rail (railY). The bounds-
+  // based offset means the rotated/grown blob never extends past the rail,
+  // and the CoM bobs as the blob rotates so the bottommost hex always
+  // touches it.
+  clampToRail(railY: number): void {
+    const offset = railY - this.body.bounds.max.y;
+    if (offset !== 0) {
+      Body.setPosition(this.body, {
+        x: this.body.position.x,
+        y: this.body.position.y + offset,
+      });
       Body.setVelocity(this.body, { x: this.body.velocity.x, y: 0 });
     }
   }
 
-  clampX(minX: number, maxX: number): void {
-    if (this.body.position.x < minX) {
-      Body.setPosition(this.body, { x: minX, y: this.body.position.y });
+  // Keep the full bounds of the body within [minX, maxX].
+  clampBoundsX(minX: number, maxX: number): void {
+    const overshootLeft = minX - this.body.bounds.min.x;
+    const overshootRight = this.body.bounds.max.x - maxX;
+    if (overshootLeft > 0) {
+      Body.setPosition(this.body, {
+        x: this.body.position.x + overshootLeft,
+        y: this.body.position.y,
+      });
       Body.setVelocity(this.body, {
         x: Math.max(0, this.body.velocity.x),
         y: this.body.velocity.y,
       });
-    } else if (this.body.position.x > maxX) {
-      Body.setPosition(this.body, { x: maxX, y: this.body.position.y });
+    } else if (overshootRight > 0) {
+      Body.setPosition(this.body, {
+        x: this.body.position.x - overshootRight,
+        y: this.body.position.y,
+      });
       Body.setVelocity(this.body, {
         x: Math.min(0, this.body.velocity.x),
         y: this.body.velocity.y,
@@ -166,6 +176,35 @@ export class Player {
 
   setAngularVelocity(av: number): void {
     Body.setAngularVelocity(this.body, av);
+  }
+
+  // Teleport the body's x to the given world x. Used by the touch slider for
+  // direct, lag-free position mapping. Velocity is held at zero so the body
+  // doesn't drift after the touch lifts.
+  setX(x: number): void {
+    Body.setPosition(this.body, { x, y: this.body.position.y });
+    Body.setVelocity(this.body, { x: 0, y: this.body.velocity.y });
+  }
+
+  // Teleport the body angle. Used by the touch rotate pad for direct, lag-
+  // free orientation mapping.
+  setAngle(angle: number): void {
+    Body.setAngle(this.body, angle);
+    Body.setAngularVelocity(this.body, 0);
+  }
+
+  // Drive the player's rotation toward the given world-frame angle using a
+  // capped P controller. Returns the angular velocity that was applied.
+  driveToAngle(targetAngle: number, gain: number, maxSpeed: number): number {
+    const diff = Math.atan2(
+      Math.sin(targetAngle - this.body.angle),
+      Math.cos(targetAngle - this.body.angle),
+    );
+    let vel = diff * gain;
+    if (vel > maxSpeed) vel = maxSpeed;
+    else if (vel < -maxSpeed) vel = -maxSpeed;
+    Body.setAngularVelocity(this.body, vel);
+    return vel;
   }
 
   cellWorldCenter(cell: Axial): { x: number; y: number } {
@@ -256,6 +295,55 @@ export class Player {
     return true;
   }
 
+  // After a cell is removed the remaining blob may have split into two or
+  // more disconnected pieces. Keep the largest component, capture world
+  // positions for the rest, prune them, and return the pruned info so the
+  // caller can spawn debris that tumbles away from the body.
+  pruneDisconnected(): Array<{ cell: Axial; worldX: number; worldY: number }> {
+    if (this.cells.length <= 1) return [];
+
+    const cellSet = new Set(this.cells.map((c) => `${c.q},${c.r}`));
+    const visited = new Set<string>();
+    const components: Axial[][] = [];
+
+    for (const start of this.cells) {
+      const sk = `${start.q},${start.r}`;
+      if (visited.has(sk)) continue;
+      const component: Axial[] = [];
+      const stack: Axial[] = [start];
+      while (stack.length > 0) {
+        const c = stack.pop()!;
+        const ck = `${c.q},${c.r}`;
+        if (visited.has(ck)) continue;
+        visited.add(ck);
+        component.push(c);
+        for (const n of neighborsOf(c)) {
+          const nk = `${n.q},${n.r}`;
+          if (cellSet.has(nk) && !visited.has(nk)) stack.push(n);
+        }
+      }
+      components.push(component);
+    }
+
+    if (components.length <= 1) return [];
+
+    components.sort((a, b) => b.length - a.length);
+    const keep = components[0]!;
+    const toPrune: Axial[] = [];
+    for (let i = 1; i < components.length; i++) toPrune.push(...components[i]!);
+
+    // Capture world positions BEFORE rebuilding (rebuild reseats parts).
+    const removed = toPrune.map((c) => {
+      const wp = this.cellWorldCenter(c);
+      return { cell: c, worldX: wp.x, worldY: wp.y };
+    });
+
+    const keepSet = new Set(keep.map((c) => `${c.q},${c.r}`));
+    this.cells = this.cells.filter((c) => keepSet.has(`${c.q},${c.r}`));
+    this.rebuildBody();
+    return removed;
+  }
+
   private rebuildBody(): void {
     const oldBody = this.body;
     const pos = { ...oldBody.position };
@@ -295,13 +383,17 @@ export class Player {
 
     // Iterate the part bodies directly so positions reflect the actual
     // physics-driven world transforms (CoM-based, post-rotation).
+    // NOTE: Matter's Body.update rotates each part's position around CoM but
+    // does not update part.angle — the parent body.angle is the source of
+    // truth for the compound's orientation.
+    const bodyAngle = this.body.angle;
     for (let i = 1; i < this.body.parts.length; i++) {
       const part = this.body.parts[i]!;
       ctx.save();
       ctx.translate(part.position.x, part.position.y);
-      ctx.rotate(part.angle);
+      ctx.rotate(bodyAngle);
 
-      pathHex(ctx, 0, 0, sz - 1);
+      pathHex(ctx, 0, 0, sz);
       const grad = ctx.createLinearGradient(0, -sz, 0, sz);
       grad.addColorStop(0, "#9bf0c2");
       grad.addColorStop(1, "#2ec27a");

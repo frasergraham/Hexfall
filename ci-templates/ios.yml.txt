@@ -24,8 +24,8 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Build web bundle
-        run: npm run build
+      - name: Build web bundle (iOS-relative base, dist/ output)
+        run: npm run build:ios
 
       - name: Add iOS platform if missing
         run: |

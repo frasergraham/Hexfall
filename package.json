@@ -7,9 +7,10 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "build:ios": "tsc && vite build --base=./ --outDir=dist --emptyOutDir",
     "ios:add": "cap add ios",
-    "ios:sync": "npm run build && cap sync ios",
-    "ios:copy": "npm run build && cap copy ios",
+    "ios:sync": "npm run build:ios && cap sync ios",
+    "ios:copy": "npm run build:ios && cap copy ios",
     "ios:open": "cap open ios"
   },
   "devDependencies": {

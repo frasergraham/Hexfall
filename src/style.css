@@ -130,8 +130,8 @@ body {
 
 .touchbar {
   display: none;
-  gap: 8px;
-  padding: 10px 12px max(10px, env(safe-area-inset-bottom));
+  align-items: stretch;
+  padding: 8px 12px max(10px, env(safe-area-inset-bottom));
   background: #0d0f1c;
 }
 
@@ -139,14 +139,137 @@ body {
   display: flex;
 }
 
+/* --- Move slider: full-width, slimmer --- */
+
+.movepad {
+  position: relative;
+  flex: 1 1 auto;
+  height: 44px;
+  background: #1f2440;
+  border-radius: 22px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.movepad-track {
+  position: absolute;
+  top: 50%;
+  left: 14px;
+  right: 14px;
+  height: 3px;
+  margin-top: -1.5px;
+  background: rgba(170, 196, 255, 0.2);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.moveknob {
+  position: absolute;
+  top: 5px;
+  left: calc(50% - 17px);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #5b8bff;
+  border: 2px solid #aac4ff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  transition: background 80ms;
+}
+
+.movepad.active .moveknob {
+  background: #aac4ff;
+}
+
+/* --- In-canvas slide indicator: a small dot under the finger --- */
+
+.canvas-wheel {
+  position: absolute;
+  /* JS positions the centre at the touch point via left/top + the
+     negative margins below. The element is invisible — its only job is
+     to host the dot child and be the anchor JS positions. */
+  width: 28px;
+  height: 28px;
+  margin-left: -14px;
+  margin-top: -14px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 80ms;
+}
+
+.canvas-wheel.show {
+  opacity: 0.7;
+}
+
+.canvas-knob {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin-left: -11px;
+  margin-top: -11px;
+  border-radius: 50%;
+  background: #2ec27a;
+  border: 2px solid #9bf0c2;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  /* Centred inside the (28×28) parent. */
+  left: 14px;
+  top: 14px;
+  pointer-events: none;
+}
+
+/* --- Debug start-at-score buttons (only present with ?debug=1) --- */
+
+.debug-buttons {
+  position: absolute;
+  left: 50%;
+  bottom: 18%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(13, 15, 28, 0.6);
+  border: 1px solid rgba(255, 200, 100, 0.35);
+  border-radius: 10px;
+  z-index: 10;
+  pointer-events: auto;
+}
+
+.overlay.hidden ~ .debug-buttons {
+  display: none;
+}
+
+.debug-buttons .debug-label {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: rgba(255, 220, 150, 0.9);
+}
+
+.debug-buttons button {
+  padding: 8px 14px;
+  background: rgba(255, 200, 100, 0.18);
+  color: #ffe28a;
+  border: 1px solid rgba(255, 200, 100, 0.5);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.debug-buttons button:active {
+  background: rgba(255, 200, 100, 0.32);
+}
+
 .tbtn {
-  flex: 1;
-  min-height: 56px;
-  font-size: 22px;
+  font-size: 26px;
   background: #1f2440;
   border: 1px solid #2a3057;
   color: #e8ecff;
-  border-radius: 12px;
+  border-radius: 16px;
   cursor: pointer;
   touch-action: manipulation;
   transition: background 80ms;
