@@ -75,7 +75,6 @@ const STAR_SCROLL_BACK = 6; // px/sec downward drift of the back plane
 const STAR_SCROLL_FRONT = 18; // px/sec downward drift of the front plane
 
 const HINT_TIMESCALE = 0.5; // game runs at this rate while a hint cluster is on screen
-const HINT_STORAGE_KEY = "hexfall.seenKinds";
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -105,12 +104,11 @@ export class Game {
   // Touch slider value [-1..1]. Null = inactive (fall back to keyboard).
   private slideTarget: number | null = null;
 
-  // Cluster kinds the player has ever seen across all runs on this device.
-  // The first cluster of a never-seen kind gets a big glowing label above
-  // it that follows the cluster down. Persisted to localStorage so the
-  // hints only appear on the very first play (and not on subsequent runs
-  // or restarts, even after game-over).
-  private seenKinds: Set<ClusterKind> = loadSeenKinds();
+  // Cluster kinds the player has seen this *page session*. The first
+  // cluster of a never-seen kind gets a big glowing label that follows
+  // it down. In-memory only — restarts (after game-over) don't show the
+  // labels again, but a full page reload starts fresh.
+  private seenKinds: Set<ClusterKind> = new Set();
 
   // Wave/calm cycle. During waves spawns are faster + more varied; during
   // calm there's a breather. One column is kept clear of new spawns while
@@ -960,13 +958,13 @@ export class Game {
       cluster.body.parts[i]!.collisionFilter.mask = CAT_PLAYER | CAT_CLUSTER;
     }
 
-    // First time this kind is ever seen, attach a big glowing label to
-    // this specific cluster (AVOID / HEAL / SLOW / FAST / COLLECT). Once
-    // the kind has been shown, it never shows again on this device.
+    // First time this kind is seen this page session, attach a big
+    // glowing label to this specific cluster (AVOID / HEAL / SLOW /
+    // FAST / COLLECT). Once shown, it doesn't repeat on restart — a
+    // full page reload is what brings the labels back.
     if (!this.seenKinds.has(kind)) {
       cluster.hintLabel = kindLabel(kind);
       this.seenKinds.add(kind);
-      saveSeenKinds(this.seenKinds);
     }
 
     this.clusters.push(cluster);
@@ -1324,30 +1322,3 @@ function drawStarLayer(
   ctx.restore();
 }
 
-const ALL_KINDS: ClusterKind[] = ["normal", "sticky", "slow", "fast", "coin"];
-
-function loadSeenKinds(): Set<ClusterKind> {
-  try {
-    const raw = localStorage.getItem(HINT_STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return new Set();
-    const out = new Set<ClusterKind>();
-    for (const k of parsed) {
-      if (typeof k === "string" && (ALL_KINDS as string[]).includes(k)) {
-        out.add(k as ClusterKind);
-      }
-    }
-    return out;
-  } catch {
-    return new Set();
-  }
-}
-
-function saveSeenKinds(seen: Set<ClusterKind>): void {
-  try {
-    localStorage.setItem(HINT_STORAGE_KEY, JSON.stringify([...seen]));
-  } catch {
-    /* localStorage may be unavailable (private mode etc.) — ignore. */
-  }
-}
