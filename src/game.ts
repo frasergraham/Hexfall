@@ -50,6 +50,7 @@ const FAST_MULTIPLIER_STEP = 1; // each stack bumps the multiplier by 1
 // Wave variants.
 const SWARM_WAVE_CHANCE = 0.35; // chance any given wave is a single-hex swarm
 const SWARM_SPAWN_INTERVAL = 0.18; // very short interval during swarms
+const SWARM_STICKY_CHANCE = 0.12; // chance a swarm hex spawns as a heal instead of blue
 
 // Score thresholds for advanced spawn mechanics.
 const ANGLED_SPAWNS_SCORE = 200;
@@ -1584,7 +1585,17 @@ export class Game {
     // Pick the cluster kind first so we know the shape (coins are always
     // single-hex). Power-ups and coins are rare; never during a swarm.
     let kind: ClusterKind = "normal";
-    if (!isSwarmSpawn) {
+    if (isSwarmSpawn) {
+      // Occasional heal block tucked into the middle of a swarm — gives
+      // the player a brief opportunity to recover during otherwise pure
+      // dodge phases.
+      if (
+        this.score >= STICKY_MIN_SCORE &&
+        Math.random() < SWARM_STICKY_CHANCE
+      ) {
+        kind = "sticky";
+      }
+    } else {
       const r = Math.random();
       const coinEnd = COIN_SPAWN_CHANCE;
       const slowEnd = coinEnd + SLOW_SPAWN_CHANCE;
