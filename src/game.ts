@@ -1,4 +1,4 @@
-import { Composite, Engine, Events, type IEventCollision } from "matter-js";
+import { Body, Composite, Engine, Events, type IEventCollision } from "matter-js";
 import { FallingCluster, pickShape } from "./cluster";
 import { DebrisHex } from "./debris";
 import { SQRT3 } from "./hex";
@@ -22,8 +22,25 @@ const DANGER_SIZE = 7;
 const LOSE_COMBO = 2;
 const STICK_INVULN_MS = 180;
 
-const STICKY_SPAWN_CHANCE = 0.12;
+const STICKY_SPAWN_CHANCE = 0.10;
 const STICKY_MIN_SCORE = 3;
+const SLOW_SPAWN_CHANCE = 0.05;
+const FAST_SPAWN_CHANCE = 0.05;
+const POWERUP_MIN_SCORE = 5;
+
+// Time-effect tuning.
+const TIME_EFFECT_DURATION = 10;
+const SLOW_TIMESCALE = 0.5;
+const FAST_TIMESCALE = 1.5;
+
+// Wave variants.
+const SWARM_WAVE_CHANCE = 0.35; // chance any given wave is a single-hex swarm
+const SWARM_SPAWN_INTERVAL = 0.18; // very short interval during swarms
+
+// Score thresholds for advanced spawn mechanics.
+const ANGLED_SPAWNS_SCORE = 200;
+const SIDE_SPAWNS_SCORE = 400;
+const NARROWING_SCORE = 600;
 
 const PLAYER_MOVE_SPEED = 5.5; // px/ms (Matter velocity units, keyboard hold)
 const PLAYER_ROT_SPEED = 0.05; // rad/ms (keyboard hold)
@@ -76,6 +93,20 @@ export class Game {
   private wavePhase: "calm" | "wave" = "calm";
   private wavePhaseTimer = 0;
   private safeColumn = 0;
+  // Whether the current wave is a single-hex swarm (lots of small fast hexes
+  // at varied speeds) rather than a regular cluster wave.
+  private swarmWave = false;
+
+  // Time-effect (slow/fast power-ups). timeScale modifies engine + game-logic
+  // dt; the visual trail uses timeEffect to decide bubble vs speed-line.
+  private timeEffect: "slow" | "fast" | null = null;
+  private timeEffectTimer = 0;
+  private timeScale = 1;
+
+  // Optional inward-narrowing pinch active in late game (score >= NARROWING_SCORE).
+  // 0 = full board, 1 = fully pinched. Animates on/off.
+  private pinch = 0;
+  private pinchTarget = 0;
 
   private hexSize = HEX_SIZE_BASE;
   private boardWidth = 0;
@@ -250,6 +281,12 @@ export class Game {
     this.spawnTimer = 0;
     this.wavePhase = "calm";
     this.wavePhaseTimer = 0;
+    this.swarmWave = false;
+    this.timeEffect = null;
+    this.timeEffectTimer = 0;
+    this.timeScale = 1;
+    this.pinch = 0;
+    this.pinchTarget = 0;
     this.rotationDragActive = false;
     this.prevRotateTouchAngle = null;
     this.slideTarget = null;
@@ -325,15 +362,33 @@ export class Game {
       return;
     }
 
-    // Player input → physics velocities.
+    // Real-time effect timer (counts down in wall-clock seconds, regardless
+    // of timescale) so the slow / fast power-up always lasts 10 real seconds.
+    if (this.timeEffect !== null) {
+      this.timeEffectTimer -= dt;
+      if (this.timeEffectTimer <= 0) {
+        this.timeEffect = null;
+        this.timeScale = 1;
+      }
+    }
+
+    // Pinch interpolates toward target each real-frame.
+    const pinchLerp = 1 - Math.exp(-dt * 4);
+    this.pinch += (this.pinchTarget - this.pinch) * pinchLerp;
+
+    // gameDt drives physics + spawn + wave so slow-mo really slows everything.
+    const gameDt = dt * this.timeScale;
+
+    // Player input → physics velocities (input applied in real time so the
+    // controls always feel responsive even during slow-mo).
     if (this.slideTarget !== null) {
-      // Direct, lag-free position mapping from the slider. Map [-1, 1] to a
-      // target x inside the playable horizontal range and teleport.
       const halfBoundsW =
         (this.player.body.bounds.max.x - this.player.body.bounds.min.x) / 2;
-      const usableHalfWidth = Math.max(0, this.boardWidth / 2 - halfBoundsW);
-      const targetX =
-        this.boardOriginX + this.boardWidth / 2 + this.slideTarget * usableHalfWidth;
+      const railLeft = this.currentRailLeft();
+      const railRight = this.currentRailRight();
+      const railCenter = (railLeft + railRight) / 2;
+      const usableHalfWidth = Math.max(0, (railRight - railLeft) / 2 - halfBoundsW);
+      const targetX = railCenter + this.slideTarget * usableHalfWidth;
       this.player.setX(targetX);
     } else {
       const wantLeft = this.holds.left.active;
@@ -344,8 +399,6 @@ export class Game {
       this.player.setHorizontalVelocity(vx);
     }
 
-    // Click-wheel rotation is applied incrementally inside the touch
-    // callback; here we only handle the keyboard hold path.
     if (!this.rotationDragActive) {
       if (this.holds.rotateCw.active && !this.holds.rotateCcw.active) {
         this.player.setAngularVelocity(PLAYER_ROT_SPEED);
@@ -356,26 +409,25 @@ export class Game {
 
     this.player.inDanger = this.player.size() >= DANGER_SIZE;
 
-    // Wave/calm phase progression.
-    this.advanceWavePhase(dt);
+    // Wave/calm phase progression — uses gameDt so wave length feels right
+    // during slow-mo, but spawn cadence is the same dilation.
+    this.advanceWavePhase(gameDt);
 
     // Spawn.
-    this.spawnTimer -= dt;
+    this.spawnTimer -= gameDt;
     if (this.spawnTimer <= 0) {
       this.spawnCluster();
       this.spawnTimer = this.currentSpawnInterval();
     }
 
-    // Step physics.
-    Engine.update(this.engine, Math.min(dt * 1000, 1000 / 30));
+    // Step physics with scaled time.
+    Engine.update(this.engine, Math.min(gameDt * 1000, 1000 / 30));
 
     // Constrain player to the rail using bounds, so the rotated/grown blob
-    // never extends past the board bottom.
+    // never extends past the board bottom — and to the (possibly pinched)
+    // side rails.
     this.player.clampToRail(this.playerY);
-    this.player.clampBoundsX(
-      this.boardOriginX,
-      this.boardOriginX + this.boardWidth,
-    );
+    this.player.clampBoundsX(this.currentRailLeft(), this.currentRailRight());
 
     this.player.update(dt);
 
@@ -466,8 +518,12 @@ export class Game {
 
       if (cluster.kind === "normal") {
         this.handleNormalContact(cluster, contact);
-      } else {
+      } else if (cluster.kind === "sticky") {
         this.handleStickyContact(cluster, contact);
+      } else {
+        // slow / fast power-up: activate the time effect, scatter the blob
+        // into debris, and clear combo (helpful pickup).
+        this.handlePowerupContact(cluster);
       }
     }
     this.pendingContacts = [];
@@ -558,25 +614,111 @@ export class Game {
     this.comboHits = 0;
   }
 
+  private handlePowerupContact(cluster: FallingCluster): void {
+    if (cluster.kind === "slow") {
+      this.timeEffect = "slow";
+      this.timeScale = SLOW_TIMESCALE;
+    } else if (cluster.kind === "fast") {
+      this.timeEffect = "fast";
+      this.timeScale = FAST_TIMESCALE;
+    }
+    this.timeEffectTimer = TIME_EFFECT_DURATION;
+
+    // Burst the powerup into debris so the pickup feels punchy.
+    const allParts = cluster.partWorldPositions();
+    for (const p of allParts) {
+      this.spawnDebris({
+        x: p.x,
+        y: p.y,
+        angle: p.angle,
+        velocity: cluster.body.velocity,
+        angularVelocity: cluster.body.angularVelocity,
+        impulse: {
+          x: (Math.random() - 0.5) * 6,
+          y: -3 - Math.random() * 3,
+        },
+        kind: cluster.kind,
+      });
+    }
+
+    cluster.alive = false;
+    // Picking up a power-up doesn't count as a "hit" against the combo.
+    this.comboHits = 0;
+  }
+
   private spawnCluster(): void {
-    const shape = pickShape(Math.random);
+    // Swarm waves drop a stream of single hexes at varied speeds. Outside
+    // a swarm, pick a 2-5 cell polyhex shape from the library.
+    const isSwarmSpawn = this.wavePhase === "wave" && this.swarmWave;
+    const shape: Shape = isSwarmSpawn
+      ? [{ q: 0, r: 0 }]
+      : pickShape(Math.random);
 
+    // Power-ups: rare slow/fast/sticky pickups; never during swarms (we want
+    // those phases to feel pure dodge).
     let kind: ClusterKind = "normal";
-    if (this.score >= STICKY_MIN_SCORE && Math.random() < STICKY_SPAWN_CHANCE) {
-      kind = "sticky";
+    if (!isSwarmSpawn && this.score >= POWERUP_MIN_SCORE) {
+      const r = Math.random();
+      const slowEnd = SLOW_SPAWN_CHANCE;
+      const fastEnd = slowEnd + FAST_SPAWN_CHANCE;
+      const stickyEnd = fastEnd + STICKY_SPAWN_CHANCE;
+      if (r < slowEnd) kind = "slow";
+      else if (r < fastEnd) kind = "fast";
+      else if (r < stickyEnd && this.score >= STICKY_MIN_SCORE) kind = "sticky";
     }
 
-    const colStep = this.pickSpawnColumn(shape);
-    if (colStep === null) {
-      // No valid spawn this tick (would block the safe lane). Skip.
-      return;
-    }
-    const colWidth = SQRT3 * this.hexSize;
-    const x = this.boardOriginX + this.boardWidth / 2 + colStep * colWidth;
-    const y = this.boardOriginY - this.hexSize * 4;
+    // Side spawn: at high score the play also gets clusters flying in from
+    // left/right at a downward angle. Sticky/slow/fast still drop from the
+    // top so they're catchable.
+    const sideSpawn =
+      kind === "normal" &&
+      this.score >= SIDE_SPAWNS_SCORE &&
+      Math.random() < 0.18;
 
     const speed = this.computeFallSpeed();
-    const spin = (Math.random() - 0.5) * 0.08;
+    const spin = (Math.random() - 0.5) * (isSwarmSpawn ? 0.16 : 0.08);
+    let x: number;
+    let y: number;
+    let vx: number;
+    let vy: number;
+
+    if (sideSpawn) {
+      const fromLeft = Math.random() < 0.5;
+      const yBand = this.boardHeight * 0.45;
+      y = this.boardOriginY + this.hexSize * 2 + Math.random() * yBand;
+      const sideAngle = 0.25 + Math.random() * 0.25; // 14°-29° below horizontal
+      const total = speed * 1.05;
+      if (fromLeft) {
+        x = this.boardOriginX - this.hexSize * 3;
+        vx = Math.cos(sideAngle) * total;
+        vy = Math.sin(sideAngle) * total;
+      } else {
+        x = this.boardOriginX + this.boardWidth + this.hexSize * 3;
+        vx = -Math.cos(sideAngle) * total;
+        vy = Math.sin(sideAngle) * total;
+      }
+    } else {
+      const colStep = this.pickSpawnColumn(shape);
+      if (colStep === null) return; // would block the safe lane
+      const railLeft = this.currentRailLeft();
+      const railRight = this.currentRailRight();
+      const railCenter = (railLeft + railRight) / 2;
+      const colWidth = SQRT3 * this.hexSize;
+      x = railCenter + colStep * colWidth;
+      y = this.boardOriginY - this.hexSize * 4;
+
+      // Angled-drop spawn: late game, some clusters drop at a non-vertical
+      // angle. The angle stays small (≤ ~20°) so the cluster still ends up
+      // somewhere reachable.
+      if (this.score >= ANGLED_SPAWNS_SCORE && kind === "normal" && Math.random() < 0.3) {
+        const angle = (Math.random() - 0.5) * 0.7;
+        vx = Math.sin(angle) * speed;
+        vy = Math.cos(angle) * speed;
+      } else {
+        vx = 0;
+        vy = speed;
+      }
+    }
 
     const cluster = FallingCluster.spawn({
       shape,
@@ -584,11 +726,13 @@ export class Game {
       y,
       hexSize: this.hexSize,
       kind,
-      initialSpeedY: speed,
+      initialSpeedY: vy,
       initialSpin: spin,
     });
+    // Override velocity so we can include the horizontal component for
+    // angled / side spawns.
+    Body.setVelocity(cluster.body, { x: vx, y: vy });
 
-    // Apply collision filter.
     cluster.body.collisionFilter.category = CAT_CLUSTER;
     cluster.body.collisionFilter.mask = CAT_PLAYER | CAT_CLUSTER;
     for (let i = 1; i < cluster.body.parts.length; i++) {
@@ -624,6 +768,7 @@ export class Game {
 
   private currentSpawnInterval(): number {
     const p = this.waveParams();
+    if (this.wavePhase === "wave" && this.swarmWave) return SWARM_SPAWN_INTERVAL;
     return this.wavePhase === "wave" ? p.waveSpawnInterval : p.calmSpawnInterval;
   }
 
@@ -635,8 +780,10 @@ export class Game {
     if (this.wavePhase === "wave") {
       // Each cluster picks its own speed within ±30% of the wave-multiplier
       // baseline so the wave feels chaotic rather than uniform.
-      const variance = 0.7 + Math.random() * 0.6;
-      return Math.min(MAX_FALL_SPEED * 1.6, base * this.waveParams().waveSpeedMul * variance);
+      const variance = this.swarmWave
+        ? 0.6 + Math.random() * 0.9 // wider spread during a swarm
+        : 0.7 + Math.random() * 0.6;
+      return Math.min(MAX_FALL_SPEED * 1.7, base * this.waveParams().waveSpeedMul * variance);
     }
     return base;
   }
@@ -654,15 +801,35 @@ export class Game {
   private startWave(): void {
     this.wavePhase = "wave";
     this.wavePhaseTimer = 0;
-    // Pick a fresh safe column for this wave so the player can always find a
-    // lane that won't be blocked.
+    // Decide whether this is a single-hex swarm wave for variety.
+    this.swarmWave = Math.random() < SWARM_WAVE_CHANCE;
+    // Pick a fresh safe column. Swarm waves still respect this.
     const half = Math.floor(BOARD_COLS / 2);
     this.safeColumn = Math.floor(Math.random() * (half * 2 + 1)) - half;
+    // Late game: half of waves narrow the play area.
+    if (this.score >= NARROWING_SCORE && Math.random() < 0.5) {
+      this.pinchTarget = 0.35; // 35% inset from each side
+    } else {
+      this.pinchTarget = 0;
+    }
   }
 
   private startCalm(): void {
     this.wavePhase = "calm";
     this.wavePhaseTimer = 0;
+    this.swarmWave = false;
+    this.pinchTarget = 0;
+  }
+
+  // Inner left/right edges of the play area, accounting for the animated
+  // pinch when active.
+  currentRailLeft(): number {
+    const inset = this.pinch * this.boardWidth * 0.5 * 0.6;
+    return this.boardOriginX + inset;
+  }
+  currentRailRight(): number {
+    const inset = this.pinch * this.boardWidth * 0.5 * 0.6;
+    return this.boardOriginX + this.boardWidth - inset;
   }
 
   private shapeColumnFootprint(shape: Shape): { min: number; max: number } {
@@ -678,10 +845,13 @@ export class Game {
   }
 
   private pickSpawnColumn(shape: Shape): number | null {
-    const half = Math.floor(BOARD_COLS / 2);
+    // The available columns shrink with the pinch, so spawns stay inside the
+    // narrowed area when active.
+    const halfFull = Math.floor(BOARD_COLS / 2);
+    const halfActive = Math.max(1, Math.floor(halfFull * (1 - this.pinch * 0.6)));
     const fp = this.shapeColumnFootprint(shape);
     const all: number[] = [];
-    for (let c = -half; c <= half; c++) all.push(c);
+    for (let c = -halfActive; c <= halfActive; c++) all.push(c);
 
     const valid =
       this.wavePhase === "wave"
@@ -752,6 +922,28 @@ export class Game {
     ctx.fillStyle = "#0e1124";
     ctx.fillRect(this.boardOriginX, this.boardOriginY, this.boardWidth, this.boardHeight);
 
+    // Pinch panels: dim slabs slide in from the sides when the play area is
+    // narrowed during a late-game wave.
+    if (this.pinch > 0.01) {
+      const inset = this.pinch * this.boardWidth * 0.5 * 0.6;
+      ctx.fillStyle = "rgba(180, 100, 110, 0.12)";
+      ctx.fillRect(this.boardOriginX, this.boardOriginY, inset, this.boardHeight);
+      ctx.fillRect(
+        this.boardOriginX + this.boardWidth - inset,
+        this.boardOriginY,
+        inset,
+        this.boardHeight,
+      );
+      ctx.strokeStyle = "rgba(255, 120, 130, 0.55)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(this.boardOriginX + inset, this.boardOriginY);
+      ctx.lineTo(this.boardOriginX + inset, this.boardOriginY + this.boardHeight);
+      ctx.moveTo(this.boardOriginX + this.boardWidth - inset, this.boardOriginY);
+      ctx.lineTo(this.boardOriginX + this.boardWidth - inset, this.boardOriginY + this.boardHeight);
+      ctx.stroke();
+    }
+
     // Bottom rail line where the player sits.
     ctx.strokeStyle = "rgba(180, 200, 255, 0.1)";
     ctx.lineWidth = 1;
@@ -768,12 +960,23 @@ export class Game {
     ctx.clip();
 
     for (const d of this.debris) d.draw(ctx, this.hexSize);
-    for (const c of this.clusters) c.draw(ctx, this.hexSize, dt);
+    for (const c of this.clusters) c.draw(ctx, this.hexSize, dt, this.timeEffect);
 
     ctx.restore();
 
-    // Player draws unclipped — it is clamped to the board area, so this is a
-    // safety net rather than a true visibility risk.
     this.player.draw(ctx);
+
+    // Time-effect HUD: a small countdown bar at the top of the play area.
+    if (this.timeEffect !== null) {
+      const frac = Math.max(0, this.timeEffectTimer / TIME_EFFECT_DURATION);
+      const w = this.boardWidth * 0.6;
+      const x0 = this.boardOriginX + (this.boardWidth - w) / 2;
+      const y0 = this.boardOriginY + 6;
+      const color = this.timeEffect === "slow" ? "#ffd76b" : "#7fe89c";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+      ctx.fillRect(x0, y0, w, 6);
+      ctx.fillStyle = color;
+      ctx.fillRect(x0, y0, w * frac, 6);
+    }
   }
 }
