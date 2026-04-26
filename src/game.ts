@@ -62,9 +62,11 @@ export class Game {
   private clusterByBodyId = new Map<number, FallingCluster>();
   private pendingContacts: Array<{ cluster: FallingCluster; contact: ContactInfo }> = [];
   private player!: Player;
-  // World-frame target angle from the touch rotation pad. Null = no target,
-  // leave rotation to physics + keyboard hold.
-  private rotationTarget: number | null = null;
+  // Touch rotation pad — works like an iPod click wheel: dragging around the
+  // ring rotates the player by the angular delta of the drag (relative).
+  // We just track the previous touch angle to compute the delta each move.
+  private rotationDragActive = false;
+  private prevRotateTouchAngle: number | null = null;
   // Touch slider value [-1..1]. Null = inactive (fall back to keyboard).
   private slideTarget: number | null = null;
 
@@ -158,11 +160,29 @@ export class Game {
     if (rotatePadEl && rotateKnobEl) {
       extraUnbinds.push(
         bindRotatePad(rotatePadEl, rotateKnobEl, (angle) => {
-          this.rotationTarget = angle;
-          if (angle !== null) {
+          if (angle === null) {
+            this.rotationDragActive = false;
+            this.prevRotateTouchAngle = null;
+            return;
+          }
+          if (!this.rotationDragActive) {
+            // First sample of a new drag — anchor at the player's current
+            // angle so it doesn't jump.
+            this.rotationDragActive = true;
+            this.prevRotateTouchAngle = angle;
             this.holds.rotateCw.active = false;
             this.holds.rotateCcw.active = false;
+            return;
           }
+          // Compute the angular delta between this and the previous touch
+          // sample, normalised to (-π, π] so wrapping at the top of the
+          // ring doesn't produce a 2π jump.
+          const prev = this.prevRotateTouchAngle ?? angle;
+          let delta = angle - prev;
+          if (delta > Math.PI) delta -= 2 * Math.PI;
+          else if (delta < -Math.PI) delta += 2 * Math.PI;
+          this.prevRotateTouchAngle = angle;
+          this.player.setAngle(this.player.body.angle + delta);
         }),
       );
     }
@@ -230,7 +250,8 @@ export class Game {
     this.spawnTimer = 0;
     this.wavePhase = "calm";
     this.wavePhaseTimer = 0;
-    this.rotationTarget = null;
+    this.rotationDragActive = false;
+    this.prevRotateTouchAngle = null;
     this.slideTarget = null;
 
     this.player = new Player({
@@ -323,13 +344,14 @@ export class Game {
       this.player.setHorizontalVelocity(vx);
     }
 
-    if (this.rotationTarget !== null) {
-      // Direct, lag-free angle mapping from the click-wheel pad.
-      this.player.setAngle(this.rotationTarget);
-    } else if (this.holds.rotateCw.active && !this.holds.rotateCcw.active) {
-      this.player.setAngularVelocity(PLAYER_ROT_SPEED);
-    } else if (this.holds.rotateCcw.active && !this.holds.rotateCw.active) {
-      this.player.setAngularVelocity(-PLAYER_ROT_SPEED);
+    // Click-wheel rotation is applied incrementally inside the touch
+    // callback; here we only handle the keyboard hold path.
+    if (!this.rotationDragActive) {
+      if (this.holds.rotateCw.active && !this.holds.rotateCcw.active) {
+        this.player.setAngularVelocity(PLAYER_ROT_SPEED);
+      } else if (this.holds.rotateCcw.active && !this.holds.rotateCw.active) {
+        this.player.setAngularVelocity(-PLAYER_ROT_SPEED);
+      }
     }
 
     this.player.inDanger = this.player.size() >= DANGER_SIZE;
