@@ -801,14 +801,18 @@ export class Game {
       const aIsDrone = parentA.label === "drone";
       const bIsDrone = parentB.label === "drone";
 
-      // Drone vs cluster: drones shatter ANY cluster (helpful or harmful)
-      // they touch — they're a kinetic interceptor. Resolve immediately
-      // rather than queueing through pendingContacts since they don't
-      // touch the player at all.
+      // Drone vs cluster: drones only intercept blue (normal) clusters.
+      // Power-ups, coins, and sticky red blocks pass through so the
+      // player can still grab (or be hit by) them.
       if ((aIsDrone && bIsCluster) || (bIsDrone && aIsCluster)) {
         const clusterParent = aIsCluster ? parentA : parentB;
         const cluster = this.clusterByBodyId.get(clusterParent.id);
-        if (cluster && cluster.alive && !cluster.contacted) {
+        if (
+          cluster &&
+          cluster.alive &&
+          !cluster.contacted &&
+          cluster.kind === "normal"
+        ) {
           cluster.contacted = true;
           this.shatterClusterMidair(cluster);
         }
@@ -868,13 +872,10 @@ export class Game {
 
       this.player.invulnTimer = STICK_INVULN_MS / 1000;
 
-      // Shield absorbs harmful contacts (normal + sticky) at the cost of
-      // 1s of shield time per absorbed hit. Helpful pickups are unaffected
-      // by the shield so the player can still grab them while bubbled.
-      if (
-        this.shieldTimer > 0 &&
-        (cluster.kind === "normal" || cluster.kind === "sticky")
-      ) {
+      // Shield only absorbs blue (normal) hits at a cost of 1s per absorbed
+      // contact. Red sticky still rips hexes off, and every helpful pickup
+      // (coin, slow, fast, drone, shield refresh) still registers normally.
+      if (this.shieldTimer > 0 && cluster.kind === "normal") {
         this.absorbWithShield(cluster);
         continue;
       }
