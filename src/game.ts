@@ -31,6 +31,7 @@ const POWERUP_MIN_SCORE = 5;
 // Time-effect tuning.
 const SLOW_EFFECT_DURATION = 10;
 const FAST_EFFECT_DURATION = 5;
+const STICK_SLOW_BUFFER = 2; // brief slow-mo after gaining a hex
 const SLOW_TIMESCALE = 0.5;
 const FAST_TIMESCALE = 1.25;
 
@@ -102,6 +103,7 @@ export class Game {
   // dt; the visual trail uses timeEffect to decide bubble vs speed-line.
   private timeEffect: "slow" | "fast" | null = null;
   private timeEffectTimer = 0;
+  private timeEffectMax = 1;
   private timeScale = 1;
 
   // Optional inward-narrowing pinch active in late game (score >= NARROWING_SCORE).
@@ -285,6 +287,7 @@ export class Game {
     this.swarmWave = false;
     this.timeEffect = null;
     this.timeEffectTimer = 0;
+    this.timeEffectMax = 1;
     this.timeScale = 1;
     this.pinch = 0;
     this.pinchTarget = 0;
@@ -534,7 +537,21 @@ export class Game {
     const allParts = cluster.partWorldPositions();
 
     const cell = this.player.findStickCell(contact.point.x, contact.point.y);
-    if (cell) this.player.addCell(cell);
+    if (cell) {
+      this.player.addCell(cell);
+      // Brief slow-mo buffer so the player can recover their bearings after
+      // a hit. Stacks with an existing slow effect by extending the timer
+      // rather than truncating; overrides a fast effect (slow > fast for
+      // recovery).
+      if (this.timeEffect === "slow") {
+        this.timeEffectTimer = Math.max(this.timeEffectTimer, STICK_SLOW_BUFFER);
+      } else {
+        this.timeEffect = "slow";
+        this.timeScale = SLOW_TIMESCALE;
+        this.timeEffectTimer = STICK_SLOW_BUFFER;
+        this.timeEffectMax = STICK_SLOW_BUFFER;
+      }
+    }
 
     // Spawn debris for the OTHER cluster parts (not the one that stuck).
     for (const p of allParts) {
@@ -644,10 +661,12 @@ export class Game {
       this.timeEffect = "slow";
       this.timeScale = SLOW_TIMESCALE;
       this.timeEffectTimer = SLOW_EFFECT_DURATION;
+      this.timeEffectMax = SLOW_EFFECT_DURATION;
     } else if (cluster.kind === "fast") {
       this.timeEffect = "fast";
       this.timeScale = FAST_TIMESCALE;
       this.timeEffectTimer = FAST_EFFECT_DURATION;
+      this.timeEffectMax = FAST_EFFECT_DURATION;
     }
 
     // Burst the powerup into debris so the pickup feels punchy.
@@ -994,9 +1013,7 @@ export class Game {
 
     // Time-effect HUD: a small countdown bar at the top of the play area.
     if (this.timeEffect !== null) {
-      const totalDuration =
-        this.timeEffect === "slow" ? SLOW_EFFECT_DURATION : FAST_EFFECT_DURATION;
-      const frac = Math.max(0, this.timeEffectTimer / totalDuration);
+      const frac = Math.max(0, this.timeEffectTimer / this.timeEffectMax);
       const w = this.boardWidth * 0.6;
       const x0 = this.boardOriginX + (this.boardWidth - w) / 2;
       const y0 = this.boardOriginY + 6;
