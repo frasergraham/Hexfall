@@ -449,10 +449,6 @@ export function bindSlider(
     knob.style.left = `${x}px`;
   };
 
-  const resetKnob = () => {
-    positionKnob(0);
-  };
-
   const start = (clientX: number) => {
     active = true;
     pad.classList.add("active");
@@ -471,7 +467,9 @@ export function bindSlider(
     active = false;
     pad.classList.remove("active");
     onSlide(null);
-    resetKnob();
+    // Knob stays where it was released so the slider visually reflects
+    // the player's current rail position, instead of snapping back to
+    // centre and implying the player has moved.
   };
 
   // Same multi-touch handling as the rotate pad — read targetTouches so a
