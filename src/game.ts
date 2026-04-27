@@ -414,6 +414,19 @@ export class Game {
     this.scoreEl = opts.scoreEl;
     this.bestEl = opts.bestEl;
     this.pauseBtn = document.getElementById("pauseBtn");
+    // Touchstart fires the pause immediately, even when another finger is
+    // already mid-drag on the position slider — click events can be
+    // swallowed when a sibling touch sequence is calling preventDefault.
+    // Click stays for mouse / keyboard / accessibility fallback.
+    this.pauseBtn?.addEventListener(
+      "touchstart",
+      (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        this.pauseGame();
+      },
+      { passive: false },
+    );
     this.pauseBtn?.addEventListener("click", (e) => {
       e.stopPropagation();
       this.pauseGame();
@@ -510,6 +523,11 @@ export class Game {
     if (movePadEl && moveKnobEl) {
       extraUnbinds.push(
         bindSlider(movePadEl, moveKnobEl, (value) => {
+          // While paused, ignore slider input entirely. The pad has
+          // pointer-events:none in its disabled state so new touches
+          // don't even fire — but if a touch was already in progress
+          // when pause started, we drop the values here.
+          if (this.state === "paused") return;
           this.slideTarget = value;
           if (value !== null) {
             this.holds.left.active = false;
@@ -535,6 +553,12 @@ export class Game {
       if (btn) {
         const value = btn.dataset.difficulty as Difficulty | undefined;
         if (value) this.setDifficulty(value);
+        return;
+      }
+      // Quit-to-menu button on the paused overlay.
+      const quitBtn = target?.closest('button[data-action="quit"]') as HTMLButtonElement | null;
+      if (quitBtn) {
+        this.quitToMenu();
         return;
       }
 
@@ -704,65 +728,12 @@ export class Game {
   private debugRun = false;
 
   private startOrRestart(initialScore = 0): void {
-    // Tear down all existing physics bodies.
-    for (const s of this.sticksInFlight) Composite.remove(this.engine.world, s.body);
-    this.sticksInFlight = [];
-    for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
-    for (const d of this.debris) Composite.remove(this.engine.world, d.body);
-    Composite.remove(this.engine.world, this.player.body);
-
-    this.clusters = [];
-    this.debris = [];
-    this.clusterByBodyId.clear();
-    this.pendingContacts = [];
-
-    this.score = initialScore;
-    this.debugRun = initialScore > 0;
-    this.comboHits = 0;
-    this.spawnTimer = 0;
-    this.firstSpawn = true;
-    this.setScoreVisible(true);
-    this.setPauseButtonVisible(true);
-    this.resumeCountdown = 0;
-    this.nextMilestoneIdx = 0;
-    this.wasInDangerThisRun = false;
-    this.wavePhase = "calm";
-    this.wavePhaseTimer = 0;
-    this.swarmWave = false;
-    this.timeEffect = null;
-    this.timeEffectTimer = 0;
-    this.timeEffectMax = 1;
-    this.timeScale = 1;
-    this.floaters = [];
-    this.shieldTimer = 0;
-    for (const d of this.drones) Composite.remove(this.engine.world, d.body);
-    this.drones = [];
-    // The "ever shown this session" flag (rotateTutorialShown) is *not*
-    // reset on restart — only on a full page reload, like seenKinds.
-    this.rotateTutorialActive = false;
-    this.rotateTutorialTimer = 0;
-    this.rotateTutorialStartAngle = 0;
-    this.fastLevel = 0;
-    this.fastBonus = 0;
-    // Note: seenKinds is *not* cleared — hints only show on the very first
-    // play of the game on this device, never on restarts.
-    this.pinch = 0;
-    this.pinchTarget = 0;
-    this.rotationDragActive = false;
-    this.slideTarget = null;
-
-    this.player = new Player({
-      centerX: this.boardOriginX + this.boardWidth / 2,
-      centerY: this.playerY,
-      hexSize: this.hexSize,
-      engine: this.engine,
-      collisionCategory: CAT_PLAYER,
-      collisionMask: CAT_CLUSTER,
-    });
-
+    this.resetRunState(initialScore);
     this.state = "playing";
     this.overlay.classList.add("hidden");
-    this.scoreEl.textContent = String(this.score);
+    this.setScoreVisible(true);
+    this.setPauseButtonVisible(true);
+    this.setSliderEnabled(true);
   }
 
   private renderMenu(): void {
@@ -784,6 +755,12 @@ export class Game {
     if (this.pauseBtn) this.pauseBtn.hidden = !visible;
   }
 
+  private setSliderEnabled(enabled: boolean): void {
+    const movePadEl = document.getElementById("movepad");
+    if (!movePadEl) return;
+    movePadEl.classList.toggle("disabled", !enabled);
+  }
+
   private pauseGame(): void {
     if (this.state !== "playing") return;
     this.state = "paused";
@@ -791,9 +768,14 @@ export class Game {
     this.overlay.innerHTML = `
       <h1>PAUSED</h1>
       <p class="hint">Tap to resume</p>
+      <button type="button" class="pill-btn" data-action="quit">QUIT</button>
     `;
     this.overlay.classList.remove("hidden");
     this.setPauseButtonVisible(false);
+    this.setSliderEnabled(false);
+    // Drop any in-flight slider value so the player doesn't sail off the
+    // moment the countdown ends if their finger was mid-drag at pause.
+    this.slideTarget = null;
   }
 
   private beginResumeCountdown(): void {
@@ -803,6 +785,70 @@ export class Game {
     // Pause button stays hidden during the countdown — the player can
     // see the big number and shouldn't be jostling the UI mid-count.
     this.setPauseButtonVisible(false);
+    this.setSliderEnabled(true);
+  }
+
+  private quitToMenu(): void {
+    if (this.state !== "paused") return;
+    this.resetRunState(0);
+    this.state = "menu";
+    this.renderMenu();
+    this.setSliderEnabled(true);
+  }
+
+  // Tear-down + reset of every per-run field. Shared by startOrRestart
+  // (transitions on into "playing") and quitToMenu (transitions on into
+  // "menu") so both paths leave the engine and UI in a clean state.
+  private resetRunState(initialScore: number): void {
+    for (const s of this.sticksInFlight) Composite.remove(this.engine.world, s.body);
+    this.sticksInFlight = [];
+    for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+    for (const d of this.debris) Composite.remove(this.engine.world, d.body);
+    for (const d of this.drones) Composite.remove(this.engine.world, d.body);
+    Composite.remove(this.engine.world, this.player.body);
+
+    this.clusters = [];
+    this.debris = [];
+    this.drones = [];
+    this.clusterByBodyId.clear();
+    this.pendingContacts = [];
+
+    this.score = initialScore;
+    this.debugRun = initialScore > 0;
+    this.comboHits = 0;
+    this.spawnTimer = 0;
+    this.firstSpawn = true;
+    this.resumeCountdown = 0;
+    this.nextMilestoneIdx = 0;
+    this.wasInDangerThisRun = false;
+    this.wavePhase = "calm";
+    this.wavePhaseTimer = 0;
+    this.swarmWave = false;
+    this.timeEffect = null;
+    this.timeEffectTimer = 0;
+    this.timeEffectMax = 1;
+    this.timeScale = 1;
+    this.floaters = [];
+    this.shieldTimer = 0;
+    this.rotateTutorialActive = false;
+    this.rotateTutorialTimer = 0;
+    this.rotateTutorialStartAngle = 0;
+    this.fastLevel = 0;
+    this.fastBonus = 0;
+    this.pinch = 0;
+    this.pinchTarget = 0;
+    this.rotationDragActive = false;
+    this.slideTarget = null;
+
+    this.player = new Player({
+      centerX: this.boardOriginX + this.boardWidth / 2,
+      centerY: this.playerY,
+      hexSize: this.hexSize,
+      engine: this.engine,
+      collisionCategory: CAT_PLAYER,
+      collisionMask: CAT_CLUSTER,
+    });
+    this.scoreEl.textContent = String(this.score);
   }
 
   private difficultyButtonsHtml(): string {
@@ -877,6 +923,7 @@ export class Game {
           this.resumeCountdown = 0;
           this.state = "playing";
           this.setPauseButtonVisible(true);
+          this.setSliderEnabled(true);
         }
       }
       return;
