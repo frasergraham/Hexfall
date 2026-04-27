@@ -260,6 +260,7 @@ export class Game {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private overlay: HTMLElement;
+  private menuOverlayHtml: string = "";
   private touchbar: HTMLElement;
   private scoreEl: HTMLElement;
   private bestEl: HTMLElement;
@@ -410,6 +411,10 @@ export class Game {
     if (!ctx) throw new Error("Canvas 2D context unavailable");
     this.ctx = ctx;
     this.overlay = opts.overlay;
+    // Snapshot the menu's initial markup (set up in index.html) so
+    // renderMenu() can restore it after the overlay has been rewritten
+    // for paused / game-over screens.
+    this.menuOverlayHtml = this.overlay.innerHTML;
     this.touchbar = opts.touchbar;
     this.scoreEl = opts.scoreEl;
     this.bestEl = opts.bestEl;
@@ -737,6 +742,10 @@ export class Game {
   }
 
   private renderMenu(): void {
+    // Restore the menu markup — paused / game-over screens overwrite
+    // this.overlay.innerHTML, so without this the QUIT-to-menu path
+    // would leave the PAUSED text on screen.
+    this.overlay.innerHTML = this.menuOverlayHtml;
     this.overlay.classList.remove("hidden");
     this.renderAchievementBadges();
     this.refreshDifficultyButtons();
@@ -782,10 +791,10 @@ export class Game {
     if (this.state !== "paused") return;
     this.overlay.classList.add("hidden");
     this.resumeCountdown = 3;
-    // Pause button stays hidden during the countdown — the player can
-    // see the big number and shouldn't be jostling the UI mid-count.
+    // Pause button + slider stay locked during the countdown — the
+    // player can see the big number and shouldn't be moving anything
+    // mid-count. Both unlock when the countdown completes (in update).
     this.setPauseButtonVisible(false);
-    this.setSliderEnabled(true);
   }
 
   private quitToMenu(): void {
