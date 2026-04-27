@@ -1515,11 +1515,32 @@ export class Game {
     // already in the danger zone. Otherwise a fast 5→6→7 combo would end
     // the run before the danger glow ever appears.
     const wasInDanger = this.player.size() >= DANGER_SIZE;
+    const sizeBefore = this.player.size();
 
-    const cell = this.player.findStickCell(contact.point.x, contact.point.y);
-    if (cell) {
-      const sizeBefore = this.player.size();
+    // Mirrors sticky's removal rule: an N-hex blue sticks max(1, N-1) hexes
+    // onto the player, so bigger blocks bite harder. Each stick anchors at
+    // the cluster part closest to the contact point that hasn't already
+    // been used, and chains via findStickCell on the rebuilt blob.
+    const stickCount = Math.max(1, allParts.length - 1);
+    const partsByDist = allParts
+      .map((p) => ({
+        p,
+        d: Math.hypot(p.x - contact.point.x, p.y - contact.point.y),
+      }))
+      .sort((a, b) => a.d - b.d);
+
+    const stuckPartIds = new Set<number>();
+    let stuck = 0;
+    for (const item of partsByDist) {
+      if (stuck >= stickCount) break;
+      const cell = this.player.findStickCell(item.p.x, item.p.y);
+      if (!cell) continue;
       this.player.addCell(cell);
+      stuckPartIds.add(item.p.partId);
+      stuck += 1;
+    }
+
+    if (stuck > 0) {
       // Brief slow-mo buffer so the player can recover their bearings after
       // a hit. Stacks with an existing slow effect by extending the timer
       // rather than truncating; overrides a fast effect (slow > fast for
@@ -1534,11 +1555,7 @@ export class Game {
       }
       // First time the blob ever grows past one hex this page session,
       // teach the rotate gesture: big label + curved arrow + 0.25x slow.
-      if (
-        sizeBefore === 1 &&
-        this.player.size() === 2 &&
-        !this.rotateTutorialShown
-      ) {
+      if (sizeBefore === 1 && this.player.size() > 1 && !this.rotateTutorialShown) {
         this.rotateTutorialShown = true;
         this.rotateTutorialActive = true;
         this.rotateTutorialTimer = 0;
@@ -1546,9 +1563,9 @@ export class Game {
       }
     }
 
-    // Spawn debris for the OTHER cluster parts (not the one that stuck).
+    // Spawn debris for the cluster parts that didn't stick.
     for (const p of allParts) {
-      if (p.partId === contact.partId) continue;
+      if (stuckPartIds.has(p.partId)) continue;
       this.spawnDebris({
         x: p.x,
         y: p.y,
