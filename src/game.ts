@@ -11,7 +11,7 @@ import {
   setAchievementListener,
   submitScore as gcSubmitScore,
 } from "./gameCenter";
-import { SQRT3 } from "./hex";
+import { axialToPixel, buildPolyhexShape, hashString, mulberry32, SQRT3 } from "./hex";
 import { bindCanvasSlide, bindInput, bindSlider, isTouchDevice } from "./input";
 import { Player } from "./player";
 import type { ClusterKind, GameState, InputAction, Shape } from "./types";
@@ -452,11 +452,47 @@ export class Game {
     const host = document.getElementById("achievementBadges");
     if (!host) return;
     const earned = getEarnedAchievements();
+    if (earned.length === 0) {
+      host.innerHTML = "";
+      host.style.width = "";
+      host.style.height = "";
+      return;
+    }
+
+    // Pointy-top hex sized so the bounding box matches the existing
+    // 44×50 badge clip-path: width = SQRT3·size, height = 2·size.
+    const HEX_SIZE = 25;
+    const HEX_W = SQRT3 * HEX_SIZE;
+    const HEX_H = 2 * HEX_SIZE;
+
+    // Stable shape per achievement set: same earns → same polyhex across
+    // reloads, so the menu doesn't reshuffle every time it re-renders.
+    const seed = hashString(earned.map((m) => m.id).sort().join("|"));
+    const shape = buildPolyhexShape(earned.length, mulberry32(seed));
+    const positions = shape.map((a) => axialToPixel(a, HEX_SIZE));
+
+    let minX = Infinity,
+      maxX = -Infinity,
+      minY = Infinity,
+      maxY = -Infinity;
+    for (const p of positions) {
+      if (p.x - HEX_W / 2 < minX) minX = p.x - HEX_W / 2;
+      if (p.x + HEX_W / 2 > maxX) maxX = p.x + HEX_W / 2;
+      if (p.y - HEX_H / 2 < minY) minY = p.y - HEX_H / 2;
+      if (p.y + HEX_H / 2 > maxY) maxY = p.y + HEX_H / 2;
+    }
+    const width = maxX - minX;
+    const height = maxY - minY;
+    host.style.width = `${Math.ceil(width)}px`;
+    host.style.height = `${Math.ceil(height)}px`;
+
     host.innerHTML = earned
-      .map(
-        (m) =>
-          `<span class="achievement-badge" style="--badge-tint:${m.tint}" title="${escapeHtml(m.name)} — ${escapeHtml(m.description)}">${escapeHtml(m.badge)}</span>`,
-      )
+      .map((m, i) => {
+        const p = positions[i];
+        const left = p.x - HEX_W / 2 - minX;
+        const top = p.y - HEX_H / 2 - minY;
+        return `<span class="achievement-badge" style="--badge-tint:${m.tint}; left:${left.toFixed(2)}px; top:${top.toFixed(2)}px; width:${HEX_W.toFixed(2)}px; height:${HEX_H.toFixed(2)}px;" title="${escapeHtml(m.name)} — ${escapeHtml(m.description)}">${escapeHtml(m.badge)}</span>`;
+      })
       .join("");
   }
 

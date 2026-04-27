@@ -332,21 +332,22 @@ body {
   font-weight: 700;
 }
 
+/* Polyhex blob: the container is sized inline by JS to the bounding box
+   of the generated shape; each badge is positioned absolutely at its
+   axial → pixel coord so they stack flush like an in-game cluster. */
 .achievement-badges {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px 12px;
+  position: relative;
+  margin: 0 auto;
 }
 
 /* Hex badge: clip-path polygon, no border or pill background, so it
-   reads as a token rather than a tappable button. */
+   reads as a token rather than a tappable button. Width/height set
+   inline so they match the polyhex tiling exactly. */
 .achievement-badge {
+  position: absolute;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 50px;
   /* Pointy-top regular hexagon */
   clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
   background: var(--badge-tint, #5b8bff);

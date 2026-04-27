@@ -117,3 +117,53 @@ export function pathHex(
   }
   ctx.closePath();
 }
+
+// Grow a connected polyhex of `n` cells from the origin. Each step adds a
+// uniformly-random unoccupied neighbour of the current set, so the result
+// is a single contact-coherent blob with shape variety. `rng` defaults to
+// Math.random; pass a seeded source for stable layouts.
+export function buildPolyhexShape(n: number, rng: () => number = Math.random): Axial[] {
+  if (n <= 0) return [];
+  const cells: Axial[] = [{ q: 0, r: 0 }];
+  const seen = new Set<string>([axialKey(cells[0])]);
+  while (cells.length < n) {
+    const candidates: Axial[] = [];
+    const candKeys = new Set<string>();
+    for (const c of cells) {
+      for (const d of NEIGHBOR_DIRS) {
+        const next = axialAdd(c, d);
+        const k = axialKey(next);
+        if (!seen.has(k) && !candKeys.has(k)) {
+          candidates.push(next);
+          candKeys.add(k);
+        }
+      }
+    }
+    if (candidates.length === 0) break;
+    const pick = candidates[Math.floor(rng() * candidates.length)];
+    cells.push(pick);
+    seen.add(axialKey(pick));
+  }
+  return cells;
+}
+
+// Tiny seeded PRNG (mulberry32) — deterministic from a 32-bit seed so the
+// same achievement set always produces the same polyhex layout.
+export function mulberry32(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function hashString(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
