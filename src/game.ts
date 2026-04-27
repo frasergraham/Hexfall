@@ -173,8 +173,8 @@ const SWARM_STICKY_CHANCE = 0.12; // chance a swarm hex spawns as a heal instead
 const ANGLED_SPAWNS_SCORE = 200;
 const SIDE_SPAWNS_SCORE = 400;
 
-const PLAYER_MOVE_SPEED = 5.5; // px/ms (Matter velocity units, keyboard hold)
-const PLAYER_ROT_SPEED = 0.05; // rad/ms (keyboard hold)
+const PLAYER_MOVE_SPEED = 9; // px/ms (Matter velocity units, keyboard hold)
+const PLAYER_ROT_SPEED = 0.12; // rad/ms (keyboard hold)
 const RAIL_BOTTOM_INSET = 4; // px above the board bottom where the rail sits
 
 // Collision categories.
@@ -1400,6 +1400,10 @@ export class Game {
         this.player.setAngularVelocity(PLAYER_ROT_SPEED);
       } else if (this.holds.rotateCcw.active && !this.holds.rotateCw.active) {
         this.player.setAngularVelocity(-PLAYER_ROT_SPEED);
+      } else {
+        // Snap rotation to a stop the instant the key releases — no spin
+        // carry-over from physics momentum.
+        this.player.setAngularVelocity(0);
       }
     }
   }
