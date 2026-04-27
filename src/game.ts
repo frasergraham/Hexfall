@@ -705,6 +705,7 @@ export class Game {
     this.comboHits = 0;
     this.spawnTimer = 0;
     this.firstSpawn = true;
+    this.setScoreVisible(true);
     this.nextMilestoneIdx = 0;
     this.wasInDangerThisRun = false;
     this.wavePhase = "calm";
@@ -750,6 +751,14 @@ export class Game {
     this.overlay.classList.remove("hidden");
     this.renderAchievementBadges();
     this.refreshDifficultyButtons();
+    // Score is always 0 on the menu — the BEST readout is the only
+    // useful number. Hide the score block until a run starts.
+    this.setScoreVisible(false);
+  }
+
+  private setScoreVisible(visible: boolean): void {
+    const scoreParent = this.scoreEl.parentElement;
+    if (scoreParent) scoreParent.hidden = !visible;
   }
 
   private difficultyButtonsHtml(): string {
