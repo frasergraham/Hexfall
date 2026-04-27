@@ -270,6 +270,10 @@ export class Game {
   private best = 0;
   private comboHits = 0;
   private spawnTimer = 0;
+  // True for the very first spawn of each run. Forces a centered
+  // single-cell blue cluster so the first-ever AVOID hint label lands
+  // dead-centre on the screen.
+  private firstSpawn = true;
 
   // Per-run achievement tracking.
   private nextMilestoneIdx = 0;
@@ -700,6 +704,7 @@ export class Game {
     this.debugRun = initialScore > 0;
     this.comboHits = 0;
     this.spawnTimer = 0;
+    this.firstSpawn = true;
     this.nextMilestoneIdx = 0;
     this.wasInDangerThisRun = false;
     this.wavePhase = "calm";
@@ -1001,14 +1006,20 @@ export class Game {
   // when a cluster is near the top of the board.
   private drawClusterHints(): void {
     const ctx = this.ctx;
-    const fontSize = Math.max(36, Math.round(this.hexSize * 2.2));
+    // 20% smaller than before, in a wide monospace stack with extra
+    // letter-spacing so the labels read as spacey/technical rather than
+    // the chunky 900-weight sans-serif (whose 'A' renders oddly).
+    const fontSize = Math.max(28, Math.round(this.hexSize * 1.76));
     let drewAny = false;
 
     for (const c of this.clusters) {
       if (!c.hintLabel || !c.alive) continue;
       if (!drewAny) {
         ctx.save();
-        ctx.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        ctx.font = `700 ${fontSize}px ui-monospace, "SF Mono", Menlo, Consolas, monospace`;
+        // letterSpacing is well-supported in modern Chromium/Safari;
+        // older engines ignore it and the label just renders tight.
+        (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "0.16em";
         ctx.textAlign = "center";
         ctx.textBaseline = "alphabetic";
         drewAny = true;
@@ -2083,7 +2094,59 @@ export class Game {
     this.comboHits = 0;
   }
 
+  // Forced opening spawn: a centered single-cell blue cluster, straight
+  // drop, no side / angled / swarm overrides. Mirrors the tail of the
+  // regular spawnCluster path but with all the variation knobs nailed
+  // down so the AVOID hint sits dead-centre.
+  private spawnFirstClusterCentered(): void {
+    const kind: ClusterKind = "normal";
+    const shape: Shape = COIN_SHAPE;
+    const railLeft = this.currentRailLeft();
+    const railRight = this.currentRailRight();
+    const x = (railLeft + railRight) / 2;
+    const y = this.boardOriginY - this.hexSize * 4;
+    const speed = this.computeFallSpeed();
+
+    const cluster = FallingCluster.spawn({
+      shape,
+      x,
+      y,
+      hexSize: this.hexSize,
+      kind,
+      initialSpeedY: speed,
+      initialSpin: 0,
+    });
+    Body.setVelocity(cluster.body, { x: 0, y: speed });
+
+    cluster.body.collisionFilter.category = CAT_CLUSTER;
+    cluster.body.collisionFilter.mask = CAT_PLAYER | CAT_CLUSTER | CAT_DRONE;
+    for (let i = 1; i < cluster.body.parts.length; i++) {
+      cluster.body.parts[i]!.collisionFilter.category = CAT_CLUSTER;
+      cluster.body.parts[i]!.collisionFilter.mask =
+        CAT_PLAYER | CAT_CLUSTER | CAT_DRONE;
+    }
+
+    if (!this.seenKinds.has(kind)) {
+      cluster.hintLabel = kindLabel(kind);
+      this.seenKinds.add(kind);
+    }
+
+    this.clusters.push(cluster);
+    this.clusterByBodyId.set(cluster.body.id, cluster);
+    Composite.add(this.engine.world, cluster.body);
+  }
+
   private spawnCluster(): void {
+    // Very first spawn of the run: force a centered single-cell blue
+    // cluster so the first-ever AVOID hint label is dead-centre. This
+    // overrides everything (kind, shape, column, side spawn, angle) to
+    // give a clean opening cue.
+    if (this.firstSpawn) {
+      this.firstSpawn = false;
+      this.spawnFirstClusterCentered();
+      return;
+    }
+
     // Swarm waves drop a stream of single hexes at varied speeds. Outside
     // a swarm, pick a 2-5 cell polyhex shape from the library.
     const isSwarmSpawn = this.wavePhase === "wave" && this.swarmWave;
