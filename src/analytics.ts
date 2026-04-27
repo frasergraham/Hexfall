@@ -1,15 +1,11 @@
-// GoatCounter event reporting. The loader script in index.html exposes
-// `window.goatcounter`; calls before it loads are dropped silently.
+// GoatCounter event reporting. We bypass the loaded `count.js` for events
+// because it dedupes repeat calls with the same path inside a single
+// browser session (via sessionStorage), which means a player who plays
+// several runs in a row only registers one `play-start-*` event. Sending
+// directly to the `/count` endpoint with a fresh `rand` on every call
+// makes each play count as a distinct event server-side.
 
-interface GoatCounter {
-  count: (vars: { path: string; title?: string; event?: boolean }) => void;
-}
-
-declare global {
-  interface Window {
-    goatcounter?: GoatCounter;
-  }
-}
+const ENDPOINT = "https://twistedweasel.goatcounter.com/count";
 
 // Scores are bucketed into 100-wide bins so GoatCounter (which counts
 // events by name) gives a usable distribution. Capped at 3000+ to keep
@@ -23,11 +19,28 @@ function bucketScore(score: number): string {
   return `${lo}-${lo + SCORE_BUCKET_SIZE}`;
 }
 
+function isLocal(): boolean {
+  const h = location.hostname;
+  return (
+    h === "localhost" ||
+    h === "127.0.0.1" ||
+    h === "0.0.0.0" ||
+    h === "" ||
+    h.endsWith(".local")
+  );
+}
+
 function send(path: string, title: string): void {
-  const gc = window.goatcounter;
-  if (!gc?.count) return;
+  if (isLocal()) return;
   try {
-    gc.count({ path, title, event: true });
+    const url = new URL(ENDPOINT);
+    url.searchParams.set("p", path);
+    url.searchParams.set("t", title);
+    url.searchParams.set("e", "true");
+    url.searchParams.set("rand", String(Math.random()));
+    // Image beacon — fire-and-forget GET, no CORS preflight, no
+    // sessionStorage dedup.
+    new Image().src = url.toString();
   } catch {
     // Analytics must never break the game.
   }
