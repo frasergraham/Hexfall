@@ -1,4 +1,5 @@
 import { Bodies, Body, Composite, Engine, Events, type IEventCollision } from "matter-js";
+import { trackPlayEnd, trackPlayStart } from "./analytics";
 import { COIN_SHAPE, FallingCluster, hintPalette, kindLabel, pickShape } from "./cluster";
 import { DebrisHex } from "./debris";
 import {
@@ -739,6 +740,7 @@ export class Game {
     this.setScoreVisible(true);
     this.setPauseButtonVisible(true);
     this.setSliderEnabled(true);
+    if (!this.debugRun) trackPlayStart(this.difficulty);
   }
 
   private renderMenu(): void {
@@ -2631,6 +2633,7 @@ export class Game {
       this.saveBestFor(this.difficulty, this.best);
       this.bestEl.textContent = String(this.best);
     }
+    if (!this.debugRun) trackPlayEnd(this.difficulty, this.score);
     void gcSubmitScore(this.score);
     // Scatter the player blob into debris so the wreckage tumbles behind the
     // game-over screen. The player body itself is removed from the world so
