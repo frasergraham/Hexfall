@@ -506,7 +506,7 @@ export function bindSlider(
   document.addEventListener("mouseup", onMouseUp);
 
   // Defer initial knob positioning until the pad has a measured width.
-  requestAnimationFrame(resetKnob);
+  requestAnimationFrame(() => positionKnob(0));
 
   return () => {
     pad.removeEventListener("touchstart", onTouchStart);
