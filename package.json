@@ -1,19 +1,27 @@
 {
-  "name": "hexfall",
+  "name": "hex-rain",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:ios": "tsc && vite build --base=./ --outDir=dist --emptyOutDir",
+    "ios:add": "cap add ios",
+    "ios:sync": "npm run build:ios && cap sync ios",
+    "ios:copy": "npm run build:ios && cap copy ios",
+    "ios:open": "cap open ios"
   },
   "devDependencies": {
+    "@capacitor/cli": "^6.1.2",
     "@types/matter-js": "^0.20.2",
     "typescript": "^5.6.3",
     "vite": "^5.4.10"
   },
   "dependencies": {
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/ios": "^6.1.2",
     "matter-js": "^0.20.0"
   }
 }

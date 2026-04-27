@@ -9,10 +9,12 @@ export class DebrisHex {
   age = 0;
   lifetime: number;
   kind: ClusterKind;
+  scale: number;
 
-  constructor(body: Body, kind: ClusterKind, lifetime = DEBRIS_LIFETIME) {
+  constructor(body: Body, kind: ClusterKind, scale = 1, lifetime = DEBRIS_LIFETIME) {
     this.body = body;
     this.kind = kind;
+    this.scale = scale;
     this.lifetime = lifetime;
   }
 
@@ -25,8 +27,12 @@ export class DebrisHex {
     impulse: { x: number; y: number };
     hexSize: number;
     kind: ClusterKind;
+    scale?: number;
+    lifetime?: number;
   }): DebrisHex {
-    const body = Bodies.polygon(opts.x, opts.y, 6, opts.hexSize, {
+    const scale = opts.scale ?? 1;
+    const radius = Math.max(2, opts.hexSize * scale);
+    const body = Bodies.polygon(opts.x, opts.y, 6, radius, {
       friction: 0.2,
       frictionAir: 0.005,
       restitution: 0.55,
@@ -41,7 +47,7 @@ export class DebrisHex {
       y: opts.velocity.y + opts.impulse.y,
     });
     Body.setAngularVelocity(body, opts.angularVelocity + (Math.random() - 0.5) * 0.3);
-    return new DebrisHex(body, opts.kind);
+    return new DebrisHex(body, opts.kind, scale, opts.lifetime);
   }
 
   update(dt: number): boolean {
@@ -53,18 +59,19 @@ export class DebrisHex {
     const t = this.age / this.lifetime;
     const alpha = Math.max(0, 1 - t);
 
-    const isSticky = this.kind === "sticky";
-    const baseFill = isSticky ? "#d23a8a" : "#5b8bff";
-    const accent = isSticky ? "#ff8ad1" : "#aac4ff";
-    const stroke = isSticky ? "#ffd6ee" : "#1c2348";
+    const palette = debrisPalette(this.kind);
+    const baseFill = palette.fill;
+    const accent = palette.accent;
+    const stroke = palette.stroke;
 
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.translate(this.body.position.x, this.body.position.y);
     ctx.rotate(this.body.angle);
 
-    pathHex(ctx, 0, 0, hexSize - 1);
-    const grad = ctx.createLinearGradient(0, -hexSize, 0, hexSize);
+    const r = hexSize * this.scale;
+    pathHex(ctx, 0, 0, r);
+    const grad = ctx.createLinearGradient(0, -r, 0, r);
     grad.addColorStop(0, accent);
     grad.addColorStop(1, baseFill);
     ctx.fillStyle = grad;
@@ -74,5 +81,20 @@ export class DebrisHex {
     ctx.stroke();
 
     ctx.restore();
+  }
+}
+
+function debrisPalette(kind: ClusterKind): { fill: string; accent: string; stroke: string } {
+  switch (kind) {
+    case "sticky":
+      return { fill: "#d23a8a", accent: "#ff8ad1", stroke: "#ffd6ee" };
+    case "slow":
+      return { fill: "#d3a000", accent: "#ffe46b", stroke: "#fff5b6" };
+    case "fast":
+      return { fill: "#1ea35e", accent: "#92ffb6", stroke: "#d4ffd6" };
+    case "coin":
+      return { fill: "#d97a18", accent: "#ffce6b", stroke: "#fff0c9" };
+    default:
+      return { fill: "#5b8bff", accent: "#aac4ff", stroke: "#1c2348" };
   }
 }

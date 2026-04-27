@@ -1,6 +1,13 @@
 export type Axial = { q: number; r: number };
 
-export type ClusterKind = "normal" | "sticky";
+export type ClusterKind =
+  | "normal"
+  | "sticky"
+  | "slow"
+  | "fast"
+  | "coin"
+  | "shield"
+  | "drone";
 
 export type Shape = Axial[];
 

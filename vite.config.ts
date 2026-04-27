@@ -1,8 +1,14 @@
 import { defineConfig } from "vite";
 
-// Use relative asset URLs so the build works under any GitHub Pages path
-// (e.g. https://<user>.github.io/Hexfall/) without needing to hardcode the
-// repo name.
+// Default config targets GitHub Pages (absolute /Hexfall/ base, output to
+// /docs). The iOS / Capacitor build overrides `base` to "./" and `outDir` to
+// "dist" via CLI flags in the npm `build:ios` script — relative URLs are
+// required inside the iOS web view, where the bundle is served from a
+// non-`/Hexfall/` origin.
 export default defineConfig({
-  base: "./",
+  base: "/Hexfall/",
+  build: {
+    outDir: "docs",
+    emptyOutDir: true,
+  },
 });
