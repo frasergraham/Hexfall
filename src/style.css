@@ -428,6 +428,12 @@ body {
   }
 }
 
+@media not all and (hover: none) and (pointer: coarse) {
+  .touch-only {
+    display: none;
+  }
+}
+
 /* --- Achievements box on the menu / game-over overlay --- */
 
 .achievements {

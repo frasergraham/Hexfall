@@ -173,7 +173,7 @@ const SWARM_STICKY_CHANCE = 0.12; // chance a swarm hex spawns as a heal instead
 const ANGLED_SPAWNS_SCORE = 200;
 const SIDE_SPAWNS_SCORE = 400;
 
-const PLAYER_MOVE_SPEED = 16; // px/ms (Matter velocity units, keyboard hold)
+const PLAYER_MOVE_SPEED = 24; // px/ms (Matter velocity units, keyboard hold)
 const PLAYER_ROT_SPEED = 0.12; // rad/ms (keyboard hold)
 const RAIL_BOTTOM_INSET = 4; // px above the board bottom where the rail sits
 
@@ -788,7 +788,8 @@ export class Game {
     this.resumeCountdown = 0;
     this.overlay.innerHTML = `
       <h1>PAUSED</h1>
-      <p class="hint">Tap to resume</p>
+      <p class="hint desktop-only"><kbd>SPACE</kbd> to resume</p>
+      <p class="hint touch-only">Tap to resume</p>
       <button type="button" class="pill-btn" data-action="quit">QUIT</button>
     `;
     this.overlay.classList.remove("hidden");
@@ -887,7 +888,8 @@ export class Game {
       <h1>GAME OVER</h1>
       <p class="tagline">Score ${this.score} &middot; Best ${this.best}</p>
       ${this.difficultyButtonsHtml()}
-      <p class="hint">Tap to play again</p>
+      <p class="hint desktop-only"><kbd>SPACE</kbd> to play again</p>
+      <p class="hint touch-only">Tap to play again</p>
       <section class="achievements">
         <h2>Achievements</h2>
         <div id="achievementBadges" class="achievement-badges" aria-label="Earned achievements"></div>
@@ -1032,7 +1034,7 @@ export class Game {
 
     // Player input → physics velocities (input applied in real time so the
     // controls always feel responsive even during slow-mo).
-    this.applyMovementInput();
+    this.applyMovementInput(effectiveScale);
 
     const playerSize = this.player.size();
     this.player.inDanger = playerSize >= DANGER_SIZE;
@@ -1376,8 +1378,11 @@ export class Game {
 
   // Apply touch / keyboard movement + rotation hold to the player. Touch
   // rotation drag itself is applied inside the rotate-pad input callback,
-  // not here.
-  private applyMovementInput(): void {
+  // not here. `timeScale` is the current effective scale (slow-mo / hint /
+  // tutorial < 1, late-game / fast > 1) so we can compensate keyboard
+  // velocity below 1 — the player should feel just as snappy in slow-mo
+  // as at full speed.
+  private applyMovementInput(timeScale = 1): void {
     if (this.slideTarget !== null) {
       const halfBoundsW =
         (this.player.body.bounds.max.x - this.player.body.bounds.min.x) / 2;
@@ -1390,9 +1395,10 @@ export class Game {
     } else {
       const wantLeft = this.holds.left.active;
       const wantRight = this.holds.right.active;
+      const compensate = timeScale < 1 ? 1 / timeScale : 1;
       let vx = 0;
-      if (wantLeft && !wantRight) vx = -PLAYER_MOVE_SPEED;
-      else if (wantRight && !wantLeft) vx = PLAYER_MOVE_SPEED;
+      if (wantLeft && !wantRight) vx = -PLAYER_MOVE_SPEED * compensate;
+      else if (wantRight && !wantLeft) vx = PLAYER_MOVE_SPEED * compensate;
       this.player.setHorizontalVelocity(vx);
     }
     if (!this.rotationDragActive) {
