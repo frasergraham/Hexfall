@@ -2692,7 +2692,7 @@ export class Game {
     // bar lingering above the GAME OVER screen.
     if (this.timeEffect !== null && this.state !== "gameover") {
       const frac = Math.max(0, this.timeEffectTimer / this.timeEffectMax);
-      const w = this.boardWidth * 0.6;
+      const w = this.boardWidth * 0.95;
       const x0 = this.boardOriginX + (this.boardWidth - w) / 2;
       const y0 = this.boardOriginY + 6;
       const color = this.timeEffect === "slow" ? "#ffd76b" : "#7fe89c";
