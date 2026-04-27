@@ -1216,9 +1216,12 @@ export class Game {
   // around the player and breaking concentration on the dodge.
   private fastBonusHudPos(): { x: number; y: number } {
     const fontSize = Math.max(20, Math.round(this.hexSize * 1.05));
+    // Sit just under the countdown bar (which is drawn at topInset + 6,
+    // height 6) so the +N / -N pop is never obscured by the iOS Dynamic
+    // Island or by the score row above it.
     return {
       x: this.boardOriginX + this.boardWidth / 2,
-      y: this.boardOriginY + 6 + 12 + fontSize / 2,
+      y: this.boardOriginY + this.topInset + 6 + 12 + fontSize / 2,
     };
   }
 
@@ -1377,7 +1380,9 @@ export class Game {
       // sits above the position). Approximate cap-height as ~0.74 of
       // the font size, plus a small breathing pad.
       const halfH = f.fontSize * scale * 0.74 * 0.5;
-      const minY = halfH + 6;
+      // Keep clear of the HUD/Dynamic Island band so big "+N" pops drift
+      // up past the countdown bar instead of being clipped behind it.
+      const minY = this.topInset + halfH + 6;
       const drawY = Math.max(minY, f.y + yOffset);
       ctx.save();
       ctx.translate(f.x + xOffset, drawY);
