@@ -173,7 +173,7 @@ const SWARM_STICKY_CHANCE = 0.12; // chance a swarm hex spawns as a heal instead
 const ANGLED_SPAWNS_SCORE = 200;
 const SIDE_SPAWNS_SCORE = 400;
 
-const PLAYER_MOVE_SPEED = 24; // px/ms (Matter velocity units, keyboard hold)
+const PLAYER_MOVE_SPEED = 18; // px/ms (Matter velocity units, keyboard hold)
 const PLAYER_ROT_SPEED = 0.12; // rad/ms (keyboard hold)
 const RAIL_BOTTOM_INSET = 4; // px above the board bottom where the rail sits
 
