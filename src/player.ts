@@ -425,9 +425,15 @@ export class Player {
       ctx.rotate(bodyAngle);
 
       pathHex(ctx, 0, 0, sz);
+      // Each subsequent cell (in add order) is tinted slightly darker so
+      // the blob reads as a gradient as it grows. cellIdx is the index in
+      // this.cells, which is the order cells were added — body.parts is
+      // built in the same order, with part 0 being the parent.
+      const cellIdx = i - 1;
+      const darken = Math.min(0.45, cellIdx * 0.06);
       const grad = ctx.createLinearGradient(0, -sz, 0, sz);
-      grad.addColorStop(0, "#9bf0c2");
-      grad.addColorStop(1, "#2ec27a");
+      grad.addColorStop(0, scaleColor("#9bf0c2", 1 - darken));
+      grad.addColorStop(1, scaleColor("#2ec27a", 1 - darken));
       ctx.fillStyle = grad;
       ctx.fill();
 
@@ -447,4 +453,14 @@ export class Player {
       ctx.restore();
     }
   }
+}
+
+// Multiply each RGB channel of a "#rrggbb" colour by `factor`. factor=1
+// returns the original; factor<1 darkens toward black while preserving hue.
+function scaleColor(hex: string, factor: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.max(0, Math.min(255, Math.round(((n >> 16) & 0xff) * factor)));
+  const g = Math.max(0, Math.min(255, Math.round(((n >> 8) & 0xff) * factor)));
+  const b = Math.max(0, Math.min(255, Math.round((n & 0xff) * factor)));
+  return `rgb(${r}, ${g}, ${b})`;
 }
