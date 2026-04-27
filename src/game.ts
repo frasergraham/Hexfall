@@ -1,12 +1,4 @@
-import {
-  Bodies,
-  Body,
-  Composite,
-  Constraint,
-  Engine,
-  Events,
-  type IEventCollision,
-} from "matter-js";
+import { Bodies, Body, Composite, Engine, Events, type IEventCollision } from "matter-js";
 import { COIN_SHAPE, FallingCluster, hintPalette, kindLabel, pickShape } from "./cluster";
 import { DebrisHex } from "./debris";
 import {
@@ -56,13 +48,15 @@ const LOSE_COMBO = 2;
 const STICK_INVULN_MS = 180;
 
 // Stick-in-flight tuning. When a blue cluster part lands a hit it spawns a
-// small unrooted hex body, sprung to the player's target cell, that whips
-// into place over a few hundred ms. Once it's close enough, addCell fires
-// and the body is removed.
+// small unrooted hex body that we drive toward the player's target cell
+// each frame via direct velocity blending. We deliberately don't use a
+// Matter Constraint here — its reaction force at the off-centre target
+// slot was torqueing the player and destabilising the physics. Driving
+// velocity ourselves keeps all the spring force off the player.
 const STICK_FLIGHT_LIFETIME = 0.45; // seconds before we force-snap
 const STICK_FLIGHT_SNAP_DIST_FRAC = 0.35; // fraction of hexSize → addCell
-const STICK_FLIGHT_STIFFNESS = 0.07;
-const STICK_FLIGHT_DAMPING = 0.18;
+const STICK_FLIGHT_CLOSE_STEPS = 7; // steps the homing piece would take to close the full gap
+const STICK_FLIGHT_VELOCITY_BLEND = 0.35; // per-frame lerp toward the desired velocity
 
 const STICKY_SPAWN_CHANCE = 0.10;
 const STICKY_MIN_SCORE = 3;
@@ -146,7 +140,6 @@ interface Floater {
 
 interface StickInFlight {
   body: Body;
-  constraint: Constraint;
   targetCell: Axial;
   age: number;
   lifetime: number;
@@ -581,13 +574,8 @@ export class Game {
   private debugRun = false;
 
   private startOrRestart(initialScore = 0): void {
-    // Tear down all existing physics bodies. Sticks-in-flight reference
-    // the player body via their spring constraint, so unhook them before
-    // the player body is removed.
-    for (const s of this.sticksInFlight) {
-      Composite.remove(this.engine.world, s.constraint);
-      Composite.remove(this.engine.world, s.body);
-    }
+    // Tear down all existing physics bodies.
+    for (const s of this.sticksInFlight) Composite.remove(this.engine.world, s.body);
     this.sticksInFlight = [];
     for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
     for (const d of this.debris) Composite.remove(this.engine.world, d.body);
@@ -1673,11 +1661,12 @@ export class Game {
     part: { x: number; y: number; angle: number; partId: number },
     cluster: FallingCluster,
   ): void {
-    // Free hex body that the spring will yank into the player. Collides
-    // with nothing — purely visual + physics-driven motion.
+    // Free hex body driven by per-frame velocity blending. Collides with
+    // nothing — purely visual motion, never touches the player or other
+    // physics.
     const body = Bodies.polygon(part.x, part.y, 6, this.hexSize, {
       friction: 0,
-      frictionAir: 0.04,
+      frictionAir: 0,
       restitution: 0,
       density: 0.0008,
       label: "stickInFlight",
@@ -1693,31 +1682,10 @@ export class Game {
       cluster.body.angularVelocity + (Math.random() - 0.5) * 0.3,
     );
 
-    // pointA is in the player's body-local frame relative to body.position
-    // (Matter rotates it with the body each step). Updated in
-    // updateSticksInFlight when the player rebuilds and the COM shifts.
-    const local = axialToPixel(targetCell, this.hexSize);
-    const pointA = {
-      x: local.x - this.player.comOffsetLocal.x,
-      y: local.y - this.player.comOffsetLocal.y,
-    };
-
-    const constraint = Constraint.create({
-      bodyA: this.player.body,
-      pointA,
-      bodyB: body,
-      pointB: { x: 0, y: 0 },
-      stiffness: STICK_FLIGHT_STIFFNESS,
-      damping: STICK_FLIGHT_DAMPING,
-      length: 0,
-    });
-
     Composite.add(this.engine.world, body);
-    Composite.add(this.engine.world, constraint);
 
     this.sticksInFlight.push({
       body,
-      constraint,
       targetCell,
       age: 0,
       lifetime: STICK_FLIGHT_LIFETIME,
@@ -1730,19 +1698,26 @@ export class Game {
     const remaining: StickInFlight[] = [];
     for (const s of this.sticksInFlight) {
       s.age += dt;
-      // Re-anchor the spring against the player's CURRENT body. addCell
-      // rebuilds the body, which swaps body identity and shifts the COM,
-      // so we patch bodyA + pointA every frame to stay glued to the
-      // intended target slot.
-      s.constraint.bodyA = this.player.body;
-      const local = axialToPixel(s.targetCell, this.hexSize);
-      s.constraint.pointA.x = local.x - this.player.comOffsetLocal.x;
-      s.constraint.pointA.y = local.y - this.player.comOffsetLocal.y;
 
       const target = this.player.projectedCellWorldCenter(s.targetCell);
-      const dx = s.body.position.x - target.x;
-      const dy = s.body.position.y - target.y;
+      const dx = target.x - s.body.position.x;
+      const dy = target.y - s.body.position.y;
       const dist = Math.hypot(dx, dy);
+
+      // Drive the homing piece directly: aim at the target slot at a
+      // closing speed proportional to how far it has to go, on top of the
+      // player's own velocity so it tracks side-to-side motion. Blended
+      // each frame for a soft, springy feel without applying any force
+      // back to the player.
+      const ux = dist > 0.001 ? dx / dist : 0;
+      const uy = dist > 0.001 ? dy / dist : 0;
+      const closingSpeed = dist / STICK_FLIGHT_CLOSE_STEPS;
+      const desiredVx = this.player.body.velocity.x + ux * closingSpeed;
+      const desiredVy = this.player.body.velocity.y + uy * closingSpeed;
+      Body.setVelocity(s.body, {
+        x: s.body.velocity.x + (desiredVx - s.body.velocity.x) * STICK_FLIGHT_VELOCITY_BLEND,
+        y: s.body.velocity.y + (desiredVy - s.body.velocity.y) * STICK_FLIGHT_VELOCITY_BLEND,
+      });
 
       if (dist <= snapDist || s.age >= s.lifetime) {
         this.completeStickInFlight(s);
@@ -1754,7 +1729,6 @@ export class Game {
   }
 
   private completeStickInFlight(s: StickInFlight): void {
-    Composite.remove(this.engine.world, s.constraint);
     Composite.remove(this.engine.world, s.body);
 
     const sizeBefore = this.player.size();
@@ -2272,8 +2246,8 @@ export class Game {
         kind: "normal",
       });
     }
-    // Drop any sticks-in-flight onto the wreckage as debris — they were
-    // anchored to a body that's about to disappear.
+    // Drop any sticks-in-flight onto the wreckage as debris — the player
+    // they were homing toward is about to disappear.
     for (const s of this.sticksInFlight) {
       this.spawnDebris({
         x: s.body.position.x,
@@ -2287,7 +2261,6 @@ export class Game {
         },
         kind: "normal",
       });
-      Composite.remove(this.engine.world, s.constraint);
       Composite.remove(this.engine.world, s.body);
     }
     this.sticksInFlight = [];
