@@ -30,6 +30,15 @@ const SCORE_MILESTONES: ReadonlyArray<{ threshold: number; id: AchievementId }> 
   { threshold: 600, id: ACHIEVEMENTS.score600 },
   { threshold: 800, id: ACHIEVEMENTS.score800 },
   { threshold: 1000, id: ACHIEVEMENTS.score1000 },
+  { threshold: 1500, id: ACHIEVEMENTS.score1500 },
+];
+
+// Fast-bonus payout tiers, awarded when awardFastBonus banks the pool.
+const BONUS_POOL_TIERS: ReadonlyArray<{ threshold: number; id: AchievementId }> = [
+  { threshold: 25, id: ACHIEVEMENTS.bonusPool25 },
+  { threshold: 50, id: ACHIEVEMENTS.bonusPool50 },
+  { threshold: 75, id: ACHIEVEMENTS.bonusPool75 },
+  { threshold: 100, id: ACHIEVEMENTS.bonusPool100 },
 ];
 
 const HEX_SIZE_BASE = 22;
@@ -1035,9 +1044,19 @@ export class Game {
 
   private awardFastBonus(): void {
     if (this.fastBonus <= 0) return;
+    const banked = this.fastBonus;
     this.score += this.fastBonus;
     this.scoreEl.textContent = String(this.score);
     this.checkScoreMilestones();
+    // Threshold achievements for the size of the banked payout. Award the
+    // highest tier that the pool clears so a single big payout doesn't
+    // pop four banners back-to-back.
+    for (let i = BONUS_POOL_TIERS.length - 1; i >= 0; i--) {
+      if (banked >= BONUS_POOL_TIERS[i]!.threshold) {
+        void reportAchievement(BONUS_POOL_TIERS[i]!.id);
+        break;
+      }
+    }
     const p = this.fastBonusHudPos();
     // Big celebratory pop: huge font, scale 0 → 1.6 fast, then a slow
     // upward drift + fade so the player can really see the payout.
@@ -2003,7 +2022,8 @@ export class Game {
       this.timeEffectTimer = FAST_EFFECT_DURATION;
       this.timeEffectMax = FAST_EFFECT_DURATION;
       const mul = this.fastMultiplier();
-      if (mul >= 5) void reportAchievement(ACHIEVEMENTS.bonus5x);
+      if (mul >= 6) void reportAchievement(ACHIEVEMENTS.bonus6x);
+      else if (mul >= 5) void reportAchievement(ACHIEVEMENTS.bonus5x);
       else if (mul >= 4) void reportAchievement(ACHIEVEMENTS.bonus4x);
       else if (mul >= 3) void reportAchievement(ACHIEVEMENTS.bonus3x);
       this.spawnFloater(
