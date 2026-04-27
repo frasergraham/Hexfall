@@ -2688,7 +2688,9 @@ export class Game {
     // Time-effect HUD: a small countdown bar at the top of the play area,
     // with an extra "{N}X · +M" line just under it while fast is active so
     // the player can see the multiplier and the running bonus pool grow.
-    if (this.timeEffect !== null) {
+    // Skip while game-over so a dead-during-slow-mo run doesn't leave the
+    // bar lingering above the GAME OVER screen.
+    if (this.timeEffect !== null && this.state !== "gameover") {
       const frac = Math.max(0, this.timeEffectTimer / this.timeEffectMax);
       const w = this.boardWidth * 0.6;
       const x0 = this.boardOriginX + (this.boardWidth - w) / 2;
