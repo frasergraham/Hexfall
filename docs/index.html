@@ -8,8 +8,8 @@
     />
     <meta name="theme-color" content="#0d0f1c" />
     <title>Hex Rain</title>
-    <script type="module" crossorigin src="/assets/index-ULKhUxy8.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Cho-oc5N.css">
+    <script type="module" crossorigin src="/assets/index-5M-ktsP5.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DLhGaLXG.css">
   </head>
   <body>
     <div id="app">
@@ -46,29 +46,34 @@
         <div id="overlay" class="overlay">
           <h1>HEX RAIN</h1>
           <p class="tagline">Move. Rotate. Survive.</p>
-          <div id="difficultyButtons" class="difficulty-buttons" role="group" aria-label="Difficulty">
-            <button type="button" data-difficulty="easy" aria-pressed="false">EASY</button>
-            <button type="button" data-difficulty="medium" aria-pressed="true">MEDIUM</button>
-            <button type="button" data-difficulty="hard" aria-pressed="false">HARD</button>
+          <div class="play-group">
+            <div id="difficultyButtons" class="difficulty-buttons" role="group" aria-label="Difficulty">
+              <button type="button" data-difficulty="easy" aria-pressed="false">EASY</button>
+              <button type="button" data-difficulty="medium" aria-pressed="true">MEDIUM</button>
+              <button type="button" data-difficulty="hard" aria-pressed="false">HARD</button>
+            </div>
+            <button type="button" class="play-btn" data-action="play">PLAY</button>
           </div>
-          <button type="button" class="play-btn" data-action="play">PLAY</button>
           <button type="button" class="play-btn play-btn-secondary" data-action="challenges">CHALLENGES</button>
-          <p class="hint desktop-only">
+          <p id="controlsHint" class="hint desktop-only" hidden>
             <kbd>A</kbd>/<kbd>&larr;</kbd> <kbd>D</kbd>/<kbd>&rarr;</kbd> move
-            &nbsp;&middot;&nbsp; <kbd>Q</kbd>/<kbd>E</kbd> rotate
-            &nbsp;&middot;&nbsp; <kbd>P</kbd> pause
+            &middot;
+            <kbd>Q</kbd>/<kbd>E</kbd> rotate
+            &middot;
+            <kbd>P</kbd> pause
           </p>
-          <p class="hint desktop-only"><kbd>SPACE</kbd> to start</p>
           <section class="achievements">
             <h2>Achievements <span id="achievementCount" class="achievement-count" aria-live="polite"></span></h2>
             <div id="achievementBadges" class="achievement-badges" aria-label="Earned achievements"></div>
           </section>
-          <div class="audio-toggles" role="group" aria-label="Audio">
-            <button type="button" class="audio-toggle" data-action="toggle-sfx" aria-pressed="true">SFX: ON</button>
-            <button type="button" class="audio-toggle" data-action="toggle-music" aria-pressed="true">MUSIC: ON</button>
+          <div class="menu-footer">
+            <div class="audio-toggles" role="group" aria-label="Audio">
+              <button type="button" class="audio-toggle" data-action="toggle-sfx" aria-pressed="true">SFX</button>
+              <button type="button" class="audio-toggle" data-action="toggle-music" aria-pressed="true">MUSIC</button>
+            </div>
+            <button type="button" class="reset-hints" data-action="reset-hints">Reset hints</button>
+            <a class="credits-link" href="./credits/index.html">Credits</a>
           </div>
-          <button type="button" class="reset-hints" data-action="reset-hints">Reset hints</button>
-          <a class="credits-link" href="./credits/index.html">Credits</a>
         </div>
       </main>
 

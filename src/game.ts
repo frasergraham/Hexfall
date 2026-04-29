@@ -18,10 +18,7 @@ import {
 } from "./gameCenter";
 import {
   axialKey,
-  axialToPixel,
   buildPolyhexShape,
-  hashString,
-  mulberry32,
   pathHex,
   SQRT3,
 } from "./hex";
@@ -141,6 +138,7 @@ const LEGACY_HIGH_SCORE_KEY = "hexrain.highScore";
 // rotate tutorial fire once per player, not once per session.
 const SEEN_HINTS_STORAGE_KEY = "hexrain.seenHints";
 const ROTATE_TUTORIAL_STORAGE_KEY = "hexrain.rotateTutorialShown";
+const CONTROLS_HINT_STORAGE_KEY = "hexrain.controlsHintShown";
 
 function loadSeenHints(): Set<ClusterKind> {
   try {
@@ -467,6 +465,9 @@ export class Game {
   private rotateTutorialActive = false;
   private rotateTutorialTimer = 0;
   private rotateTutorialStartAngle = 0;
+  // Desktop one-shot controls hint shown on the menu the first time
+  // the player ever launches. Cleared by Reset hints.
+  private controlsHintShown = localStorage.getItem(CONTROLS_HINT_STORAGE_KEY) === "1";
 
   // Fast power-up combo state. fastLevel counts how many fast pickups
   // happened this run (1 → 3x, 2 → 4x, 3 → 5x, …); each pickup also
@@ -880,54 +881,59 @@ export class Game {
       return;
     }
 
-    // Pointy-top hex sized so the bounding box matches the existing
-    // 44×50 badge clip-path: width = SQRT3·size, height = 2·size.
-    const BASE_HEX_SIZE = 25;
-    const BASE_FONT_PX = 13;
-    // Cap the badge cluster at a fixed footprint so it can't push the
-    // header (SCORE / BEST) off-screen as more achievements unlock. When
-    // the natural polyhex exceeds this, the hexes scale down to fit.
-    // Height is capped to four rows of pointy-top hex (row pitch = 1.5·size,
-    // first/last rows contribute their full size on top/bottom).
-    const MAX_ROWS = 4;
-    const MAX_W = 300;
-    const MAX_H = BASE_HEX_SIZE * (1.5 * (MAX_ROWS - 1) + 2);
+    // Three-row grid with badges spread as evenly as possible across
+    // the rows (so a small earned-set isn't a single tight cluster).
+    // Each row is centered horizontally; pointy-top hex tiling with a
+    // half-column offset on odd rows.
+    const ROWS = 3;
+    const MAX_COLS = 10;
+    const MAX_W = 320;
+    const MAX_H = 96;
 
-    // Stable shape per achievement set: same earns → same polyhex across
-    // reloads, so the menu doesn't reshuffle every time it re-renders.
-    const seed = hashString(earned.map((m) => m.id).sort().join("|"));
-    const shape = buildPolyhexShape(earned.length, mulberry32(seed));
+    const N = Math.min(earned.length, ROWS * MAX_COLS);
+    // Distribute N across 3 rows: row 0 takes ceil(N/3), then ceil of
+    // the remainder over 2 rows, etc. Yields 10/9/9, 4/3/3, 2/2/2 etc.
+    const counts: number[] = [];
+    let remaining = N;
+    for (let r = 0; r < ROWS; r++) {
+      const c = Math.ceil(remaining / (ROWS - r));
+      counts.push(c);
+      remaining -= c;
+    }
+    const widestCount = Math.max(...counts);
 
-    const measure = (size: number) => {
-      const w = SQRT3 * size;
-      const h = 2 * size;
-      const positions = shape.map((a) => axialToPixel(a, size));
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      for (const p of positions) {
-        if (p.x - w / 2 < minX) minX = p.x - w / 2;
-        if (p.x + w / 2 > maxX) maxX = p.x + w / 2;
-        if (p.y - h / 2 < minY) minY = p.y - h / 2;
-        if (p.y + h / 2 > maxY) maxY = p.y + h / 2;
+    // Pick hex size so the widest row + half-column offset fits MAX_W,
+    // and the three rows fit MAX_H.
+    const sizeForW = MAX_W / ((widestCount + 0.5) * SQRT3);
+    const sizeForH = MAX_H / (2 + 1.5 * (ROWS - 1));
+    const size = Math.min(sizeForW, sizeForH);
+    const w = SQRT3 * size;
+    const h = 2 * size;
+    const rowPitch = 1.5 * size;
+    const fontPx = Math.max(8, size * 0.55);
+
+    const totalW = (widestCount + 0.5) * w;
+    const totalH = h + rowPitch * (ROWS - 1);
+    host.style.width = `${Math.ceil(totalW)}px`;
+    host.style.height = `${Math.ceil(totalH)}px`;
+
+    let idx = 0;
+    const cells: string[] = [];
+    for (let r = 0; r < ROWS; r++) {
+      const rowCount = counts[r]!;
+      const rowFootprint = (rowCount + 0.5) * w;
+      const rowOriginX = (totalW - rowFootprint) / 2;
+      for (let c = 0; c < rowCount; c++) {
+        const meta = earned[idx++]!;
+        const offset = r % 2 === 1 ? w * 0.5 : 0;
+        const left = rowOriginX + c * w + offset;
+        const top = r * rowPitch;
+        cells.push(
+          `<span class="achievement-badge" style="--badge-tint:${meta.tint}; left:${left.toFixed(2)}px; top:${top.toFixed(2)}px; width:${w.toFixed(2)}px; height:${h.toFixed(2)}px; font-size:${fontPx.toFixed(2)}px;" title="${escapeHtml(meta.name)} — ${escapeHtml(meta.description)}">${escapeHtml(meta.badge)}</span>`,
+        );
       }
-      return { w, h, positions, minX, minY, width: maxX - minX, height: maxY - minY };
-    };
-
-    let m0 = measure(BASE_HEX_SIZE);
-    const scale = Math.min(1, MAX_W / m0.width, MAX_H / m0.height);
-    const layout = scale < 1 ? measure(BASE_HEX_SIZE * scale) : m0;
-    const fontPx = BASE_FONT_PX * scale;
-
-    host.style.width = `${Math.ceil(layout.width)}px`;
-    host.style.height = `${Math.ceil(layout.height)}px`;
-
-    host.innerHTML = earned
-      .map((m, i) => {
-        const p = layout.positions[i];
-        const left = p.x - layout.w / 2 - layout.minX;
-        const top = p.y - layout.h / 2 - layout.minY;
-        return `<span class="achievement-badge" style="--badge-tint:${m.tint}; left:${left.toFixed(2)}px; top:${top.toFixed(2)}px; width:${layout.w.toFixed(2)}px; height:${layout.h.toFixed(2)}px; font-size:${fontPx.toFixed(2)}px;" title="${escapeHtml(m.name)} — ${escapeHtml(m.description)}">${escapeHtml(m.badge)}</span>`;
-      })
-      .join("");
+    }
+    host.innerHTML = cells.join("");
   }
 
   private installDebugButtons(): void {
@@ -985,6 +991,12 @@ export class Game {
     this.setSliderEnabled(true);
     setMusicSpeed(1);
     startMusic();
+    // Mark the first-launch desktop controls hint as seen so it's
+    // dismissed on next visit to the menu.
+    if (!this.controlsHintShown) {
+      this.controlsHintShown = true;
+      try { localStorage.setItem(CONTROLS_HINT_STORAGE_KEY, "1"); } catch { /* ignore */ }
+    }
     if (!this.debugRun) trackPlayStart(this.difficulty);
   }
 
@@ -997,6 +1009,10 @@ export class Game {
     this.renderAchievementBadges();
     this.refreshDifficultyButtons();
     this.refreshAudioToggles();
+    // First-launch desktop hint: revealed only when not yet seen and not
+    // a touch device. Reset hints brings it back.
+    const hint = this.overlay.querySelector("#controlsHint") as HTMLElement | null;
+    if (hint) hint.hidden = isTouchDevice() || this.controlsHintShown;
     // Score is always 0 on the menu — the BEST readout is the only
     // useful number. Hide the score block until a run starts.
     this.setScoreVisible(false);
@@ -1194,10 +1210,15 @@ export class Game {
   private resetHints(btn: HTMLButtonElement): void {
     this.seenKinds = new Set();
     this.rotateTutorialShown = false;
+    this.controlsHintShown = false;
     try {
       localStorage.removeItem(SEEN_HINTS_STORAGE_KEY);
       localStorage.removeItem(ROTATE_TUTORIAL_STORAGE_KEY);
+      localStorage.removeItem(CONTROLS_HINT_STORAGE_KEY);
     } catch { /* ignore */ }
+    // Reveal the inline hint immediately if we're on desktop and on the menu.
+    const hint = this.overlay.querySelector("#controlsHint") as HTMLElement | null;
+    if (hint && !isTouchDevice()) hint.hidden = false;
     const original = btn.textContent ?? "Reset hints";
     btn.textContent = "Reset!";
     btn.disabled = true;
@@ -1301,8 +1322,8 @@ export class Game {
     const music = isMusicOn();
     return `
       <div class="audio-toggles" role="group" aria-label="Audio">
-        <button type="button" class="audio-toggle" data-action="toggle-sfx" aria-pressed="${sfx}">SFX: ${sfx ? "ON" : "OFF"}</button>
-        <button type="button" class="audio-toggle" data-action="toggle-music" aria-pressed="${music}">MUSIC: ${music ? "ON" : "OFF"}</button>
+        <button type="button" class="audio-toggle" data-action="toggle-sfx" aria-pressed="${sfx}">SFX</button>
+        <button type="button" class="audio-toggle" data-action="toggle-music" aria-pressed="${music}">MUSIC</button>
       </div>
     `;
   }
@@ -1311,15 +1332,9 @@ export class Game {
     const sfx = isSfxOn();
     const music = isMusicOn();
     const sfxBtn = this.overlay.querySelector('button[data-action="toggle-sfx"]') as HTMLButtonElement | null;
-    if (sfxBtn) {
-      sfxBtn.textContent = `SFX: ${sfx ? "ON" : "OFF"}`;
-      sfxBtn.setAttribute("aria-pressed", String(sfx));
-    }
+    if (sfxBtn) sfxBtn.setAttribute("aria-pressed", String(sfx));
     const musicBtn = this.overlay.querySelector('button[data-action="toggle-music"]') as HTMLButtonElement | null;
-    if (musicBtn) {
-      musicBtn.textContent = `MUSIC: ${music ? "ON" : "OFF"}`;
-      musicBtn.setAttribute("aria-pressed", String(music));
-    }
+    if (musicBtn) musicBtn.setAttribute("aria-pressed", String(music));
   }
 
   private difficultyButtonsHtml(): string {
@@ -1351,14 +1366,15 @@ export class Game {
     this.overlay.innerHTML = `
       <h1>GAME OVER</h1>
       <p class="tagline">Score ${this.score} &middot; Best ${this.best}</p>
-      ${this.difficultyButtonsHtml()}
-      <button type="button" class="play-btn" data-action="play">PLAY AGAIN</button>
-      <p class="hint desktop-only"><kbd>SPACE</kbd> to play again</p>
+      <div class="play-group">
+        ${this.difficultyButtonsHtml()}
+        <button type="button" class="play-btn" data-action="play">PLAY AGAIN</button>
+      </div>
+      <button type="button" class="challenge-back" data-action="challenge-menu">Main menu</button>
       <section class="achievements">
         <h2>Achievements <span id="achievementCount" class="achievement-count" aria-live="polite"></span></h2>
         <div id="achievementBadges" class="achievement-badges" aria-label="Earned achievements"></div>
       </section>
-      ${this.audioTogglesHtml()}
     `;
     this.overlay.classList.remove("hidden");
     this.renderAchievementBadges();
