@@ -26,6 +26,16 @@ import {
   SQRT3,
 } from "./hex";
 import { bindCanvasSlide, bindInput, bindSlider, isTouchDevice } from "./input";
+import {
+  isMusicOn,
+  isSfxOn,
+  playSfx,
+  setMusicOn,
+  setMusicSpeed,
+  setSfxOn,
+  startMusic,
+  stopMusic,
+} from "./audio";
 import { Player } from "./player";
 import type { Axial, ClusterKind, Difficulty, GameState, InputAction, Shape } from "./types";
 
@@ -183,6 +193,10 @@ const DRONE_OSCILLATION_SPEED = 0.7; // radians/sec for the back-and-forth
 
 // Time-effect tuning.
 const SLOW_EFFECT_DURATION = 5;
+// Duration of the slow_up.mp3 wind-up sound. We start playing it this
+// many seconds before the slow timer expires so the audio finishes
+// exactly when the countdown bar empties.
+const SLOW_UP_LEAD = 3.3;
 const FAST_EFFECT_DURATION = 5;
 const STICK_SLOW_BUFFER = 2; // brief slow-mo after gaining a hex
 const SLOW_TIMESCALE = 0.5;
@@ -346,6 +360,11 @@ export class Game {
   private timeEffect: "slow" | "fast" | null = null;
   private timeEffectTimer = 0;
   private timeEffectMax = 1;
+  // Tracks whether the current slow phase came from a power-up pickup.
+  // Collision-induced slow (stick-buffer) stays silent — neither
+  // slow_down on entry nor slow_up on exit.
+  private slowFromPickup = false;
+  private slowUpFired = false;
   private timeScale = 1;
 
   // Optional inward-narrowing pinch active in late game (score >= the
@@ -460,12 +479,14 @@ export class Game {
       (e) => {
         e.stopPropagation();
         e.preventDefault();
+        playSfx("click");
         this.pauseGame();
       },
       { passive: false },
     );
     this.pauseBtn?.addEventListener("click", (e) => {
       e.stopPropagation();
+      playSfx("click");
       this.pauseGame();
     });
 
@@ -586,35 +607,69 @@ export class Game {
       // a selection change, not a tap-to-start. Event delegation works
       // even after renderGameOver() rebuilds the overlay markup.
       const target = e.target as HTMLElement | null;
+      // Anchor tags (e.g. credits link) navigate on their own — let the
+      // browser handle them and skip the tap-to-start fallthrough.
+      if (target?.closest("a[href]")) {
+        playSfx("click");
+        return;
+      }
       const btn = target?.closest("button[data-difficulty]") as HTMLButtonElement | null;
       if (btn) {
+        playSfx("click");
         const value = btn.dataset.difficulty as Difficulty | undefined;
         if (value) this.setDifficulty(value);
+        return;
+      }
+      // Audio toggles. These never start the game.
+      const sfxToggle = target?.closest('button[data-action="toggle-sfx"]') as HTMLButtonElement | null;
+      if (sfxToggle) {
+        setSfxOn(!isSfxOn());
+        this.refreshAudioToggles();
+        playSfx("click");
+        return;
+      }
+      const musicToggle = target?.closest('button[data-action="toggle-music"]') as HTMLButtonElement | null;
+      if (musicToggle) {
+        setMusicOn(!isMusicOn());
+        this.refreshAudioToggles();
+        playSfx("click");
         return;
       }
       // Reset-hints button on the menu overlay.
       const resetBtn = target?.closest('button[data-action="reset-hints"]') as HTMLButtonElement | null;
       if (resetBtn) {
+        playSfx("click");
         this.resetHints(resetBtn);
         return;
       }
       // Quit-to-menu button on the paused overlay.
       const quitBtn = target?.closest('button[data-action="quit"]') as HTMLButtonElement | null;
       if (quitBtn) {
+        playSfx("click");
         this.quitToMenu();
         return;
       }
-      // Achievement badges (iOS) open the GameKit achievements view
-      // rather than starting the game.
+      // PLAY / PLAY AGAIN button on menu and game-over overlays.
+      const playBtn = target?.closest('button[data-action="play"]') as HTMLButtonElement | null;
+      if (playBtn) {
+        playSfx("click");
+        this.startOrRestart();
+        return;
+      }
+      // Achievement badges (iOS) open the GameKit achievements view.
       if (target?.closest(".achievement-badge")) {
+        playSfx("click");
         if (isGameCenterAvailable()) void gcShowAchievements();
         return;
       }
 
+      // Tap-anywhere-to-resume is preserved for the paused overlay
+      // (intentionally minimal UI). Menu and game-over require an
+      // explicit PLAY button tap so stray clicks on background space
+      // don't start runs.
       if (this.state === "paused") {
+        playSfx("click");
         this.beginResumeCountdown();
-      } else {
-        this.startOrRestart();
       }
     });
 
@@ -720,8 +775,11 @@ export class Game {
     // Cap the badge cluster at a fixed footprint so it can't push the
     // header (SCORE / BEST) off-screen as more achievements unlock. When
     // the natural polyhex exceeds this, the hexes scale down to fit.
+    // Height is capped to four rows of pointy-top hex (row pitch = 1.5·size,
+    // first/last rows contribute their full size on top/bottom).
+    const MAX_ROWS = 4;
     const MAX_W = 300;
-    const MAX_H = 220;
+    const MAX_H = BASE_HEX_SIZE * (1.5 * (MAX_ROWS - 1) + 2);
 
     // Stable shape per achievement set: same earns → same polyhex across
     // reloads, so the menu doesn't reshuffle every time it re-renders.
@@ -813,6 +871,8 @@ export class Game {
     this.setScoreVisible(true);
     this.setPauseButtonVisible(true);
     this.setSliderEnabled(true);
+    setMusicSpeed(1);
+    startMusic();
     if (!this.debugRun) trackPlayStart(this.difficulty);
   }
 
@@ -824,6 +884,7 @@ export class Game {
     this.overlay.classList.remove("hidden");
     this.renderAchievementBadges();
     this.refreshDifficultyButtons();
+    this.refreshAudioToggles();
     // Score is always 0 on the menu — the BEST readout is the only
     // useful number. Hide the score block until a run starts.
     this.setScoreVisible(false);
@@ -854,6 +915,7 @@ export class Game {
       <p class="hint desktop-only"><kbd>SPACE</kbd> to resume</p>
       <p class="hint touch-only">Tap to resume</p>
       <button type="button" class="pill-btn" data-action="quit">QUIT</button>
+      ${this.audioTogglesHtml()}
     `;
     this.overlay.classList.remove("hidden");
     this.setPauseButtonVisible(false);
@@ -898,6 +960,7 @@ export class Game {
     this.state = "menu";
     this.renderMenu();
     this.setSliderEnabled(true);
+    stopMusic();
   }
 
   // Tear-down + reset of every per-run field. Shared by startOrRestart
@@ -931,6 +994,8 @@ export class Game {
     this.timeEffect = null;
     this.timeEffectTimer = 0;
     this.timeEffectMax = 1;
+    this.slowFromPickup = false;
+    this.slowUpFired = false;
     this.timeScale = 1;
     this.floaters = [];
     this.shieldTimer = 0;
@@ -955,6 +1020,32 @@ export class Game {
     this.scoreEl.textContent = String(this.score);
   }
 
+  private audioTogglesHtml(): string {
+    const sfx = isSfxOn();
+    const music = isMusicOn();
+    return `
+      <div class="audio-toggles" role="group" aria-label="Audio">
+        <button type="button" class="audio-toggle" data-action="toggle-sfx" aria-pressed="${sfx}">SFX: ${sfx ? "ON" : "OFF"}</button>
+        <button type="button" class="audio-toggle" data-action="toggle-music" aria-pressed="${music}">MUSIC: ${music ? "ON" : "OFF"}</button>
+      </div>
+    `;
+  }
+
+  private refreshAudioToggles(): void {
+    const sfx = isSfxOn();
+    const music = isMusicOn();
+    const sfxBtn = this.overlay.querySelector('button[data-action="toggle-sfx"]') as HTMLButtonElement | null;
+    if (sfxBtn) {
+      sfxBtn.textContent = `SFX: ${sfx ? "ON" : "OFF"}`;
+      sfxBtn.setAttribute("aria-pressed", String(sfx));
+    }
+    const musicBtn = this.overlay.querySelector('button[data-action="toggle-music"]') as HTMLButtonElement | null;
+    if (musicBtn) {
+      musicBtn.textContent = `MUSIC: ${music ? "ON" : "OFF"}`;
+      musicBtn.setAttribute("aria-pressed", String(music));
+    }
+  }
+
   private difficultyButtonsHtml(): string {
     return `
       <div id="difficultyButtons" class="difficulty-buttons" role="group" aria-label="Difficulty">
@@ -970,12 +1061,13 @@ export class Game {
       <h1>GAME OVER</h1>
       <p class="tagline">Score ${this.score} &middot; Best ${this.best}</p>
       ${this.difficultyButtonsHtml()}
+      <button type="button" class="play-btn" data-action="play">PLAY AGAIN</button>
       <p class="hint desktop-only"><kbd>SPACE</kbd> to play again</p>
-      <p class="hint touch-only">Tap to play again</p>
       <section class="achievements">
         <h2>Achievements <span id="achievementCount" class="achievement-count" aria-live="polite"></span></h2>
         <div id="achievementBadges" class="achievement-badges" aria-label="Earned achievements"></div>
       </section>
+      ${this.audioTogglesHtml()}
     `;
     this.overlay.classList.remove("hidden");
     this.renderAchievementBadges();
@@ -1078,10 +1170,24 @@ export class Game {
     // accumulated bonus pool as a single payout.
     if (this.timeEffect !== null) {
       this.timeEffectTimer -= dt;
+      // Schedule slow_up so the audio finishes precisely as the
+      // countdown bar empties. Only fires for power-up slow, not for
+      // collision-induced (stick-buffer) slow.
+      if (
+        this.timeEffect === "slow" &&
+        this.slowFromPickup &&
+        !this.slowUpFired &&
+        this.timeEffectTimer <= SLOW_UP_LEAD
+      ) {
+        playSfx("slow_up");
+        this.slowUpFired = true;
+      }
       if (this.timeEffectTimer <= 0) {
         if (this.timeEffect === "fast") this.awardFastBonus();
         this.timeEffect = null;
         this.timeScale = 1;
+        this.slowFromPickup = false;
+        this.slowUpFired = false;
       }
     }
 
@@ -1110,6 +1216,21 @@ export class Game {
     if (this.rotateTutorialActive)
       modifier = Math.min(modifier, ROTATE_TUTORIAL_TIMESCALE);
     const effectiveScale = modifier * this.lateGameSpeedMul();
+
+    // Music tracks effective scale, except collision-induced slow
+    // (stick-buffer) is excluded — the recovery moment shouldn't drag
+    // the music down. Hint and rotate-tutorial slowmo still affect
+    // music because those are deliberate "pay attention" beats.
+    let musicModifier = this.timeScale;
+    if (this.timeEffect === "slow" && !this.slowFromPickup) musicModifier = 1;
+    if (hintActive) musicModifier = Math.min(musicModifier, HINT_TIMESCALE);
+    if (this.rotateTutorialActive)
+      musicModifier = Math.min(musicModifier, ROTATE_TUTORIAL_TIMESCALE);
+    // Compress music speed to 30% of the deviation from 1.0 so slow/fast
+    // feel like a gentle tape stretch rather than dragging or chipmunking
+    // the track. e.g. game scale 0.5 → music 0.85, game 1.25 → music 1.075.
+    const gameScale = musicModifier * this.lateGameSpeedMul();
+    setMusicSpeed(1 + (gameScale - 1) * 0.3);
 
     // gameDt drives physics + spawn + wave so slow-mo really slows everything.
     const gameDt = dt * effectiveScale;
@@ -1587,6 +1708,7 @@ export class Game {
           cluster.kind === "normal"
         ) {
           cluster.contacted = true;
+          playSfx("drone");
           this.shatterClusterMidair(cluster);
           const drone = this.drones.find((d) => d.body.id === droneParent.id);
           if (drone) drone.lifetime = Math.max(0, drone.lifetime - 1);
@@ -1678,6 +1800,11 @@ export class Game {
     // Shatter the cluster into debris and burn 1s off the shield. Combo is
     // preserved (a deflected hit isn't a recovery moment).
     const allParts = cluster.partWorldPositions();
+    playSfx("impact");
+    const extras = Math.min(allParts.length - 1, 3);
+    for (let i = 1; i <= extras; i++) {
+      setTimeout(() => playSfx("impact"), i * 45);
+    }
     for (const p of allParts) {
       this.spawnDebris({
         x: p.x,
@@ -1697,6 +1824,7 @@ export class Game {
   }
 
   private handleShieldContact(cluster: FallingCluster): void {
+    playSfx("shield");
     this.shieldTimer = SHIELD_DURATION * this.cfg().effectDurationMul;
     const center = cluster.body.position;
     this.spawnFloater(
@@ -1712,6 +1840,7 @@ export class Game {
   }
 
   private handleDroneContact(cluster: FallingCluster): void {
+    playSfx("shield");
     this.spawnDrone();
     const center = cluster.body.position;
     this.spawnFloater(
@@ -1990,6 +2119,15 @@ export class Game {
 
   private handleNormalContact(cluster: FallingCluster, contact: ContactInfo): void {
     const allParts = cluster.partWorldPositions();
+    // One impact per hex in the cluster (capped at 4 so a giant blob
+    // doesn't carpet-bomb the mix), staggered slightly so they read as
+    // a chained punch rather than a single louder thud. Random variants
+    // mean the staggered fires don't sound identical.
+    playSfx("impact");
+    const extras = Math.min(allParts.length - 1, 3);
+    for (let i = 1; i <= extras; i++) {
+      setTimeout(() => playSfx("impact"), i * 45);
+    }
 
     // A normal-cluster hit while fast is active vaporises the accumulated
     // bonus pool — scatter it as red fragments and end the effect.
@@ -2049,6 +2187,10 @@ export class Game {
         this.timeEffectTimer = STICK_SLOW_BUFFER;
         this.timeEffectMax = STICK_SLOW_BUFFER;
       }
+      // Collision-induced slow stays silent — clear the pickup flag so
+      // slow_up doesn't fire even if a previous pickup-slow is still
+      // active. Once a hit happens the audio narrative is over.
+      this.slowFromPickup = false;
     }
     // Tutorial trigger for the very first 1→2 growth fires at completion
     // time inside completeStickInFlight, since size only changes when the
@@ -2220,6 +2362,7 @@ export class Game {
   }
 
   private handleStickyContact(cluster: FallingCluster, contact: ContactInfo): void {
+    playSfx("heal");
     const allParts = cluster.partWorldPositions();
     // Sticky red is a heal, not a hit — fast bonus survives this contact.
     // Only a real blue-cluster collision ends fast mode.
@@ -2304,6 +2447,7 @@ export class Game {
   }
 
   private handleCoinContact(cluster: FallingCluster): void {
+    playSfx("coin");
     // Coin pickup: base +5 always banks. While fast is active, the
     // multiplier also applies — the *extra* points (5 × (mul - 1)) join
     // the at-risk bonus pool, just like a passed cluster would.
@@ -2342,15 +2486,19 @@ export class Game {
         this.awardFastBonus();
         this.fastLevel = 0;
       }
+      playSfx("slow_down");
       this.timeEffect = "slow";
       this.timeScale = SLOW_TIMESCALE;
       const slowDur = SLOW_EFFECT_DURATION * this.cfg().effectDurationMul;
       this.timeEffectTimer = slowDur;
       this.timeEffectMax = slowDur;
+      this.slowFromPickup = true;
+      this.slowUpFired = false;
     } else if (cluster.kind === "fast") {
       // Each fast pickup stacks: level += 1, speed += 0.1, multiplier += 1.
       // Existing accumulated bonus carries into the new effect so combos
       // can stack big rewards across multiple pickups.
+      playSfx("fast_up");
       this.fastLevel += 1;
       this.timeEffect = "fast";
       this.timeScale = FAST_TIMESCALE_BASE + (this.fastLevel - 1) * FAST_TIMESCALE_STEP;
@@ -2768,6 +2916,8 @@ export class Game {
     this.state = "gameover";
     this.setPauseButtonVisible(false);
     this.resumeCountdown = 0;
+    playSfx("gameover");
+    stopMusic();
     // Don't bank a new high score for runs that started above 0 — those
     // are debug "skip-ahead" runs and the score isn't earned cleanly.
     if (!this.debugRun && this.score > this.best) {

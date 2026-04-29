@@ -1,4 +1,5 @@
 import "./style.css";
+import { preloadSfx } from "./audio";
 import { Game } from "./game";
 
 const canvas = document.getElementById("game") as HTMLCanvasElement | null;
@@ -13,3 +14,4 @@ if (!canvas || !overlay || !touchbar || !scoreEl || !bestEl) {
 
 const game = new Game({ canvas, overlay, touchbar, scoreEl, bestEl });
 game.start();
+preloadSfx();

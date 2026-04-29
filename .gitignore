@@ -3,3 +3,7 @@ dist
 .vite
 .DS_Store
 *.log
+# Sound source files (downloaded from freesound.org / kenney.nl).
+# The encoded mp3s in src/assets/audio/ are the canonical assets;
+# WAVs stay local for re-encoding but are not committed.
+*.wav

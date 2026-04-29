@@ -20,7 +20,13 @@ function bucketScore(score: number): string {
 }
 
 function isLocal(): boolean {
+  // Capacitor iOS serves from capacitor://localhost, and Android from
+  // https://localhost — those are real app launches, not dev. Only treat
+  // localhost as "dev" when loaded over plain http from a browser.
+  const proto = location.protocol;
+  if (proto !== "http:" && proto !== "https:") return false;
   const h = location.hostname;
+  if (proto === "https:" && h === "localhost") return false;
   return (
     h === "localhost" ||
     h === "127.0.0.1" ||

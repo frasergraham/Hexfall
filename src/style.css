@@ -527,6 +527,82 @@ body {
   cursor: default;
 }
 
+.audio-toggles {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.audio-toggle {
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #6f7aa6;
+  background: transparent;
+  border: 1px solid #2a3057;
+  border-radius: 8px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 120ms, border-color 120ms;
+}
+
+.audio-toggle:hover,
+.audio-toggle:active {
+  color: #aab4dc;
+  border-color: #3a4280;
+}
+
+.audio-toggle[aria-pressed="true"] {
+  color: #cdd6ff;
+  border-color: #5a64a8;
+}
+
+.play-btn {
+  margin: 22px 0 14px;
+  padding: 16px 56px;
+  background: rgba(91, 139, 255, 0.18);
+  color: #e8ecff;
+  border: 2px solid rgba(91, 139, 255, 0.55);
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.32em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 0 24px rgba(91, 139, 255, 0.25);
+  transition: background 120ms, border-color 120ms, transform 120ms, box-shadow 120ms;
+}
+
+.play-btn:hover,
+.play-btn:active {
+  background: rgba(91, 139, 255, 0.35);
+  border-color: rgba(170, 196, 255, 0.9);
+  box-shadow: 0 0 32px rgba(91, 139, 255, 0.45);
+  transform: scale(1.03);
+}
+
+.credits-link {
+  display: inline-block;
+  margin-top: 14px;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #4f5a86;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 120ms;
+}
+
+.credits-link:hover,
+.credits-link:active {
+  color: #aab4dc;
+}
+
 /* Polyhex blob: the container is sized inline by JS to the bounding box
    of the generated shape; each badge is positioned absolutely at its
    axial → pixel coord so they stack flush like an in-game cluster. */

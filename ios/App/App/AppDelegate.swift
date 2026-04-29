@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import AVFoundation
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -7,8 +8,42 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Configure the iOS audio session so the WKWebView's Web Audio
+        // graph survives interruptions (incoming calls, Siri, alarms,
+        // app switcher) cleanly.
+        //
+        // .playback keeps audio playing even when the hardware silent
+        // switch is on — the in-app SFX/music toggles are the user's
+        // mute control. .mixWithOthers lets a user keep their Music
+        // app playing on top instead of having us interrupt it.
+        // Activate immediately so the session is live before the JS
+        // layer creates its first AudioContext.
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true, options: [])
+        } catch {
+            NSLog("AVAudioSession setup failed: \(error.localizedDescription)")
+        }
+
+        // Re-activate the audio session and notify the JS layer when
+        // an interruption ends, so the AudioContext can resume cleanly.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: nil
+        )
         return true
+    }
+
+    @objc func handleAudioInterruption(_ notification: Notification) {
+        guard let info = notification.userInfo,
+              let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+        if type == .ended {
+            try? AVAudioSession.sharedInstance().setActive(true, options: [])
+        }
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
@@ -26,7 +61,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+        // Re-activate the audio session on every foreground. Cheap if
+        // already active; ensures we recover from any session that the
+        // OS deactivated while we were backgrounded.
+        try? AVAudioSession.sharedInstance().setActive(true, options: [])
     }
 
     func applicationWillTerminate(_ application: UIApplication) {

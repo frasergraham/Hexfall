@@ -49,18 +49,23 @@
             <button type="button" data-difficulty="medium" aria-pressed="true">MEDIUM</button>
             <button type="button" data-difficulty="hard" aria-pressed="false">HARD</button>
           </div>
+          <button type="button" class="play-btn" data-action="play">PLAY</button>
           <p class="hint desktop-only">
             <kbd>A</kbd>/<kbd>&larr;</kbd> <kbd>D</kbd>/<kbd>&rarr;</kbd> move
             &nbsp;&middot;&nbsp; <kbd>Q</kbd>/<kbd>E</kbd> rotate
             &nbsp;&middot;&nbsp; <kbd>P</kbd> pause
           </p>
           <p class="hint desktop-only"><kbd>SPACE</kbd> to start</p>
-          <p class="hint touch-only">Tap to start</p>
           <section class="achievements">
             <h2>Achievements <span id="achievementCount" class="achievement-count" aria-live="polite"></span></h2>
             <div id="achievementBadges" class="achievement-badges" aria-label="Earned achievements"></div>
           </section>
+          <div class="audio-toggles" role="group" aria-label="Audio">
+            <button type="button" class="audio-toggle" data-action="toggle-sfx" aria-pressed="true">SFX: ON</button>
+            <button type="button" class="audio-toggle" data-action="toggle-music" aria-pressed="true">MUSIC: ON</button>
+          </div>
           <button type="button" class="reset-hints" data-action="reset-hints">Reset hints</button>
+          <a class="credits-link" href="./credits/index.html">Credits</a>
         </div>
       </main>
 
