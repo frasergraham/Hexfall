@@ -1052,19 +1052,22 @@ export class Game {
       const completedInBlock = arr.filter((c) => progress.completed.includes(c.id)).length;
       const cards = arr.map((c) => {
         const best = progress.best[c.id] ?? 0;
+        const bestPct = progress.bestPct[c.id] ?? 0;
         const done = progress.completed.includes(c.id);
         const cardCls = !unlocked
           ? "challenge-card locked"
           : done ? "challenge-card completed" : "challenge-card";
-        const bestText = !unlocked ? "" : best > 0 ? `Best: ${best}` : "Best: —";
+        const bestScoreText = !unlocked ? "" : best > 0 ? `Best: ${best}` : "Best: —";
+        const pctText = !unlocked
+          ? ""
+          : bestPct > 0
+            ? `<span class="challenge-card-pct${bestPct >= 100 ? " full" : ""}">${bestPct}%</span>`
+            : `<span class="challenge-card-pct">—</span>`;
         const name = unlocked ? escapeHtml(c.name) : "???";
+        const tint = difficultyTint(c.difficulty);
         const hexes: string[] = [];
-        for (let i = 0; i < 5; i++) {
-          const filled = i < c.difficulty;
-          const tint = ["#5b8bff", "#7aa3ff", "#ffd76b", "#ff8e3c", "#e64545"][c.difficulty - 1] || "#5b8bff";
-          hexes.push(
-            `<span class="challenge-card-hex" style="background:${filled ? tint : "transparent"}; border:1px solid ${tint};"></span>`,
-          );
+        for (let i = 0; i < c.difficulty; i++) {
+          hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
         }
         const check = done ? '<span class="check">✓</span>' : "";
         return `
@@ -1072,7 +1075,7 @@ export class Game {
             <span class="challenge-card-id">${c.id}</span>
             <span class="challenge-card-name">${name}</span>
             <div class="challenge-card-hexes">${hexes.join("")}</div>
-            <span class="challenge-card-best">${bestText}</span>
+            <span class="challenge-card-best">${bestScoreText} ${pctText}</span>
             ${check}
           </button>
         `;
@@ -1109,12 +1112,11 @@ export class Game {
     if (!def) return;
     const progress = loadChallengeProgress();
     const best = progress.best[def.id] ?? 0;
+    const tint = difficultyTint(def.difficulty);
     const hexes: string[] = [];
-    for (let i = 0; i < 5; i++) {
-      const filled = i < def.difficulty;
-      const tint = ["#5b8bff", "#7aa3ff", "#ffd76b", "#ff8e3c", "#e64545"][def.difficulty - 1] || "#5b8bff";
+    for (let i = 0; i < def.difficulty; i++) {
       hexes.push(
-        `<span class="challenge-card-hex" style="background:${filled ? tint : "transparent"}; border:1px solid ${tint}; width:14px; height:16px;"></span>`,
+        `<span class="challenge-card-hex" style="background:${tint}; width:14px; height:16px;"></span>`,
       );
     }
     this.overlay.innerHTML = `
@@ -1760,24 +1762,29 @@ export class Game {
     this.score += this.fastBonus;
     this.scoreEl.textContent = String(this.score);
     this.checkScoreMilestones();
-    // Threshold achievements for the size of the banked payout. Award the
-    // highest tier that the pool clears so a single big payout doesn't
-    // pop four banners back-to-back.
-    for (let i = BONUS_POOL_TIERS.length - 1; i >= 0; i--) {
-      if (banked >= BONUS_POOL_TIERS[i]!.threshold) {
-        void reportAchievement(BONUS_POOL_TIERS[i]!.id);
-        break;
+    // Endless-only score-payload achievements. Challenge mode tracks
+    // its own per-challenge progression and shouldn't compound onto
+    // the standard ladder.
+    if (this.gameMode === "endless") {
+      // Threshold achievements for the size of the banked payout. Award the
+      // highest tier that the pool clears so a single big payout doesn't
+      // pop four banners back-to-back.
+      for (let i = BONUS_POOL_TIERS.length - 1; i >= 0; i--) {
+        if (banked >= BONUS_POOL_TIERS[i]!.threshold) {
+          void reportAchievement(BONUS_POOL_TIERS[i]!.id);
+          break;
+        }
       }
-    }
-    // Multiplier achievements based on the peak the player held when the
-    // bonus actually banked. Same single-tier rule as the pool tiers.
-    if (mul >= 6) void reportAchievement(ACHIEVEMENTS.bonus6x);
-    else if (mul >= 5) void reportAchievement(ACHIEVEMENTS.bonus5x);
-    else if (mul >= 4) void reportAchievement(ACHIEVEMENTS.bonus4x);
-    else if (mul >= 3) void reportAchievement(ACHIEVEMENTS.bonus3x);
-    // Trifecta: bank the payout while a shield is up and a drone is out.
-    if (this.shieldTimer > 0 && this.drones.length > 0) {
-      void reportAchievement(ACHIEVEMENTS.trifecta);
+      // Multiplier achievements based on the peak the player held when the
+      // bonus actually banked. Same single-tier rule as the pool tiers.
+      if (mul >= 6) void reportAchievement(ACHIEVEMENTS.bonus6x);
+      else if (mul >= 5) void reportAchievement(ACHIEVEMENTS.bonus5x);
+      else if (mul >= 4) void reportAchievement(ACHIEVEMENTS.bonus4x);
+      else if (mul >= 3) void reportAchievement(ACHIEVEMENTS.bonus3x);
+      // Trifecta: bank the payout while a shield is up and a drone is out.
+      if (this.shieldTimer > 0 && this.drones.length > 0) {
+        void reportAchievement(ACHIEVEMENTS.trifecta);
+      }
     }
     const p = this.fastBonusHudPos();
     // Big celebratory pop: huge font, scale 0 → 1.6 fast, then a slow
@@ -3377,11 +3384,11 @@ export class Game {
     this.renderChallengeComplete();
   }
 
-  // Called from death path to bank a partial-run best score and exit.
+  // Called from death path to bank a partial-run best score + best-pct.
   private endChallengeRun(): void {
     const def = this.activeChallenge;
     if (!def) return;
-    saveChallengeBest(def.id, this.score);
+    saveChallengeBest(def.id, this.score, this.progress);
   }
 
   // ----- Wave / difficulty system -----
@@ -3569,42 +3576,53 @@ export class Game {
     if (!def) return;
     const baseW = 8;
     const w = baseW + (this.waveBumpT > 0 ? 6 * this.waveBumpT * 5 : 0);
-    // Prefer just outside the board's left edge; if there isn't room
-    // (mobile portrait usually has boardOriginX small), tuck the bar
-    // inside the canvas at its left margin instead.
-    const desiredX = this.boardOriginX - baseW - 4;
-    const x = desiredX < 2 ? 2 : desiredX;
     const y0 = this.boardOriginY;
     const h = this.boardHeight;
-    // Track
-    ctx.fillStyle = "rgba(255,255,255,0.12)";
-    ctx.fillRect(x, y0, w, h);
-    ctx.strokeStyle = "rgba(127, 232, 156, 0.55)";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, y0 + 0.5, w - 1, h - 1);
-    // Fill
-    const fill = h * Math.min(1, Math.max(0, this.progressDisplayed));
-    const grad = ctx.createLinearGradient(x, y0 + h - fill, x, y0 + h);
-    grad.addColorStop(0, "#a4ffc3");
-    grad.addColorStop(1, "#3fc873");
-    ctx.fillStyle = grad;
-    ctx.fillRect(x, y0 + h - fill, w, fill);
-    // Tick marks
-    const total = def.waves.length;
-    if (total > 0) {
-      ctx.fillStyle = "rgba(0,0,0,0.55)";
-      for (let i = 1; i < total; i++) {
-        const ty = y0 + h - h * (i / total);
-        ctx.fillRect(x, ty - 0.5, w, 1);
-      }
-    }
-    // Percent label centred at top of the bar.
+    // Hug the viewport edges so the bars feel like a frame around the
+    // canvas. canvas.width is dpr-scaled; cssWidth is what our render
+    // coords use after setTransform(dpr,...).
+    const dpr = window.devicePixelRatio || 1;
+    const cssWidth = this.canvas.width / dpr;
+    const xLeft = 4;
+    const xRight = cssWidth - baseW - 4;
+    this.drawProgressBar(ctx, xLeft, y0, w, h, def.waves.length, 1.0);
+    this.drawProgressBar(ctx, xRight, y0, w, h, def.waves.length, 0.4);
+    // Percent label sits above the left bar only.
     const pct = Math.round(this.progressDisplayed * 100);
     ctx.fillStyle = "rgba(232, 236, 255, 0.85)";
     ctx.font = "bold 10px -apple-system, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
-    ctx.fillText(`${pct}%`, x + w / 2, y0 - 4);
+    ctx.fillText(`${pct}%`, xLeft + w / 2, y0 - 4);
+  }
+
+  private drawProgressBar(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y0: number,
+    w: number,
+    h: number,
+    totalWaves: number,
+    alpha: number,
+  ): void {
+    ctx.fillStyle = `rgba(255,255,255,${0.12 * alpha})`;
+    ctx.fillRect(x, y0, w, h);
+    ctx.strokeStyle = `rgba(127, 232, 156, ${0.55 * alpha})`;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y0 + 0.5, w - 1, h - 1);
+    const fill = h * Math.min(1, Math.max(0, this.progressDisplayed));
+    const grad = ctx.createLinearGradient(x, y0 + h - fill, x, y0 + h);
+    grad.addColorStop(0, `rgba(164, 255, 195, ${alpha})`);
+    grad.addColorStop(1, `rgba(63, 200, 115, ${alpha})`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, y0 + h - fill, w, fill);
+    if (totalWaves > 0) {
+      ctx.fillStyle = `rgba(0,0,0,${0.55 * alpha})`;
+      for (let i = 1; i < totalWaves; i++) {
+        const ty = y0 + h - h * (i / totalWaves);
+        ctx.fillRect(x, ty - 0.5, w, 1);
+      }
+    }
   }
 
   private drawWalls(ctx: CanvasRenderingContext2D): void {
@@ -3829,6 +3847,10 @@ export class Game {
   }
 
   private checkScoreMilestones(): void {
+    // Challenge mode runs are not eligible for the standard score-tier
+    // achievements — challenge scoring is per-challenge, not stacked
+    // against the endless leaderboard.
+    if (this.gameMode === "challenge") return;
     const milestones = SCORE_MILESTONES_BY_DIFFICULTY[this.difficulty];
     while (this.nextMilestoneIdx < milestones.length) {
       const m = milestones[this.nextMilestoneIdx]!;
@@ -4098,6 +4120,14 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+// Difficulty banding for the challenge-select hexes: 1-2 = green
+// (chill), 3-4 = yellow (heat), 5 = red (top of the ladder).
+function difficultyTint(d: number): string {
+  if (d >= 5) return "#e64545";
+  if (d >= 3) return "#ffd76b";
+  return "#7fe89c";
 }
 
 function generateStars(

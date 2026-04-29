@@ -225,9 +225,13 @@ async function ensureLeaderboardLocalization(
 
 // --- Achievement ---------------------------------------------------------
 
-// Apple caps total achievement points per app at 1000. 22 achievements
-// at 45 each = 990 fits with headroom for one or two more later.
-const ACHIEVEMENT_POINTS = 45;
+// Apple caps total achievement points per app at 1000. The original 22
+// achievements went live at 45 each (= 990) and Apple's API refuses to
+// patch points on a Live achievement (STATE_ERROR.ACHIEVEMENT_VERSION_
+// UNMODIFIABLE_STATE). That leaves 10 points of headroom for any later
+// additions, so new achievements are created at 1 point each — they
+// still unlock and submit fine. Existing live ones are left at 45.
+const ACHIEVEMENT_POINTS = 1;
 
 async function ensureAchievement(
   gcDetailId: string,
@@ -243,18 +247,10 @@ async function ensureAchievement(
   );
   const hit = list.data.find((d) => d.attributes?.vendorIdentifier === vendorId);
   if (hit) {
-    if (hit.attributes?.points !== ACHIEVEMENT_POINTS) {
-      await asc("PATCH", `/v1/gameCenterAchievements/${hit.id}`, {
-        data: {
-          type: "gameCenterAchievements",
-          id: hit.id,
-          attributes: { points: ACHIEVEMENT_POINTS },
-        },
-      });
-      console.log(`~ achievement ${vendorId} points → ${ACHIEVEMENT_POINTS} (${hit.id})`);
-    } else {
-      console.log(`✓ achievement ${vendorId} exists (${hit.id})`);
-    }
+    // Don't try to renormalise points on existing entries — Live
+    // achievements are immutable, and the total-points cap means we
+    // have to live with whatever value they were created at.
+    console.log(`✓ achievement ${vendorId} exists (${hit.id}, ${hit.attributes?.points ?? "?"}pts)`);
     return hit.id;
   }
   const created = await asc<AscSingle<AscResource>>("POST", `/v1/gameCenterAchievements`, {
