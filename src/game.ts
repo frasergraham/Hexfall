@@ -408,21 +408,19 @@ export class Game {
     amp: number;
     period: number;
     phase: number;
-    // Used by the zigzag push to hold direction stable around zero
-    // crossings.
     pushHoldT: number;
     pushDir: 0 | -1 | 1;
-    // Pending transition: when a new wall kind is requested while the
-    // previous is still visible, the new kind is queued and applied
-    // after the current wall has retracted (so kinds always ease out
-    // before the next one eases in).
+    // Queued kind change applied once the current wall fully retracts.
     pendingKind: WallKind | null;
-    pendingAmount: number;
     pendingAmp: number;
     pendingPeriod: number;
-    // Narrow-wall warning: when a narrow wall is about to slide in,
-    // flash a red line on each side for ~500 ms.
-    narrowWarningT: number;
+    // Where amountTarget will be set once the warning timer expires.
+    postWarningAmount: number;
+    // Pre-arrival warning: while > 0 the warning indicator flashes and
+    // amountTarget is held at 0. Once the timer hits 0, postWarningAmount
+    // is applied and the wall starts lerping in.
+    warningT: number;
+    warningKind: WallKind;
   } = {
     kind: "none",
     amount: 0,
@@ -433,10 +431,11 @@ export class Game {
     pushHoldT: 0,
     pushDir: 0,
     pendingKind: null,
-    pendingAmount: 0,
     pendingAmp: 0.18,
     pendingPeriod: 1.4,
-    narrowWarningT: 0,
+    postWarningAmount: 0,
+    warningT: 0,
+    warningKind: "none",
   };
 
   // Three-plane starfield. Generated on resize and whenever the score
@@ -1574,27 +1573,30 @@ export class Game {
     const wallLerp = 1 - Math.exp(-dt * 4);
     this.wall.amount += (this.wall.amountTarget - this.wall.amount) * wallLerp;
     if (this.wall.kind === "zigzag") this.wall.phase += dt;
-    if (this.wall.narrowWarningT > 0) {
-      this.wall.narrowWarningT = Math.max(0, this.wall.narrowWarningT - dt);
+    if (this.wall.warningT > 0) {
+      this.wall.warningT = Math.max(0, this.wall.warningT - dt);
+      // Warning just expired — start lerping the wall in.
+      if (this.wall.warningT === 0 && this.wall.postWarningAmount > 0) {
+        this.wall.amountTarget = this.wall.postWarningAmount;
+        this.wall.postWarningAmount = 0;
+      }
     }
     if (this.wall.pushHoldT > 0) {
       this.wall.pushHoldT = Math.max(0, this.wall.pushHoldT - dt);
       if (this.wall.pushHoldT === 0) this.wall.pushDir = 0;
     }
-    // Once the current wall has retracted, apply any pending kind. If
-    // there's no pending kind, fall back to "none". This is what gives
-    // walls the visible ease-out behavior — they don't snap off.
-    if (this.wall.amount < 0.01 && this.wall.amountTarget === 0) {
+    // Once the current wall has retracted, either apply the queued
+    // kind (which kicks off the warning + lerp-in cycle) or settle
+    // back to "none".
+    if (this.wall.amount < 0.01 && this.wall.amountTarget === 0 && this.wall.warningT === 0) {
       if (this.wall.pendingKind !== null) {
         this.wall.kind = this.wall.pendingKind;
-        this.wall.amountTarget = this.wall.pendingAmount;
         this.wall.amp = this.wall.pendingAmp;
         this.wall.period = this.wall.pendingPeriod;
-        if (this.wall.kind === "narrow" && this.wall.amountTarget > 0) {
-          this.wall.narrowWarningT = 0.5;
-        }
+        this.wall.warningT = 1.0;
+        this.wall.warningKind = this.wall.pendingKind;
         this.wall.pendingKind = null;
-      } else if (this.wall.kind !== "none") {
+      } else if (this.wall.kind !== "none" && this.wall.postWarningAmount === 0) {
         this.wall.kind = "none";
       }
     }
@@ -3658,41 +3660,51 @@ export class Game {
   // Single source of truth for how far the active wall reaches in from
   // each side at world y. Pinch and narrow are y-independent; zigzag's
   // inset varies sinusoidally with y to make the corridor slant.
-  // Set wall kind + target. To get smooth ease-out followed by
-  // ease-in, we never snap the kind. If the new kind matches the
-  // current one we just update the target. Otherwise we set the
-  // target to 0 (retract the current kind) and queue the new one;
-  // the update loop applies the pending kind once amount lerps to ~0.
+  // Set wall kind + target. To get smooth ease-out followed by ease-in
+  // and a pre-arrival warning flash, we never snap the kind in:
+  //   1. If kind matches current and the wall is up, just update target.
+  //   2. If kind is "none", retract.
+  //   3. Otherwise: retract the current wall first, queue the new kind,
+  //      then once retraction completes the update loop fires a 1-second
+  //      warning flash before the new wall starts lerping in.
   private setWall(kind: WallKind, amount: number, ampPeriod?: { amp: number; period: number }): void {
     const amp = ampPeriod?.amp ?? 0.18;
     const period = ampPeriod?.period ?? 1.4;
-    if (kind === this.wall.kind) {
+    if (kind === this.wall.kind && kind !== "none") {
+      // Same kind already up — just update the target instantly.
       this.wall.amountTarget = amount;
       this.wall.amp = amp;
       this.wall.period = period;
       this.wall.pendingKind = null;
-      if (kind === "narrow" && amount > 0 && this.wall.amount < 0.05) {
-        this.wall.narrowWarningT = 0.5;
-      }
-    } else if (this.wall.amount < 0.01) {
-      // Current wall already retracted — switch kinds immediately.
-      this.wall.kind = kind;
-      this.wall.amountTarget = amount;
-      this.wall.amp = amp;
-      this.wall.period = period;
-      this.wall.pendingKind = null;
-      if (kind === "narrow" && amount > 0) this.wall.narrowWarningT = 0.5;
-    } else {
-      // Queue the new kind; let the current one retract first.
-      this.wall.amountTarget = 0;
-      this.wall.pendingKind = kind;
-      this.wall.pendingAmount = amount;
-      this.wall.pendingAmp = amp;
-      this.wall.pendingPeriod = period;
+      this.wall.postWarningAmount = 0;
+      this.wall.warningT = 0;
+      return;
     }
     if (kind === "none") {
+      this.wall.amountTarget = 0;
+      this.wall.pendingKind = null;
+      this.wall.postWarningAmount = 0;
+      this.wall.warningT = 0;
       this.wall.pushHoldT = 0;
       this.wall.pushDir = 0;
+      return;
+    }
+    // New non-none kind. Hold target at 0 (retract first if needed) and
+    // queue the kind + warning. The update loop will apply pendingKind
+    // once amount<0.01, fire the warning, and finally set amountTarget.
+    this.wall.amountTarget = 0;
+    this.wall.pendingKind = kind;
+    this.wall.pendingAmp = amp;
+    this.wall.pendingPeriod = period;
+    this.wall.postWarningAmount = amount;
+    // If already retracted, switch kind + start the warning right now.
+    if (this.wall.amount < 0.01) {
+      this.wall.kind = kind;
+      this.wall.amp = amp;
+      this.wall.period = period;
+      this.wall.warningT = 1.0;
+      this.wall.warningKind = kind;
+      this.wall.pendingKind = null;
     }
   }
 
@@ -3790,14 +3802,18 @@ export class Game {
   }
 
   private drawWalls(ctx: CanvasRenderingContext2D): void {
-    // Narrow approach warning: red blinking line on each play-area edge
-    // that fires once when narrow walls start sliding in. Renders even
-    // before the wall amount has lerped past the visibility threshold.
-    if (this.wall.narrowWarningT > 0) {
-      const t = this.wall.narrowWarningT;
-      const blink = Math.sin(t * Math.PI * 16) > 0 ? 1 : 0.25;
-      const alpha = Math.min(1, t / 0.1) * blink;
-      ctx.fillStyle = `rgba(255, 80, 90, ${0.85 * alpha})`;
+    // Pre-arrival warning: blinking line on each play-area edge for one
+    // full second before the wall starts moving in. Color varies by
+    // upcoming wall kind so the warning telegraphs which type is coming.
+    if (this.wall.warningT > 0) {
+      const t = this.wall.warningT;
+      const blink = Math.sin(t * Math.PI * 14) > 0 ? 1 : 0.2;
+      const alpha = blink * (t < 0.15 ? t / 0.15 : 1); // soft trail-off as warning ends
+      const rgb =
+        this.wall.warningKind === "narrow" ? "255, 80, 90"
+        : this.wall.warningKind === "zigzag" ? "220, 170, 255"
+        : "255, 130, 140";
+      ctx.fillStyle = `rgba(${rgb}, ${0.85 * alpha})`;
       ctx.fillRect(this.boardOriginX, this.boardOriginY, 3, this.boardHeight);
       ctx.fillRect(
         this.boardOriginX + this.boardWidth - 3,
