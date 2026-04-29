@@ -205,7 +205,7 @@ const SLOW_EFFECT_DURATION = 5;
 // exactly when the countdown bar empties.
 const SLOW_UP_LEAD = 3.3;
 const FAST_EFFECT_DURATION = 5;
-const STICK_SLOW_BUFFER = 2; // brief slow-mo after gaining a hex
+const STICK_SLOW_BUFFER = 1; // brief slow-mo after gaining a hex
 const SLOW_TIMESCALE = 0.5;
 const FAST_TIMESCALE_BASE = 1.25; // first fast pickup
 const FAST_TIMESCALE_STEP = 0.1; // each subsequent stack adds this much speed
@@ -224,6 +224,9 @@ const SIDE_SPAWNS_SCORE = 400;
 const PLAYER_MOVE_SPEED = 18; // px/ms (Matter velocity units, keyboard hold)
 const PLAYER_ROT_SPEED = 0.12; // rad/ms (keyboard hold)
 const RAIL_BOTTOM_INSET = 4; // px above the board bottom where the rail sits
+// Px reserved on each side of the play area for the challenge-mode
+// progress bars so they don't overlap falling clusters.
+const PROGRESS_BAR_RESERVE = 18;
 
 // Collision categories.
 const CAT_PLAYER = 0x0002;
@@ -442,6 +445,13 @@ export class Game {
   // Floating-text feedback (e.g. "+5" on coin pickup, "3X" on fast pickup).
   // Each floater rises and fades over a short lifetime.
   private floaters: Floater[] = [];
+
+  // Side-entry warnings: when a cluster spawns from off-screen on the
+  // left or right, briefly flash a band on that edge at the cluster's
+  // current y so the player can see exactly where it's coming in. The
+  // cluster ref makes the flash track the body as gravity pulls it
+  // down between spawn and on-screen entry.
+  private sideWarnings: Array<{ cluster: FallingCluster; side: "left" | "right"; age: number; lifetime: number }> = [];
 
   // Shield power-up state. While shieldTimer > 0 a translucent bubble
   // surrounds the player and any harmful contact (normal cluster or sticky)
@@ -713,7 +723,7 @@ export class Game {
           this.beginChallengeStart(this.activeChallenge);
           return;
         }
-        this.gameMode = "endless";
+        this.setGameMode("endless");
         this.activeChallenge = null;
         this.effectOverrides = null;
         this.startOrRestart();
@@ -740,10 +750,17 @@ export class Game {
       const backBtn = target?.closest('button[data-action="challenge-back"]') as HTMLButtonElement | null;
       if (backBtn) {
         playSfx("click");
-        if (this.state === "challengeIntro" || this.state === "challengeComplete") {
+        // From any in-challenge overlay (intro / complete / challenge
+        // gameover), Back goes to the challenge select screen, not the
+        // main menu. The main-menu button on gameover is separate.
+        if (
+          this.state === "challengeIntro" ||
+          this.state === "challengeComplete" ||
+          (this.state === "gameover" && this.gameMode === "challenge")
+        ) {
           this.openChallengeSelect();
         } else {
-          this.gameMode = "endless";
+          this.setGameMode("endless");
           this.activeChallenge = null;
           this.effectOverrides = null;
           this.state = "menu";
@@ -762,7 +779,7 @@ export class Game {
       const challengeQuitBtn = target?.closest('button[data-action="challenge-menu"]') as HTMLButtonElement | null;
       if (challengeQuitBtn) {
         playSfx("click");
-        this.gameMode = "endless";
+        this.setGameMode("endless");
         this.activeChallenge = null;
         this.effectOverrides = null;
         this.state = "menu";
@@ -881,29 +898,28 @@ export class Game {
       return;
     }
 
-    // Three-row grid with badges spread as evenly as possible across
-    // the rows (so a small earned-set isn't a single tight cluster).
-    // Each row is centered horizontally; pointy-top hex tiling with a
-    // half-column offset on odd rows.
+    // Three-row pointy-top hex grid. Cells are placed at their natural
+    // tiled positions (no per-row centering, which fights the half-column
+    // stagger). Counts are distributed for visual balance:
+    //   N % 3 == 0 → equal across rows (e.g. 9/9/9)
+    //   N % 3 == 1 → middle row gets the extra (28 → 9/10/9, interlocks)
+    //   N % 3 == 2 → outer rows get the extras (29 → 10/9/10)
     const ROWS = 3;
     const MAX_COLS = 10;
     const MAX_W = 320;
     const MAX_H = 96;
 
     const N = Math.min(earned.length, ROWS * MAX_COLS);
-    // Distribute N across 3 rows: row 0 takes ceil(N/3), then ceil of
-    // the remainder over 2 rows, etc. Yields 10/9/9, 4/3/3, 2/2/2 etc.
-    const counts: number[] = [];
-    let remaining = N;
-    for (let r = 0; r < ROWS; r++) {
-      const c = Math.ceil(remaining / (ROWS - r));
-      counts.push(c);
-      remaining -= c;
-    }
+    const base = Math.floor(N / ROWS);
+    const bias = N % ROWS;
+    const counts: number[] =
+      bias === 1 ? [base, base + 1, base]
+      : bias === 2 ? [base + 1, base, base + 1]
+      : [base, base, base];
     const widestCount = Math.max(...counts);
 
-    // Pick hex size so the widest row + half-column offset fits MAX_W,
-    // and the three rows fit MAX_H.
+    // Pick hex size so widest row + the half-column stagger fits MAX_W,
+    // and three rows fit MAX_H.
     const sizeForW = MAX_W / ((widestCount + 0.5) * SQRT3);
     const sizeForH = MAX_H / (2 + 1.5 * (ROWS - 1));
     const size = Math.min(sizeForW, sizeForH);
@@ -912,7 +928,16 @@ export class Game {
     const rowPitch = 1.5 * size;
     const fontPx = Math.max(8, size * 0.55);
 
-    const totalW = (widestCount + 0.5) * w;
+    // Brick layout: every other row offset by half a column so rows
+    // interlock vertically. Don't center shorter rows — that
+    // inward shift cancels the stagger and produces a square grid.
+    let maxRight = 0;
+    for (let r = 0; r < ROWS; r++) {
+      const stagger = r % 2 === 1 ? w * 0.5 : 0;
+      const right = counts[r]! * w + stagger;
+      if (right > maxRight) maxRight = right;
+    }
+    const totalW = maxRight;
     const totalH = h + rowPitch * (ROWS - 1);
     host.style.width = `${Math.ceil(totalW)}px`;
     host.style.height = `${Math.ceil(totalH)}px`;
@@ -921,15 +946,13 @@ export class Game {
     const cells: string[] = [];
     for (let r = 0; r < ROWS; r++) {
       const rowCount = counts[r]!;
-      const rowFootprint = (rowCount + 0.5) * w;
-      const rowOriginX = (totalW - rowFootprint) / 2;
+      const stagger = r % 2 === 1 ? w * 0.5 : 0;
       for (let c = 0; c < rowCount; c++) {
         const meta = earned[idx++]!;
-        const offset = r % 2 === 1 ? w * 0.5 : 0;
-        const left = rowOriginX + c * w + offset;
+        const cellLeft = c * w + stagger;
         const top = r * rowPitch;
         cells.push(
-          `<span class="achievement-badge" style="--badge-tint:${meta.tint}; left:${left.toFixed(2)}px; top:${top.toFixed(2)}px; width:${w.toFixed(2)}px; height:${h.toFixed(2)}px; font-size:${fontPx.toFixed(2)}px;" title="${escapeHtml(meta.name)} — ${escapeHtml(meta.description)}">${escapeHtml(meta.badge)}</span>`,
+          `<span class="achievement-badge" style="--badge-tint:${meta.tint}; left:${cellLeft.toFixed(2)}px; top:${top.toFixed(2)}px; width:${w.toFixed(2)}px; height:${h.toFixed(2)}px; font-size:${fontPx.toFixed(2)}px;" title="${escapeHtml(meta.name)} — ${escapeHtml(meta.description)}">${escapeHtml(meta.badge)}</span>`,
         );
       }
     }
@@ -991,13 +1014,26 @@ export class Game {
     this.setSliderEnabled(true);
     setMusicSpeed(1);
     startMusic();
-    // Mark the first-launch desktop controls hint as seen so it's
-    // dismissed on next visit to the menu.
-    if (!this.controlsHintShown) {
-      this.controlsHintShown = true;
-      try { localStorage.setItem(CONTROLS_HINT_STORAGE_KEY, "1"); } catch { /* ignore */ }
-    }
+    this.maybeShowControlsHint();
     if (!this.debugRun) trackPlayStart(this.difficulty);
+  }
+
+  // First-run reminder: fade a small DOM banner over the canvas with
+  // the keyboard control summary. Only fires on desktop and only the
+  // first time the player ever starts a run. Reset hints brings it
+  // back. Mirrors the AVOID/HEAL/SLOW one-shot teach pattern.
+  private maybeShowControlsHint(): void {
+    if (isTouchDevice() || this.controlsHintShown) return;
+    const hint = document.getElementById("controlsHint");
+    if (!hint) return;
+    hint.hidden = false;
+    hint.classList.remove("fading");
+    // Mark as shown immediately so future runs don't replay it; also
+    // schedules the fade-out so the player has time to read.
+    this.controlsHintShown = true;
+    try { localStorage.setItem(CONTROLS_HINT_STORAGE_KEY, "1"); } catch { /* ignore */ }
+    setTimeout(() => hint.classList.add("fading"), 4500);
+    setTimeout(() => { hint.hidden = true; hint.classList.remove("fading"); }, 5500);
   }
 
   private renderMenu(): void {
@@ -1009,10 +1045,6 @@ export class Game {
     this.renderAchievementBadges();
     this.refreshDifficultyButtons();
     this.refreshAudioToggles();
-    // First-launch desktop hint: revealed only when not yet seen and not
-    // a touch device. Reset hints brings it back.
-    const hint = this.overlay.querySelector("#controlsHint") as HTMLElement | null;
-    if (hint) hint.hidden = isTouchDevice() || this.controlsHintShown;
     // Score is always 0 on the menu — the BEST readout is the only
     // useful number. Hide the score block until a run starts.
     this.setScoreVisible(false);
@@ -1055,6 +1087,7 @@ export class Game {
     this.startChallenge(def);
     setMusicSpeed(1);
     startMusic();
+    this.maybeShowControlsHint();
   }
 
   private renderChallengeSelect(): void {
@@ -1183,8 +1216,10 @@ export class Game {
       <h1>PAUSED</h1>
       <p class="hint desktop-only"><kbd>SPACE</kbd> to resume</p>
       <p class="hint touch-only">Tap to resume</p>
-      <button type="button" class="pill-btn" data-action="quit">QUIT</button>
-      ${this.audioTogglesHtml()}
+      <button type="button" class="pill-btn pill-btn-pause" data-action="quit">QUIT</button>
+      <div class="pause-footer">
+        ${this.audioTogglesHtml()}
+      </div>
     `;
     this.overlay.classList.remove("hidden");
     this.setPauseButtonVisible(false);
@@ -1216,9 +1251,6 @@ export class Game {
       localStorage.removeItem(ROTATE_TUTORIAL_STORAGE_KEY);
       localStorage.removeItem(CONTROLS_HINT_STORAGE_KEY);
     } catch { /* ignore */ }
-    // Reveal the inline hint immediately if we're on desktop and on the menu.
-    const hint = this.overlay.querySelector("#controlsHint") as HTMLElement | null;
-    if (hint && !isTouchDevice()) hint.hidden = false;
     const original = btn.textContent ?? "Reset hints";
     btn.textContent = "Reset!";
     btn.disabled = true;
@@ -1232,7 +1264,7 @@ export class Game {
     if (this.state !== "paused") return;
     const wasChallenge = this.gameMode === "challenge";
     this.resetRunState(0);
-    this.gameMode = "endless";
+    this.setGameMode("endless");
     this.activeChallenge = null;
     this.effectOverrides = null;
     this.setSliderEnabled(true);
@@ -1280,6 +1312,7 @@ export class Game {
     this.slowUpFired = false;
     this.timeScale = 1;
     this.floaters = [];
+    this.sideWarnings = [];
     this.shieldTimer = 0;
     this.rotateTutorialActive = false;
     this.rotateTutorialTimer = 0;
@@ -1353,12 +1386,14 @@ export class Game {
       const progress = loadChallengeProgress();
       const best = progress.best[def.id] ?? 0;
       this.overlay.innerHTML = `
-        <h1>GAME OVER</h1>
-        <p class="tagline">${escapeHtml(def.name)} · ${def.id}</p>
-        <p class="tagline">Score ${this.score} · Best ${best}</p>
-        <button type="button" class="play-btn" data-action="play">RETRY</button>
-        <button type="button" class="challenge-back" data-action="challenge-back">Back to challenges</button>
-        <button type="button" class="challenge-back" data-action="challenge-menu">Main menu</button>
+        <div class="challenge-gameover">
+          <h1>GAME OVER</h1>
+          <p class="tagline">${escapeHtml(def.name)} · ${def.id}</p>
+          <p class="tagline">Score ${this.score} · Best ${best}</p>
+          <button type="button" class="play-btn" data-action="play">RETRY</button>
+          <button type="button" class="challenge-back" data-action="challenge-back">Back to challenges</button>
+          <button type="button" class="challenge-back" data-action="challenge-menu">Main menu</button>
+        </div>
       `;
       this.overlay.classList.remove("hidden");
       return;
@@ -1396,7 +1431,7 @@ export class Game {
         return;
       }
       if (this.state === "menu" || this.state === "gameover") {
-        this.gameMode = "endless";
+        this.setGameMode("endless");
         this.activeChallenge = null;
         this.effectOverrides = null;
         this.startOrRestart();
@@ -1465,8 +1500,14 @@ export class Game {
         return f.age < f.lifetime;
       });
     }
+    if (this.sideWarnings.length > 0) {
+      this.sideWarnings = this.sideWarnings.filter((sw) => {
+        sw.age += dt;
+        return sw.age < sw.lifetime;
+      });
+    }
 
-    if (this.state === "menu") {
+    if (this.state === "menu" || this.state === "challengeSelect" || this.state === "challengeIntro") {
       // Pre-game test drive: accept input + step physics so the player can
       // try out the controls. No spawning, no scoring, no wave system.
       this.applyMovementInput();
@@ -1477,10 +1518,10 @@ export class Game {
       return;
     }
 
-    if (this.state === "gameover") {
-      // After death, keep stepping physics + clusters + debris so the
-      // wreckage scatters and the falling pieces continue behind the
-      // overlay. No input, no spawning, no lose-check.
+    if (this.state === "gameover" || this.state === "challengeComplete") {
+      // After death (or completion), keep stepping physics + clusters + debris
+      // so the wreckage / leftover clusters tumble behind the overlay. No
+      // input, no spawning, no lose-check.
       Engine.update(this.engine, Math.min(dt * 1000, 1000 / 30));
       this.cleanupOffscreenBodies();
       return;
@@ -3000,22 +3041,27 @@ export class Game {
     let vx: number;
     let vy: number;
 
+    let sideEntryFromLeft: boolean | null = null;
     if (sideSpawn) {
       const fromLeft = Math.random() < 0.5;
+      sideEntryFromLeft = fromLeft;
       // Always enter from the upper half of the play area so the player has
-      // enough vertical runway to react. Range: just-below-top → ~halfway.
+      // enough vertical runway to react.
       const halfBoard = this.boardHeight * 0.5;
       const yMin = this.hexSize * 2;
       const yMax = Math.max(yMin + this.hexSize, halfBoard - this.hexSize);
       y = this.boardOriginY + yMin + Math.random() * (yMax - yMin);
-      const sideAngle = 0.25 + Math.random() * 0.25; // 14°-29° below horizontal
-      const total = speed * 1.05;
+      // Almost-horizontal entry so the cluster crosses well into the play
+      // area before gravity pulls it down. Spawn just outside the edge so
+      // it's barely off-screen and visible quickly.
+      const sideAngle = 0.08 + Math.random() * 0.12; // 5°-12° below horizontal
+      const total = speed * 1.4;
       if (fromLeft) {
-        x = this.boardOriginX - this.hexSize * 3;
+        x = this.boardOriginX - this.hexSize * 1.2;
         vx = Math.cos(sideAngle) * total;
         vy = Math.sin(sideAngle) * total;
       } else {
-        x = this.boardOriginX + this.boardWidth + this.hexSize * 3;
+        x = this.boardOriginX + this.boardWidth + this.hexSize * 1.2;
         vx = -Math.cos(sideAngle) * total;
         vy = Math.sin(sideAngle) * total;
       }
@@ -3075,6 +3121,9 @@ export class Game {
     this.clusters.push(cluster);
     this.clusterByBodyId.set(cluster.body.id, cluster);
     Composite.add(this.engine.world, cluster.body);
+    if (sideEntryFromLeft !== null) {
+      this.sideWarnings.push({ cluster, side: sideEntryFromLeft ? "left" : "right", age: 0, lifetime: 0.7 });
+    }
   }
 
   // ----- Challenge runtime ----------------------------------------------
@@ -3082,8 +3131,16 @@ export class Game {
   // Public entry point: switch the engine into challenge mode and start
   // the named challenge. Caller is responsible for state-machine bookkeeping
   // (overlay hide, hud reveal, etc).
+  // Switch mode and re-layout the canvas if the mode actually changes
+  // (challenge mode reserves margins for the progress bars).
+  private setGameMode(mode: GameMode): void {
+    if (this.gameMode === mode) return;
+    this.gameMode = mode;
+    this.resize();
+  }
+
   startChallenge(def: ChallengeDef): void {
-    this.gameMode = "challenge";
+    this.setGameMode("challenge");
     this.activeChallenge = def;
     this.effectOverrides = def.effects ?? null;
     this.challengeWaveIdx = 0;
@@ -3239,21 +3296,23 @@ export class Game {
     let y: number;
     let vx: number;
     let vy: number;
+    let sideEntryFromLeft: boolean | null = null;
     if (angle.sideEntry) {
       // Side entry — mid-screen y, horizontal entry vector.
       const halfBoard = this.boardHeight * 0.5;
       const yMin = this.hexSize * 2;
       const yMax = Math.max(yMin + this.hexSize, halfBoard - this.hexSize);
       y = this.boardOriginY + yMin + Math.random() * (yMax - yMin);
-      const sideAngle = 0.25 + Math.random() * 0.25;
-      const total = speed * 1.05;
+      const sideAngle = 0.08 + Math.random() * 0.12;
+      const total = speed * 1.4;
       const fromLeft = angle.sideEntry === "left" || (angle.sideEntry === "random" && Math.random() < 0.5);
+      sideEntryFromLeft = fromLeft;
       if (fromLeft) {
-        x = this.boardOriginX - this.hexSize * 3;
+        x = this.boardOriginX - this.hexSize * 1.2;
         vx = Math.cos(sideAngle) * total;
         vy = Math.sin(sideAngle) * total;
       } else {
-        x = this.boardOriginX + this.boardWidth + this.hexSize * 3;
+        x = this.boardOriginX + this.boardWidth + this.hexSize * 1.2;
         vx = -Math.cos(sideAngle) * total;
         vy = Math.sin(sideAngle) * total;
       }
@@ -3265,7 +3324,10 @@ export class Game {
       vy = Math.cos(tilt) * speed;
     }
 
-    this.spawnChallengeCluster("normal", shape, x, y, vx, vy);
+    const cluster = this.spawnChallengeCluster("normal", shape, x, y, vx, vy);
+    if (cluster && sideEntryFromLeft !== null) {
+      this.sideWarnings.push({ cluster, side: sideEntryFromLeft ? "left" : "right", age: 0, lifetime: 0.7 });
+    }
   }
 
   // Pick a probabilistic kind based on wave weights, then spawn.
@@ -3320,7 +3382,7 @@ export class Game {
     y: number,
     vx: number,
     vy: number,
-  ): void {
+  ): FallingCluster {
     const speed = Math.max(0.5, Math.hypot(vx, vy));
     const cluster = FallingCluster.spawn({
       shape,
@@ -3346,6 +3408,7 @@ export class Game {
     this.clusters.push(cluster);
     this.clusterByBodyId.set(cluster.body.id, cluster);
     Composite.add(this.engine.world, cluster.body);
+    return cluster;
   }
 
   private updateChallengeFinishing(dt: number): void {
@@ -3587,6 +3650,26 @@ export class Game {
   // Draw the vertical challenge-progress strip at the left edge of the
   // play area. Fills bottom-up; tick marks per wave boundary; brief pulse
   // on each wave increment.
+  // Subtle flashing line on the play-area edge marking where a side-
+  // entry cluster is about to come in. Tracks the cluster body's
+  // current y so the flash sits exactly at the entry point even as
+  // gravity bends the trajectory between spawn and on-screen entry.
+  private drawSideWarnings(ctx: CanvasRenderingContext2D): void {
+    const heightHalf = this.hexSize * 1.2;
+    for (const sw of this.sideWarnings) {
+      const lifeT = sw.age / sw.lifetime;
+      const fadeIn = Math.min(1, lifeT / 0.1);
+      const fadeOut = lifeT > 0.7 ? 1 - (lifeT - 0.7) / 0.3 : 1;
+      const env = Math.max(0, fadeIn * fadeOut);
+      const blink = 0.4 + 0.6 * (Math.sin(sw.age * Math.PI * 16) > 0 ? 1 : 0);
+      const alpha = env * blink;
+      const y = sw.cluster.body.position.y;
+      const x = sw.side === "left" ? this.boardOriginX : this.boardOriginX + this.boardWidth - 2;
+      ctx.fillStyle = `rgba(255, 230, 140, ${0.9 * alpha})`;
+      ctx.fillRect(x, y - heightHalf, 2, heightHalf * 2);
+    }
+  }
+
   private drawChallengeProgress(ctx: CanvasRenderingContext2D): void {
     const def = this.activeChallenge;
     if (!def) return;
@@ -3890,12 +3973,17 @@ export class Game {
     // in sibling elements above and below, so this canvas is exclusively
     // game space. Pick hexSize so BOARD_COLS columns fit the full width
     // exactly; height is whatever the canvas gives us.
+    //
+    // In challenge mode we reserve a small margin on each side for the
+    // vertical progress bars so they don't paint on top of falling clusters.
+    const sideInset = this.gameMode === "challenge" ? PROGRESS_BAR_RESERVE : 0;
+    const usableW = Math.max(1, cssW - sideInset * 2);
     const colWidthFor = (size: number) => SQRT3 * size;
-    this.hexSize = Math.max(10, cssW / (colWidthFor(1) * BOARD_COLS));
+    this.hexSize = Math.max(10, usableW / (colWidthFor(1) * BOARD_COLS));
 
-    this.boardWidth = cssW;
+    this.boardWidth = usableW;
     this.boardHeight = cssH;
-    this.boardOriginX = 0;
+    this.boardOriginX = sideInset;
     this.boardOriginY = 0;
 
     // Measure the HUD's bottom edge in canvas-local pixels so on-canvas
@@ -4041,6 +4129,10 @@ export class Game {
 
     // Wall panels: dim slabs slide in from the sides while a wall is active.
     this.drawWalls(ctx);
+
+    // Side-entry warnings: glowing tabs at the play-area edge announcing
+    // a cluster about to fly in horizontally.
+    if (this.sideWarnings.length > 0) this.drawSideWarnings(ctx);
 
     // Challenge progress bar (left edge, fills bottom-up).
     if (this.gameMode === "challenge" && this.activeChallenge && (this.state === "playing" || this.state === "paused")) {

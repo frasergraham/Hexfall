@@ -8,8 +8,8 @@
     />
     <meta name="theme-color" content="#0d0f1c" />
     <title>Hex Rain</title>
-    <script type="module" crossorigin src="/assets/index-5M-ktsP5.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DLhGaLXG.css">
+    <script type="module" crossorigin src="/assets/index-_TxbPUQB.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CYcLImsV.css">
   </head>
   <body>
     <div id="app">
@@ -35,6 +35,14 @@
       <main class="stage">
         <canvas id="game"></canvas>
 
+        <div id="controlsHint" class="controls-hint" hidden aria-hidden="true">
+          <kbd>A</kbd>/<kbd>&larr;</kbd> <kbd>D</kbd>/<kbd>&rarr;</kbd> move
+          &middot;
+          <kbd>Q</kbd>/<kbd>E</kbd> rotate
+          &middot;
+          <kbd>P</kbd> pause
+        </div>
+
         <div
           id="canvasWheel"
           class="canvas-wheel"
@@ -55,13 +63,6 @@
             <button type="button" class="play-btn" data-action="play">PLAY</button>
           </div>
           <button type="button" class="play-btn play-btn-secondary" data-action="challenges">CHALLENGES</button>
-          <p id="controlsHint" class="hint desktop-only" hidden>
-            <kbd>A</kbd>/<kbd>&larr;</kbd> <kbd>D</kbd>/<kbd>&rarr;</kbd> move
-            &middot;
-            <kbd>Q</kbd>/<kbd>E</kbd> rotate
-            &middot;
-            <kbd>P</kbd> pause
-          </p>
           <section class="achievements">
             <h2>Achievements <span id="achievementCount" class="achievement-count" aria-live="polite"></span></h2>
             <div id="achievementBadges" class="achievement-badges" aria-label="Earned achievements"></div>
