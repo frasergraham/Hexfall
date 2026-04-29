@@ -1,5 +1,5 @@
 import { Bodies, Body, Composite, Engine, Events, type IEventCollision } from "matter-js";
-import { trackPlayEnd, trackPlayStart } from "./analytics";
+import { trackChallengeStart, trackPlayEnd, trackPlayStart } from "./analytics";
 import { COIN_SHAPE, FallingCluster, hintPalette, kindLabel, pickShape } from "./cluster";
 import { DebrisHex } from "./debris";
 import {
@@ -3198,6 +3198,7 @@ export class Game {
     this.progress = 0;
     this.progressDisplayed = 0;
     this.beginChallengeWave();
+    trackChallengeStart(def.block);
   }
 
   private beginChallengeWave(): void {

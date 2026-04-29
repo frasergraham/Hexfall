@@ -54,6 +54,7 @@ function send(path: string, title: string): void {
 
 export function trackPlayStart(difficulty: string): void {
   send(`play-start-${difficulty}`, `Play start (${difficulty})`);
+  trackAnyPlayStart();
 }
 
 export function trackPlayEnd(difficulty: string, score: number): void {
@@ -62,4 +63,21 @@ export function trackPlayEnd(difficulty: string, score: number): void {
     `play-end-${difficulty}-${bucket}`,
     `Play end (${difficulty}, score ${bucket})`,
   );
+}
+
+// Challenge play start — bucketed by block (1..6). One bucket per
+// block keeps the event-name set bounded while still giving a useful
+// distribution of which blocks players are attempting.
+export function trackChallengeStart(block: number): void {
+  send(
+    `challenge-start-block-${block}`,
+    `Challenge start (block ${block})`,
+  );
+  trackAnyPlayStart();
+}
+
+// Any-mode play counter. Single event name so the GoatCounter dashboard
+// shows a flat total of game launches across endless + challenge modes.
+function trackAnyPlayStart(): void {
+  send("play-start-any", "Play start (any mode)");
 }
