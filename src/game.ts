@@ -1,6 +1,6 @@
 import { Bodies, Body, Composite, Engine, Events, type IEventCollision } from "matter-js";
 import { trackChallengeStart, trackPlayEnd, trackPlayStart } from "./analytics";
-import { COIN_SHAPE, FallingCluster, hintPalette, kindLabel, pickShape } from "./cluster";
+import { blobPalette, COIN_SHAPE, FallingCluster, hintPalette, kindLabel, pickShape } from "./cluster";
 import { DebrisHex } from "./debris";
 import {
   ACHIEVEMENT_LIST,
@@ -47,6 +47,22 @@ import {
   setPurchasedUnlock,
   type ChallengeDef,
 } from "./challenges";
+import {
+  createCustomChallenge,
+  getCustomChallenge,
+  isCustomChallenge,
+  listCustomChallenges,
+  makeRandomSeed,
+  MAX_CUSTOM_NAME_LEN,
+  MAX_WAVES_PER_CUSTOM,
+  saveCustomChallengeRun,
+  toChallengeDef,
+  upsertCustomChallenge,
+  validateCustomChallenge,
+  type CustomChallenge,
+} from "./customChallenges";
+import { drawWavePreview } from "./wavePreview";
+import { WAVE_PRESETS, getPreset, presetDefaults, presetMix } from "./wavePresets";
 import {
   getUnlockAllProduct,
   isStoreKitAvailable,
@@ -110,11 +126,21 @@ interface DifficultyConfig {
   slowMul: number;
   shieldMul: number;
   droneMul: number;
+  tinyMul: number;
+  bigMul: number;
+  // Per-difficulty score gates for tiny/big. Override the global
+  // *_MIN_SCORE defaults so easy can hold them back longer (gives the
+  // player time to learn the basics) while medium/hard let them show
+  // up alongside slow/fast.
+  tinyMinScore?: number;
+  bigMinScore?: number;
   effectDurationMul: number;
   slowDurationMul?: number;
   fastDurationMul?: number;
   shieldDurationMul?: number;
   droneDurationMul?: number;
+  tinyDurationMul?: number;
+  bigDurationMul?: number;
   // Score thresholds for wall variants. `narrowingScore` gates pinch
   // (the original "narrowing wave" hence the legacy name); zigzag and
   // narrow have their own thresholds that hardcore lowers aggressively.
@@ -134,6 +160,10 @@ const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
     slowMul: 1.5,
     shieldMul: 1.5,
     droneMul: 1.5,
+    tinyMul: 1.5,
+    bigMul: 1.5,
+    tinyMinScore: 300,
+    bigMinScore: 300,
     effectDurationMul: 1.2,
     narrowingScore: 600,
     zigzagScore: 800,
@@ -147,6 +177,10 @@ const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
     slowMul: 1.0,
     shieldMul: 1.0,
     droneMul: 1.0,
+    tinyMul: 1.0,
+    bigMul: 1.0,
+    tinyMinScore: 300,
+    bigMinScore: 300,
     effectDurationMul: 1.0,
     narrowingScore: 600,
     zigzagScore: 800,
@@ -160,6 +194,10 @@ const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
     slowMul: 1.0,
     shieldMul: 0.6,
     droneMul: 0.6,
+    tinyMul: 0.6,
+    bigMul: 0.6,
+    tinyMinScore: 0,
+    bigMinScore: 0,
     effectDurationMul: 0.8,
     narrowingScore: 200,
     zigzagScore: 800,
@@ -174,10 +212,14 @@ const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
     slowMul: 0,
     shieldMul: 0.4,
     droneMul: 0.4,
+    tinyMul: 0.4,
+    bigMul: 0.4,
     effectDurationMul: 1.0,
     fastDurationMul: 2.0,
     shieldDurationMul: 0.5,
     droneDurationMul: 0.5,
+    tinyDurationMul: 0.5,
+    bigDurationMul: 0.5,
     narrowingScore: 100,
     zigzagScore: 200,
     narrowScore: 400,
@@ -256,6 +298,21 @@ const DRONE_MIN_SCORE = 400;
 const DRONE_DURATION = 10; // seconds
 const DRONE_SIZE_FACTOR = 0.5; // multiplier on hexSize for the drone body
 const DRONE_OSCILLATION_SPEED = 0.7; // radians/sec for the back-and-forth
+const TINY_SPAWN_CHANCE = 0.05;
+const TINY_MIN_SCORE = 5;
+const TINY_DURATION = 5; // seconds
+const TINY_PLAYER_SCALE = 0.5; // player hex-size multiplier while tiny is active
+const TINY_REHIT_BONUS = 2; // points awarded if a second tiny is hit while still tiny
+const BIG_SPAWN_CHANCE = 0.04;
+const BIG_MIN_SCORE = 5;
+const BIG_DURATION = 5; // seconds
+const BIG_SIZE_BASE = 1.15; // first big pickup grows the player by 15%
+const BIG_SIZE_STEP = 0.10; // each subsequent big pickup adds 10% more
+const BIG_MULTIPLIER_BASE = 3; // first big pickup multiplies passes 3x
+const BIG_MULTIPLIER_STEP = 1; // each stack bumps the multiplier by 1
+// Per-second exponential approach rate for the smooth shrink/grow animation
+// of the player's hex size when tiny / big toggle on or off.
+const PLAYER_SCALE_RATE = 8;
 
 // Time-effect tuning.
 const SLOW_EFFECT_DURATION = 5;
@@ -437,6 +494,53 @@ export class Game {
   private challengeProbCount = 0;
   private currentParsedWave: ParsedWave | null = null;
   private effectOverrides: ChallengeDef["effects"] | null = null;
+  // Editor state. `editingCustom` is the in-flight working copy on the
+  // edit screen — autosaved on every mutation. `editorSelectedWaveIdx`
+  // is the currently-highlighted row used as the start point when the
+  // user taps PLAY without entering edit. Dialog fields drive the
+  // overlay-on-overlay modal rendering.
+  private editingCustom: CustomChallenge | null = null;
+  private editorSelectedWaveIdx = 0;
+  private editorDialog: "wave" | "settings" | null = null;
+  private editorDialogWaveIdx: number | null = null;
+  // Wave-dialog transient state. `isNewWave=true` means the OK action
+  // appends to the wave list; otherwise it replaces at waveIdx. The
+  // preset id + values drive the chip + slider UI; advancedOpen flips
+  // the collapsible. The composed line is what OK validates and writes.
+  private editorDialogIsNewWave = false;
+  private editorDialogPresetId: string | null = null;
+  private editorDialogPresetValues: Record<string, number> = {};
+  private editorDialogAdvancedOpen = false;
+  private editorDialogPresetsOpen = false;
+  private editorDialogWaveLine = "";
+  // Cluster mix lives outside the preset: tweaks survive a slider
+  // wiggle. Values are integer % per kind, summing to 100. Source of
+  // truth for the final pct= token in applyWaveDialog.
+  private editorDialogPctValues: Partial<Record<ClusterKind, number>> = {
+    normal: 100, sticky: 0, slow: 0, fast: 0, coin: 0, shield: 0, drone: 0,
+  };
+  // Live preview that loops the working wave behind the dialog. Tick
+  // re-parses the working line each frame so rate/count/dur/walls/mix
+  // changes apply on the fly; only preset picks reset the loop.
+  private editorDialogPreview: {
+    slotIdx: number;
+    slotTimer: number;
+    probCount: number;
+    spawnTimer: number;
+    waveTimer: number;
+    restartDelay: number;
+  } | null = null;
+  private editorDragData: {
+    waveIdx: number;
+    pointerId: number;
+    startY: number;
+    rowEl: HTMLElement;
+    rowHeight: number;
+  } | null = null;
+  // Where to land after a custom-challenge run ends. Set when
+  // playCustomChallenge fires so back/quit paths route the user back
+  // to the screen they came from.
+  private customReturnTo: "editorEdit" | "editorHome" | "challengeSelect" = "editorHome";
   private progress = 0;
   private progressDisplayed = 0;
   private waveBumpT = 0; // pulse the progress bar when wave index increments
@@ -535,6 +639,25 @@ export class Game {
   // Active drones — small mid-screen sentinels that intercept clusters
   // and shatter them on contact. Multiple drones can be active.
   private drones: Drone[] = [];
+
+  // Tiny power-up state. While tinyTimer > 0 the player's hex size is
+  // scaled down by TINY_PLAYER_SCALE — the only effect is a smaller
+  // collision box. A second tiny pickup while still tiny just banks
+  // TINY_REHIT_BONUS points and refreshes the timer.
+  private tinyTimer = 0;
+  private tinyMax = 1;
+  // Big power-up state. Mirrors fast: each pickup stacks (level += 1, size +=
+  // BIG_SIZE_STEP, multiplier += BIG_MULTIPLIER_STEP). Bonus pool pays out if
+  // the timer expires cleanly, forfeits on a blue-cluster hit. Independent of
+  // fast — the two effects can run side-by-side and bank separate pools.
+  private bigTimer = 0;
+  private bigMax = 1;
+  private bigLevel = 0;
+  private bigBonus = 0;
+  // Animated player hex-size multiplier. Lerps toward `playerHexScaleTarget`
+  // each frame so the tiny shrink and big grow read as smooth transitions.
+  private playerHexScale = 1;
+  private playerHexScaleTarget = 1;
 
   // Hex bodies sprung toward the player while waiting to be snapped onto
   // it as a real cell. Spawned by handleNormalContact and ticked every
@@ -798,6 +921,19 @@ export class Game {
         this.resetHints(resetBtn);
         return;
       }
+      // BLOCKS guide button on the menu overlay.
+      const blocksBtn = target?.closest('button[data-action="open-blocks"]') as HTMLButtonElement | null;
+      if (blocksBtn) {
+        playSfx("click");
+        this.openBlocksGuide();
+        return;
+      }
+      const blocksBackBtn = target?.closest('button[data-action="close-blocks"]') as HTMLButtonElement | null;
+      if (blocksBackBtn) {
+        playSfx("click");
+        this.closeBlocksGuide();
+        return;
+      }
       // Quit-to-menu button on the paused overlay.
       const quitBtn = target?.closest('button[data-action="quit"]') as HTMLButtonElement | null;
       if (quitBtn) {
@@ -823,13 +959,26 @@ export class Game {
       if (playBtn) {
         playSfx("click");
         if (this.state === "challengeComplete" || this.state === "challengeIntro") {
-          // Replay the active challenge.
-          if (this.activeChallenge) this.beginChallengeStart(this.activeChallenge);
+          // Replay the active challenge — re-route custom runs through
+          // playCustomChallenge so the user-chosen seed is preserved.
+          if (this.activeChallenge) {
+            if (isCustomChallenge(this.activeChallenge)) {
+              const c = getCustomChallenge(this.activeChallenge.id);
+              if (c) this.playCustomChallenge(c, 0);
+            } else {
+              this.beginChallengeStart(this.activeChallenge);
+            }
+          }
           return;
         }
         // From challenge gameover, "play again" repeats the same challenge.
         if (this.state === "gameover" && this.gameMode === "challenge" && this.activeChallenge) {
-          this.beginChallengeStart(this.activeChallenge);
+          if (isCustomChallenge(this.activeChallenge)) {
+            const c = getCustomChallenge(this.activeChallenge.id);
+            if (c) this.playCustomChallenge(c, 0);
+          } else {
+            this.beginChallengeStart(this.activeChallenge);
+          }
           return;
         }
         this.setGameMode("endless");
@@ -847,6 +996,20 @@ export class Game {
       if (challengesBtn) {
         playSfx("click");
         this.openChallengeSelect();
+        return;
+      }
+      // CHALLENGE EDITOR menu button. Locked behind the unlock-all IAP;
+      // debug mode (?debug=1) unlocks it too so dev/testing doesn't need
+      // the IAP flag flipped in localStorage.
+      const editorBtn = target?.closest('button[data-action="challenge-editor"]') as HTMLButtonElement | null;
+      if (editorBtn) {
+        playSfx("click");
+        const progress = loadChallengeProgress();
+        if (progress.purchasedUnlock || this.debugEnabled) {
+          this.openEditorHome();
+        } else {
+          this.openUnlockShop();
+        }
         return;
       }
       // Gateway button — opens the unlock-everything screen (used both
@@ -892,14 +1055,18 @@ export class Game {
       if (backBtn) {
         playSfx("click");
         // From any in-challenge overlay (intro / complete / challenge
-        // gameover), Back goes to the challenge select screen, not the
-        // main menu. The main-menu button on gameover is separate.
+        // gameover), Back goes back to the screen the player came from —
+        // editor home for custom challenges, challenge select otherwise.
         if (
           this.state === "challengeIntro" ||
           this.state === "challengeComplete" ||
           (this.state === "gameover" && this.gameMode === "challenge")
         ) {
-          this.openChallengeSelect();
+          if (this.activeChallenge && isCustomChallenge(this.activeChallenge)) {
+            this.returnFromCustomRun();
+          } else {
+            this.openChallengeSelect();
+          }
         } else {
           this.setGameMode("endless");
           this.activeChallenge = null;
@@ -927,6 +1094,285 @@ export class Game {
         this.renderMenu();
         return;
       }
+      // Editor: back from home screen.
+      const editorHomeBackBtn = target?.closest('button[data-action="editor-home-back"]') as HTMLButtonElement | null;
+      if (editorHomeBackBtn) {
+        playSfx("click");
+        this.closeEditorHome();
+        return;
+      }
+      // Editor: create new custom challenge.
+      const editorNewBtn = target?.closest('button[data-action="editor-new"]') as HTMLButtonElement | null;
+      if (editorNewBtn) {
+        playSfx("click");
+        const fresh = createCustomChallenge();
+        this.openEditorEdit(fresh);
+        return;
+      }
+      // Editor home: PLAY / EDIT / PUBLISH on a custom row.
+      const editorPlayBtn = target?.closest('button[data-action="editor-play"]') as HTMLButtonElement | null;
+      if (editorPlayBtn) {
+        playSfx("click");
+        const id = editorPlayBtn.dataset.customId;
+        const c = id ? getCustomChallenge(id) : undefined;
+        if (c) this.playCustomChallenge(c, 0);
+        return;
+      }
+      const editorEditBtn = target?.closest('button[data-action="editor-edit"]') as HTMLButtonElement | null;
+      if (editorEditBtn) {
+        playSfx("click");
+        const id = editorEditBtn.dataset.customId;
+        const c = id ? getCustomChallenge(id) : undefined;
+        if (c) this.openEditorEdit(c);
+        return;
+      }
+      const editorPublishBtn = target?.closest('button[data-action="editor-publish"]') as HTMLButtonElement | null;
+      if (editorPublishBtn && !editorPublishBtn.disabled) {
+        playSfx("click");
+        const id = editorPublishBtn.dataset.customId;
+        const c = id ? getCustomChallenge(id) : undefined;
+        if (c) this.publishCustomChallenge(c);
+        return;
+      }
+      // Editor edit: back to home (autosave is already on every mutation).
+      const editorEditBackBtn = target?.closest('button[data-action="editor-edit-back"]') as HTMLButtonElement | null;
+      if (editorEditBackBtn) {
+        playSfx("click");
+        if (this.editingCustom) this.editingCustom = upsertCustomChallenge(this.editingCustom);
+        this.openEditorHome();
+        return;
+      }
+      // Editor edit: PLAY at currently selected wave (or 0 if none).
+      const editorEditPlayBtn = target?.closest('button[data-action="editor-edit-play"]') as HTMLButtonElement | null;
+      if (editorEditPlayBtn && this.editingCustom) {
+        playSfx("click");
+        const saved = upsertCustomChallenge(this.editingCustom);
+        this.editingCustom = saved;
+        this.playCustomChallenge(saved, this.editorSelectedWaveIdx);
+        return;
+      }
+      // Editor edit: randomise the seed.
+      const editorRandomSeedBtn = target?.closest('button[data-action="editor-randomize-seed"]') as HTMLButtonElement | null;
+      if (editorRandomSeedBtn && this.editingCustom) {
+        playSfx("click");
+        this.editingCustom.seed = makeRandomSeed();
+        this.editingCustom = upsertCustomChallenge(this.editingCustom);
+        this.renderEditorEdit();
+        return;
+      }
+      // Editor edit: open settings dialog.
+      const editorSettingsBtn = target?.closest('button[data-action="editor-open-settings"]') as HTMLButtonElement | null;
+      if (editorSettingsBtn) {
+        playSfx("click");
+        this.editorDialog = "settings";
+        this.editorDialogWaveIdx = null;
+        this.renderEditorEdit();
+        return;
+      }
+      // Editor edit: open the "new wave" dialog (presets + advanced).
+      const editorAddWaveBtn = target?.closest('button[data-action="editor-add-wave"]') as HTMLButtonElement | null;
+      if (editorAddWaveBtn && this.editingCustom && this.editingCustom.waves.length < MAX_WAVES_PER_CUSTOM) {
+        playSfx("click");
+        this.openNewWaveDialog();
+        return;
+      }
+      // Editor edit: open a wave's edit dialog.
+      const editorOpenWaveBtn = target?.closest('button[data-action="editor-open-wave"]') as HTMLButtonElement | null;
+      if (editorOpenWaveBtn) {
+        playSfx("click");
+        const idx = parseInt(editorOpenWaveBtn.dataset.waveIdx ?? "-1", 10);
+        if (Number.isFinite(idx) && idx >= 0) this.openExistingWaveDialog(idx);
+        return;
+      }
+      // Wave dialog: pick a preset chip.
+      const presetChip = target?.closest('button[data-action="editor-preset-pick"]') as HTMLButtonElement | null;
+      if (presetChip) {
+        playSfx("click");
+        const id = presetChip.dataset.presetId ?? "";
+        const preset = getPreset(id);
+        if (preset) {
+          this.editorDialogPresetId = id;
+          this.editorDialogPresetValues = presetDefaults(preset);
+          this.editorDialogWaveLine = preset.build(this.editorDialogPresetValues);
+          this.editorDialogPctValues = { ...presetMix(preset) };
+          this.renderEditorEdit();
+          // Hard restart the preview — picking a preset is a clean reset.
+          this.startWavePreview();
+        }
+        return;
+      }
+      // Wave dialog: always-visible Count stepper.
+      const countBump = target?.closest('button[data-action="editor-bump-count"]') as HTMLButtonElement | null;
+      if (countBump && !countBump.disabled) {
+        playSfx("click");
+        const delta = parseInt(countBump.dataset.delta ?? "0", 10);
+        if (Number.isFinite(delta)) this.bumpQuickCount(delta);
+        return;
+      }
+      // Wave dialog: always-visible Duration stepper.
+      const durBump = target?.closest('button[data-action="editor-bump-dur"]') as HTMLButtonElement | null;
+      if (durBump && !durBump.disabled) {
+        playSfx("click");
+        const delta = parseFloat(durBump.dataset.delta ?? "0");
+        if (Number.isFinite(delta)) this.bumpQuickDur(delta);
+        return;
+      }
+      // Wave dialog: always-visible Rate stepper.
+      const rateBump = target?.closest('button[data-action="editor-bump-rate"]') as HTMLButtonElement | null;
+      if (rateBump && !rateBump.disabled) {
+        playSfx("click");
+        const delta = parseFloat(rateBump.dataset.delta ?? "0");
+        if (Number.isFinite(delta)) this.bumpQuickRate(delta);
+        return;
+      }
+      // Wave dialog: toggle the PRESET WAVES collapsible.
+      const presetsToggle = target?.closest('button[data-action="editor-toggle-presets"]') as HTMLButtonElement | null;
+      if (presetsToggle) {
+        playSfx("click");
+        this.editorDialogPresetsOpen = !this.editorDialogPresetsOpen;
+        this.renderEditorEdit();
+        return;
+      }
+      // Wave dialog: always-visible Walls cycler.
+      const wallsCycle = target?.closest('button[data-action="editor-cycle-walls"]') as HTMLButtonElement | null;
+      if (wallsCycle) {
+        playSfx("click");
+        const dir = parseInt(wallsCycle.dataset.dir ?? "0", 10);
+        if (dir !== 0) this.cycleWalls(dir);
+        return;
+      }
+      // Wave dialog: cluster mix +/- bump.
+      const mixBump = target?.closest('button[data-action="editor-mix-bump"]') as HTMLButtonElement | null;
+      if (mixBump && !mixBump.disabled) {
+        playSfx("click");
+        const kind = mixBump.dataset.kind as ClusterKind | undefined;
+        const delta = parseInt(mixBump.dataset.delta ?? "0", 10);
+        if (kind && Number.isFinite(delta)) this.bumpClusterMix(kind, delta);
+        return;
+      }
+      // Wave dialog: toggle the ADVANCED collapsible.
+      const advToggle = target?.closest('button[data-action="editor-toggle-advanced"]') as HTMLButtonElement | null;
+      if (advToggle) {
+        playSfx("click");
+        this.editorDialogAdvancedOpen = !this.editorDialogAdvancedOpen;
+        this.renderEditorEdit();
+        return;
+      }
+      // Any field's (i) info button — toggle the adjacent help popup.
+      const helpBtn = target?.closest('button[data-action="editor-toggle-help"]') as HTMLButtonElement | null;
+      if (helpBtn) {
+        e.stopPropagation();
+        const wrap = helpBtn.closest(".editor-help-wrap");
+        const popup = wrap?.querySelector<HTMLElement>(".editor-help-text");
+        if (popup) {
+          const wasHidden = popup.hasAttribute("hidden");
+          // Close any other open popups so we don't end up with a wall.
+          this.overlay.querySelectorAll<HTMLElement>(".editor-help-text").forEach((el) => {
+            if (el !== popup) {
+              el.setAttribute("hidden", "");
+              el.style.left = "";
+              el.style.top = "";
+              el.style.position = "";
+            }
+          });
+          if (wasHidden) {
+            popup.removeAttribute("hidden");
+            this.positionHelpPopup(helpBtn, popup);
+          } else {
+            popup.setAttribute("hidden", "");
+            popup.style.left = "";
+            popup.style.top = "";
+            popup.style.position = "";
+          }
+        }
+        return;
+      }
+      // Editor edit: delete a wave.
+      const editorDeleteWaveBtn = target?.closest('button[data-action="editor-delete-wave"]') as HTMLButtonElement | null;
+      if (editorDeleteWaveBtn && this.editingCustom) {
+        playSfx("click");
+        const idx = parseInt(editorDeleteWaveBtn.dataset.waveIdx ?? "-1", 10);
+        if (Number.isFinite(idx) && idx >= 0 && this.editingCustom.waves.length > 1) {
+          this.editingCustom.waves = this.editingCustom.waves.filter((_, i) => i !== idx);
+          this.editingCustom = upsertCustomChallenge(this.editingCustom);
+          if (this.editorSelectedWaveIdx >= this.editingCustom.waves.length) {
+            this.editorSelectedWaveIdx = Math.max(0, this.editingCustom.waves.length - 1);
+          }
+          this.renderEditorEdit();
+        }
+        return;
+      }
+      // Editor edit: select-row click on the body of a wave row.
+      const editorWaveRow = target?.closest(".editor-wave-row") as HTMLElement | null;
+      if (
+        editorWaveRow &&
+        !target?.closest(".editor-row-btn") &&
+        !target?.closest(".editor-drag-handle") &&
+        this.state === "editorEdit"
+      ) {
+        const idx = parseInt(editorWaveRow.dataset.waveIdx ?? "-1", 10);
+        if (Number.isFinite(idx) && idx >= 0) {
+          this.editorSelectedWaveIdx = idx;
+          this.renderEditorEdit();
+        }
+        return;
+      }
+      // Dialog OK / Cancel.
+      const dialogOk = target?.closest('button[data-action="editor-dialog-ok"]') as HTMLButtonElement | null;
+      if (dialogOk) {
+        playSfx("click");
+        if (this.editorDialog === "wave") this.applyWaveDialog();
+        else if (this.editorDialog === "settings") this.applySettingsDialog();
+        return;
+      }
+      const dialogCancel = target?.closest('[data-action="editor-dialog-cancel"]') as HTMLElement | null;
+      if (dialogCancel) {
+        playSfx("click");
+        this.stopWavePreview();
+        this.editorDialog = null;
+        this.editorDialogWaveIdx = null;
+        this.editorDialogIsNewWave = false;
+        this.editorDialogPresetId = null;
+        this.editorDialogPresetValues = {};
+        this.editorDialogWaveLine = "";
+        this.renderEditorEdit();
+        return;
+      }
+      // Settings: difficulty pick.
+      const diffPick = target?.closest('button[data-dialog-difficulty]') as HTMLButtonElement | null;
+      if (diffPick) {
+        playSfx("click");
+        const dlg = this.overlay.querySelector<HTMLElement>(".editor-dialog");
+        if (dlg) {
+          dlg.querySelectorAll<HTMLButtonElement>(".editor-diff-btn").forEach((b) => b.classList.remove("selected"));
+          diffPick.classList.add("selected");
+        }
+        return;
+      }
+      // Settings: auto-suggest stars.
+      const autoStars = target?.closest('button[data-action="editor-settings-auto"]') as HTMLButtonElement | null;
+      if (autoStars) {
+        playSfx("click");
+        this.autoSuggestStars();
+        return;
+      }
+      // Settings: auto-suggest difficulty.
+      const autoDiff = target?.closest('button[data-action="editor-settings-auto-diff"]') as HTMLButtonElement | null;
+      if (autoDiff) {
+        playSfx("click");
+        this.autoSuggestDifficulty();
+        return;
+      }
+      // Custom-challenge card on the CHALLENGES screen.
+      const customCard = target?.closest('button[data-custom-challenge-id]') as HTMLButtonElement | null;
+      if (customCard) {
+        playSfx("click");
+        const id = customCard.dataset.customChallengeId;
+        const c = id ? getCustomChallenge(id) : undefined;
+        if (c) this.playCustomChallenge(c, 0);
+        return;
+      }
+
       // Achievement badges (iOS) open the GameKit achievements view.
       if (target?.closest(".achievement-badge")) {
         playSfx("click");
@@ -943,6 +1389,48 @@ export class Game {
         this.beginResumeCountdown();
       }
     });
+
+    // Editor: live-update the in-flight CustomChallenge model from the
+    // name/seed inputs as the user types. Persistence happens on blur
+    // (handleEditorFieldCommit) so we don't write to localStorage on
+    // every keystroke. Dialog inputs persist on OK only — no listener
+    // needed here.
+    this.overlay.addEventListener("input", (e) => {
+      const target = e.target as HTMLInputElement | null;
+      if (!target) return;
+      if (target.dataset.editorField) {
+        this.handleEditorFieldInput(target);
+        return;
+      }
+      // Preset-param slider: update the live composed line and re-render.
+      const presetParam = target.dataset.presetParam;
+      if (presetParam && this.editorDialogPresetId) {
+        const v = parseFloat(target.value);
+        if (Number.isFinite(v)) {
+          this.editorDialogPresetValues[presetParam] = v;
+          this.rebuildFromPreset();
+        }
+        return;
+      }
+      // Advanced wave-dialog field: live-feed the preview.
+      if (target.dataset.dialogField) {
+        this.applyAdvancedFieldToLine(target);
+        return;
+      }
+    });
+    // Selects + radios fire `change`, not `input`. Same target shape.
+    this.overlay.addEventListener("change", (e) => {
+      const target = e.target as HTMLInputElement | HTMLSelectElement | null;
+      if (!target) return;
+      if (target.dataset.dialogField) {
+        this.applyAdvancedFieldToLine(target);
+      }
+    });
+    this.overlay.addEventListener("blur", (e) => {
+      const target = e.target as HTMLElement | null;
+      if (!target || !(target as HTMLInputElement).dataset?.editorField) return;
+      this.handleEditorFieldCommit();
+    }, true);
 
     this.debugEnabled =
       new URLSearchParams(window.location.search).get("debug") === "1";
@@ -1231,6 +1719,7 @@ export class Game {
     this.renderAchievementBadges();
     this.refreshDifficultyButtons();
     this.refreshAudioToggles();
+    this.refreshChallengeEditorLock();
     // Score is always 0 on the menu — the BEST readout is the only
     // useful number. Hide the score block until a run starts.
     this.setScoreVisible(false);
@@ -1315,7 +1804,22 @@ export class Game {
     }
     if (this.state === "menu") {
       this.refreshDifficultyButtons();
+      this.refreshChallengeEditorLock();
     }
+  }
+
+  // Mirror the locked/unlocked state of the IAP onto the menu's
+  // CHALLENGE EDITOR button. Locked → adds a lock-icon prefix and a
+  // `.locked` class; unlocked → plain label. Click handler routes to
+  // the unlock shop when locked, the editor otherwise.
+  private refreshChallengeEditorLock(): void {
+    const btn = this.overlay.querySelector<HTMLButtonElement>('button[data-action="challenge-editor"]');
+    if (!btn) return;
+    const unlocked = loadChallengeProgress().purchasedUnlock || this.debugEnabled;
+    btn.classList.toggle("locked", !unlocked);
+    btn.innerHTML = unlocked
+      ? "CHALLENGE EDITOR"
+      : '<span class="play-btn-lock" aria-hidden="true">🔒</span> CHALLENGE EDITOR';
   }
 
   // Briefly replace the button label with a status string, then revert.
@@ -1357,6 +1861,1419 @@ export class Game {
     }
   }
 
+  private openBlocksGuide(): void {
+    this.state = "blocksGuide";
+    this.setScoreVisible(false);
+    this.setPauseButtonVisible(false);
+    this.setHudVisible(false);
+    this.renderBlocksGuide();
+    this.overlay.classList.remove("hidden");
+  }
+
+  private closeBlocksGuide(): void {
+    this.state = "menu";
+    this.renderMenu();
+  }
+
+  private renderBlocksGuide(): void {
+    const entries: Array<{ kind: ClusterKind; name: string; desc: string }> = [
+      { kind: "normal",  name: "AVOID",   desc: "Sticks one cell onto your blob on contact and starts your danger combo." },
+      { kind: "coin",    name: "COLLECT", desc: "Pick up for +5 score." },
+      { kind: "sticky",  name: "HEAL",    desc: "An N-cell heal rips N-1 hexes off your blob, shrinking you back down." },
+      { kind: "slow",    name: "SLOW",    desc: "Slows the game to 0.5× — easier dodging." },
+      { kind: "fast",    name: "FAST",    desc: "Speeds the game up. Passes bank a 3X bonus pool — survive the timer to cash it in, blue hits forfeit it. Each restack: more speed and +1X." },
+      { kind: "shield",  name: "SHIELD",  desc: "Wraps you in a bubble that absorbs blue hits at 1 second per hit. Sticky still rips." },
+      { kind: "drone",   name: "DRONE",   desc: "Spawns a mid-screen sentinel that shatters blue clusters on contact." },
+      { kind: "tiny",    name: "TINY",    desc: "Shrinks you to half size — much smaller hitbox. Re-hit while tiny banks +2 and refreshes the timer." },
+      { kind: "big",     name: "BIG",     desc: "Grows you and banks a 3X bonus pool like FAST. Survive the timer to cash in, blue hits forfeit. Each restack: more size and +1X." },
+    ];
+
+    const cards = entries
+      .map(
+        (e) => `
+          <div class="blocks-card">
+            <canvas class="blocks-icon" data-block-icon="${e.kind}" width="72" height="72"></canvas>
+            <div class="blocks-text">
+              <div class="blocks-name">${e.name}</div>
+              <div class="blocks-desc">${escapeHtml(e.desc)}</div>
+            </div>
+          </div>
+        `,
+      )
+      .join("");
+
+    this.overlay.innerHTML = `
+      <div class="blocks-guide">
+        <div class="challenge-select-top">
+          <button type="button" class="challenge-back" data-action="close-blocks">← Back</button>
+          <span style="font-size:13px; letter-spacing:0.18em; text-transform:uppercase; color:#aab4dc;">Blocks</span>
+          <span style="width:60px"></span>
+        </div>
+        <div class="blocks-list">
+          ${cards}
+        </div>
+      </div>
+    `;
+
+    // Paint each icon canvas using the same blob/hex visuals as the
+    // in-game cluster renderer, so the guide stays in sync if the
+    // palette ever changes.
+    const canvases = this.overlay.querySelectorAll<HTMLCanvasElement>("canvas[data-block-icon]");
+    canvases.forEach((c) => {
+      const kind = c.dataset.blockIcon as ClusterKind | undefined;
+      if (!kind) return;
+      drawBlockIcon(c, kind);
+    });
+  }
+
+  // ----- Challenge Editor ----------------------------------------------
+
+  private openEditorHome(): void {
+    this.state = "editorHome";
+    this.editingCustom = null;
+    this.editorSelectedWaveIdx = 0;
+    this.editorDialog = null;
+    this.editorDialogWaveIdx = null;
+    this.setScoreVisible(false);
+    this.setPauseButtonVisible(false);
+    this.setHudVisible(false);
+    this.setEditorActive(true);
+    this.renderEditorHome();
+    this.overlay.classList.remove("hidden");
+  }
+
+  private closeEditorHome(): void {
+    this.editingCustom = null;
+    this.editorDialog = null;
+    this.editorDialogWaveIdx = null;
+    this.setEditorActive(false);
+    this.state = "menu";
+    this.renderMenu();
+  }
+
+  // Hide the play canvas + clear leftover physics bodies while the
+  // editor is in front. The editor is unambiguously a menu, not a game
+  // mode, so the starfield and player blob shouldn't peek through.
+  private setEditorActive(active: boolean): void {
+    document.body.classList.toggle("editor-active", active);
+    if (active) {
+      // Clear menu-mode practice clusters so re-entering play later
+      // doesn't inherit a half-tumbled scene.
+      for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+      this.clusters = [];
+      this.clusterByBodyId.clear();
+      for (const d of this.debris) Composite.remove(this.engine.world, d.body);
+      this.debris = [];
+      this.sideWarnings = [];
+    }
+  }
+
+  private renderEditorHome(): void {
+    const list = listCustomChallenges();
+    const rows = list.length === 0
+      ? `<p class="editor-home-empty">No custom challenges yet. Tap + to create your first.</p>`
+      : list
+          .map((c) => {
+            const created = new Date(c.createdAt);
+            const dateStr = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}-${String(created.getDate()).padStart(2, "0")}`;
+            const tint = difficultyTint(c.difficulty);
+            const hexes: string[] = [];
+            for (let i = 0; i < c.difficulty; i++) {
+              hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
+            }
+            const stars = [0, 1, 2]
+              .map((i) =>
+                `<span class="challenge-card-star${i < c.starsEarned ? " earned" : ""}">★</span>`,
+              )
+              .join("");
+            const attempted = c.best > 0 || c.bestPct > 0 || c.starsEarned > 0;
+            const starsHtml = attempted
+              ? `<div class="challenge-card-stars">${stars}</div>`
+              : "";
+            const bestScoreText = c.best > 0 ? `Best: ${c.best}` : "Best: —";
+            const pctText = c.bestPct > 0
+              ? `<span class="challenge-card-pct${c.bestPct >= 100 ? " full" : ""}">${c.bestPct}%</span>`
+              : `<span class="challenge-card-pct">—</span>`;
+            const publishCls = this.debugEnabled
+              ? "editor-row-btn editor-row-btn-publish"
+              : "editor-row-btn editor-row-btn-publish disabled";
+            const publishAttr = this.debugEnabled ? "" : "disabled";
+            return `
+              <div class="editor-home-row" data-custom-id="${escapeHtml(c.id)}">
+                <div class="editor-home-row-meta">
+                  <span class="challenge-card-id">CUSTOM</span>
+                  <span class="challenge-card-name">${escapeHtml(c.name)}</span>
+                  <div class="challenge-card-hexes">${hexes.join("")}</div>
+                  ${starsHtml}
+                  <span class="challenge-card-best">${bestScoreText} ${pctText}</span>
+                  <span class="editor-home-row-date">Created ${dateStr}</span>
+                </div>
+                <div class="editor-home-row-actions">
+                  <button type="button" class="editor-row-btn editor-row-btn-play" data-action="editor-play" data-custom-id="${escapeHtml(c.id)}">PLAY</button>
+                  <button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-edit" data-custom-id="${escapeHtml(c.id)}">EDIT</button>
+                  <button type="button" class="${publishCls}" data-action="editor-publish" data-custom-id="${escapeHtml(c.id)}" ${publishAttr}>PUBLISH</button>
+                </div>
+              </div>
+            `;
+          })
+          .join("");
+
+    this.overlay.innerHTML = `
+      <div class="editor-home">
+        <div class="challenge-select-top">
+          <button type="button" class="challenge-back" data-action="editor-home-back">← Back</button>
+          <span style="font-size:13px; letter-spacing:0.18em; text-transform:uppercase; color:#aab4dc;">Challenge Editor</span>
+          <span style="width:60px"></span>
+        </div>
+        <section class="challenge-block">
+          <header class="challenge-block-header">
+            <span>My Challenges</span>
+            <span class="progress">${list.length}</span>
+          </header>
+          <div class="editor-home-rows">
+            ${rows}
+            <button type="button" class="editor-home-add" data-action="editor-new" aria-label="Create new custom challenge">+</button>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  private openEditorEdit(custom: CustomChallenge): void {
+    this.editingCustom = { ...custom, effects: { ...custom.effects }, stars: { ...custom.stars }, waves: [...custom.waves] };
+    this.editorSelectedWaveIdx = 0;
+    this.editorDialog = null;
+    this.editorDialogWaveIdx = null;
+    this.state = "editorEdit";
+    this.setScoreVisible(false);
+    this.setPauseButtonVisible(false);
+    this.setHudVisible(false);
+    this.setEditorActive(true);
+    this.renderEditorEdit();
+    this.overlay.classList.remove("hidden");
+  }
+
+  private renderEditorEdit(): void {
+    const c = this.editingCustom;
+    if (!c) return;
+
+    const wavesAtMax = c.waves.length >= MAX_WAVES_PER_CUSTOM;
+    const rows = c.waves.map((line, idx) => {
+      const check = checkWaveLine(line);
+      let parsed: ParsedWave | null = null;
+      try { parsed = parseWaveLine(line); } catch { parsed = null; }
+      const selectedCls = idx === this.editorSelectedWaveIdx ? " selected" : "";
+      const warnCls = check.ok ? "" : " invalid";
+      const warnBadge = check.ok
+        ? ""
+        : `<span class="editor-wave-warn" title="${escapeHtml(check.reason!)}" aria-label="Wave invalid">!</span>`;
+
+      let infoHtml: string;
+      if (parsed) {
+        const blocksPer10s = Math.round(10 / parsed.spawnInterval);
+        const countLabel = parsed.countCap !== null
+          ? `<span class="editor-wave-info-item"><span class="editor-wave-info-label">×</span>${parsed.countCap}</span>`
+          : parsed.slots.length > 0
+            ? `<span class="editor-wave-info-item"><span class="editor-wave-info-label">slots</span>${parsed.slots.length}</span>`
+            : "";
+        infoHtml = `
+          <div class="editor-wave-info">
+            <span class="editor-wave-info-item"><span class="editor-wave-info-label">Speed</span>${parsed.baseSpeedMul.toFixed(2)}</span>
+            <span class="editor-wave-info-item"><span class="editor-wave-info-label">Rate</span>${blocksPer10s}/10s</span>
+            ${countLabel}
+          </div>
+        `;
+      } else {
+        infoHtml = `<div class="editor-wave-info editor-wave-info-error">${escapeHtml(check.ok ? "" : check.reason!)}</div>`;
+      }
+
+      return `
+        <div class="editor-wave-row${selectedCls}${warnCls}" data-wave-idx="${idx}">
+          <button type="button" class="editor-drag-handle" data-action="editor-drag" data-wave-idx="${idx}" aria-label="Drag to reorder">⋮⋮</button>
+          <div class="editor-wave-canvas-wrap">
+            ${infoHtml}
+            <canvas class="editor-wave-thumb" data-wave-thumb="${idx}"></canvas>
+            ${warnBadge}
+          </div>
+          <button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-open-wave" data-wave-idx="${idx}">EDIT</button>
+          <button type="button" class="editor-row-btn editor-row-btn-delete" data-action="editor-delete-wave" data-wave-idx="${idx}" aria-label="Delete wave">×</button>
+        </div>
+      `;
+    }).join("");
+
+    const seedHex = `0x${(c.seed >>> 0).toString(16).padStart(8, "0")}`;
+    const dialogHtml = this.editorDialog === "wave"
+      ? this.renderWaveDialogHtml()
+      : this.editorDialog === "settings"
+        ? this.renderSettingsDialogHtml(c)
+        : "";
+
+    this.overlay.innerHTML = `
+      <div class="editor-edit">
+        <div class="challenge-select-top">
+          <button type="button" class="challenge-back" data-action="editor-edit-back">← Save</button>
+          <span style="font-size:13px; letter-spacing:0.18em; text-transform:uppercase; color:#aab4dc;">Edit Challenge</span>
+          <span style="width:60px"></span>
+        </div>
+        <button type="button" class="play-btn editor-edit-play-big" data-action="editor-edit-play">PLAY</button>
+        <div class="editor-edit-meta">
+          <div class="editor-quick-row">
+            <span class="editor-quick-label">Name${helpTipHtml("name")}</span>
+            <div class="editor-quick-controls">
+              <input class="editor-meta-input" data-editor-field="name" type="text" maxlength="${MAX_CUSTOM_NAME_LEN}" value="${escapeHtml(c.name)}" />
+            </div>
+          </div>
+          <div class="editor-quick-row">
+            <span class="editor-quick-label">Seed${helpTipHtml("seed")}</span>
+            <div class="editor-quick-controls">
+              <input class="editor-meta-input editor-meta-input-seed" data-editor-field="seed" type="text" inputmode="numeric" value="${c.seed}" />
+              <button type="button" class="editor-mix-step editor-mix-plus" data-action="editor-randomize-seed" aria-label="Random seed" title="${seedHex}">⟳</button>
+            </div>
+          </div>
+          <button type="button" class="editor-options-btn" data-action="editor-open-settings">
+            <span class="editor-options-icon" aria-hidden="true">⚙</span>
+            <span>Options</span>
+          </button>
+        </div>
+        <div class="editor-wave-list">
+          ${rows}
+          <button type="button" class="editor-add-wave" data-action="editor-add-wave" ${wavesAtMax ? "disabled" : ""}>${wavesAtMax ? "Maximum 100 waves" : "+ Add wave"}</button>
+        </div>
+        ${dialogHtml}
+      </div>
+    `;
+
+    // Paint thumbnails after the DOM is in place.
+    this.overlay.querySelectorAll<HTMLCanvasElement>("canvas[data-wave-thumb]").forEach((cv) => {
+      const idx = parseInt(cv.dataset.waveThumb ?? "-1", 10);
+      const line = c.waves[idx];
+      if (typeof line !== "string") return;
+      try {
+        const parsed = parseWaveLine(line);
+        drawWavePreview(cv, parsed);
+      } catch {
+        // Leave the canvas blank — the row already renders an inline error.
+      }
+    });
+    // Paint cluster-mix icons in the wave dialog (small block thumbnails).
+    this.overlay.querySelectorAll<HTMLCanvasElement>("canvas[data-mix-icon]").forEach((cv) => {
+      const kind = cv.dataset.mixIcon as ClusterKind | undefined;
+      if (!kind) return;
+      drawBlockIcon(cv, kind);
+    });
+
+    this.bindEditorDragHandles();
+  }
+
+  // Pointer-event-based drag-reorder. Mirrors the touch/mouse routing
+  // pattern in bindSlider() — pointerdown captures, pointermove updates
+  // a transform on the row, pointerup picks the insertion index by
+  // walking sibling midpoints.
+  private bindEditorDragHandles(): void {
+    const handles = this.overlay.querySelectorAll<HTMLElement>('.editor-drag-handle');
+    handles.forEach((handle) => {
+      handle.addEventListener("pointerdown", (e) => this.onEditorDragStart(e));
+    });
+  }
+
+  private onEditorDragStart(e: PointerEvent): void {
+    if (this.editorDialog !== null) return;
+    const target = e.currentTarget as HTMLElement;
+    const idxStr = target.dataset.waveIdx;
+    if (idxStr === undefined) return;
+    const idx = parseInt(idxStr, 10);
+    if (!Number.isFinite(idx)) return;
+    const rowEl = target.closest<HTMLElement>(".editor-wave-row");
+    if (!rowEl) return;
+    e.preventDefault();
+    target.setPointerCapture(e.pointerId);
+    this.editorDragData = {
+      waveIdx: idx,
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      rowEl,
+      rowHeight: rowEl.getBoundingClientRect().height,
+    };
+    rowEl.classList.add("dragging");
+    target.addEventListener("pointermove", this.onEditorDragMoveBound);
+    target.addEventListener("pointerup", this.onEditorDragEndBound);
+    target.addEventListener("pointercancel", this.onEditorDragEndBound);
+  }
+
+  private onEditorDragMoveBound = (e: PointerEvent) => this.onEditorDragMove(e);
+  private onEditorDragEndBound = (e: PointerEvent) => this.onEditorDragEnd(e);
+
+  private onEditorDragMove(e: PointerEvent): void {
+    const drag = this.editorDragData;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const dy = e.clientY - drag.startY;
+    drag.rowEl.style.transform = `translateY(${dy}px)`;
+    drag.rowEl.style.zIndex = "10";
+  }
+
+  private onEditorDragEnd(e: PointerEvent): void {
+    const drag = this.editorDragData;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const target = e.currentTarget as HTMLElement;
+    target.removeEventListener("pointermove", this.onEditorDragMoveBound);
+    target.removeEventListener("pointerup", this.onEditorDragEndBound);
+    target.removeEventListener("pointercancel", this.onEditorDragEndBound);
+    if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId);
+
+    const droppedY = e.clientY;
+    const list = this.overlay.querySelector<HTMLElement>(".editor-wave-list");
+    let insertIdx = drag.waveIdx;
+    if (list) {
+      const rows = Array.from(list.querySelectorAll<HTMLElement>(".editor-wave-row"));
+      // After removing the dragged row from the array, insert at the
+      // count of *other* rows whose vertical midpoint is above the drop
+      // point. That count is the natural insertion index in the new array.
+      let count = 0;
+      for (let i = 0; i < rows.length; i++) {
+        if (i === drag.waveIdx) continue;
+        const r = rows[i]!.getBoundingClientRect();
+        if (droppedY > r.top + r.height / 2) count++;
+      }
+      insertIdx = Math.max(0, Math.min(rows.length - 1, count));
+    }
+    drag.rowEl.style.transform = "";
+    drag.rowEl.style.zIndex = "";
+    drag.rowEl.classList.remove("dragging");
+    this.editorDragData = null;
+
+    if (this.editingCustom && insertIdx !== drag.waveIdx) {
+      const waves = this.editingCustom.waves.slice();
+      const [moved] = waves.splice(drag.waveIdx, 1);
+      if (moved !== undefined) waves.splice(insertIdx, 0, moved);
+      this.editingCustom.waves = waves;
+      this.editingCustom = upsertCustomChallenge(this.editingCustom);
+      // If the user had selected the moved row, follow it.
+      if (this.editorSelectedWaveIdx === drag.waveIdx) {
+        this.editorSelectedWaveIdx = insertIdx;
+      }
+      this.renderEditorEdit();
+    } else {
+      this.renderEditorEdit();
+    }
+  }
+
+  // Handle text/seed input changes from the edit screen. Called from the
+  // overlay-level input event listener installed in the constructor.
+  private handleEditorFieldInput(target: HTMLInputElement): void {
+    const c = this.editingCustom;
+    if (!c) return;
+    const field = target.dataset.editorField;
+    if (field === "name") {
+      c.name = target.value.slice(0, MAX_CUSTOM_NAME_LEN);
+    } else if (field === "seed") {
+      const n = parseInt(target.value, 10);
+      if (Number.isFinite(n)) c.seed = n >>> 0;
+    }
+  }
+
+  private handleEditorFieldCommit(): void {
+    if (!this.editingCustom) return;
+    this.editingCustom = upsertCustomChallenge(this.editingCustom);
+  }
+
+  // Convert a custom challenge into a synthetic ChallengeDef and start
+  // a run from the given wave index with the user-chosen seed.
+  private playCustomChallenge(custom: CustomChallenge, startWaveIdx = 0): void {
+    const errs = validateCustomChallenge(custom);
+    if (errs.length > 0) {
+      // Surface the first parse error in a quick alert; in a future pass
+      // this could become an inline banner on the edit screen.
+      window.alert(`Cannot play this challenge:\n${errs.join("\n")}`);
+      return;
+    }
+    // Capture entry state BEFORE flipping to "playing" so the back path
+    // knows whether to land on editorEdit, editorHome, or challengeSelect.
+    // Re-launching from challengeComplete / gameover (PLAY AGAIN) keeps
+    // whatever return target was captured on the original launch — the
+    // user came from the editor, not from the complete screen.
+    if (this.state === "editorEdit") this.customReturnTo = "editorEdit";
+    else if (this.state === "editorHome") this.customReturnTo = "editorHome";
+    else if (this.state === "challengeSelect") this.customReturnTo = "challengeSelect";
+    // else: leave customReturnTo alone (preserve previous launch's target).
+
+    const def = toChallengeDef(custom);
+    this.activeChallenge = def;
+    this.state = "playing";
+    this.overlay.classList.add("hidden");
+    this.setEditorActive(false);
+    this.setHudVisible(true);
+    this.setScoreVisible(true);
+    this.setPauseButtonVisible(true);
+    this.setSliderEnabled(true);
+    this.resetRunState(0);
+    this.startChallenge(def, { seed: custom.seed, startWaveIdx });
+    setMusicSpeed(1);
+    startMusic();
+    this.maybeShowControlsHint();
+  }
+
+  // Route a custom-challenge end-of-run (back / quit / replay return)
+  // to whichever editor screen launched the run. Pulls a fresh record
+  // by id (from activeChallenge or editingCustom) so any stat updates
+  // from the run land in the UI.
+  private returnFromCustomRun(): void {
+    const id = this.activeChallenge?.id ?? this.editingCustom?.id ?? null;
+    const fresh = id ? getCustomChallenge(id) : null;
+    if (this.customReturnTo === "editorEdit" && fresh) {
+      this.openEditorEdit(fresh);
+    } else if (this.customReturnTo === "challengeSelect") {
+      this.openChallengeSelect();
+    } else {
+      this.openEditorHome();
+    }
+  }
+
+  // ----- Wave dialog ---------------------------------------------------
+
+  // Open the wave dialog for an existing wave at `idx`. Resets transient
+  // dialog state so the dialog opens in advanced view (no preset
+  // selected) — the user is editing a known wave, not picking a fresh
+  // recipe. Cluster mix is parsed from the existing line so the user
+  // sees the wave's current weights.
+  private openExistingWaveDialog(idx: number): void {
+    if (!this.editingCustom) return;
+    this.editorDialog = "wave";
+    this.editorDialogWaveIdx = idx;
+    this.editorDialogIsNewWave = false;
+    this.editorDialogPresetId = null;
+    this.editorDialogPresetValues = {};
+    this.editorDialogAdvancedOpen = false;
+    this.editorDialogWaveLine = this.editingCustom.waves[idx] ?? "";
+    this.editorDialogPctValues = parseLineToMix(this.editorDialogWaveLine);
+    this.renderEditorEdit();
+    this.startWavePreview();
+  }
+
+  // Open the wave dialog for a NEW wave. The dialog opens in preset
+  // view (advanced collapsed) with the first preset preselected so the
+  // user has something usable on first OK.
+  private openNewWaveDialog(): void {
+    if (!this.editingCustom) return;
+    if (this.editingCustom.waves.length >= MAX_WAVES_PER_CUSTOM) return;
+    this.editorDialog = "wave";
+    this.editorDialogWaveIdx = null;
+    this.editorDialogIsNewWave = true;
+    this.editorDialogAdvancedOpen = false;
+    const initial = WAVE_PRESETS[0]!;
+    this.editorDialogPresetId = initial.id;
+    this.editorDialogPresetValues = presetDefaults(initial);
+    this.editorDialogWaveLine = initial.build(this.editorDialogPresetValues);
+    this.editorDialogPctValues = { ...presetMix(initial) };
+    this.renderEditorEdit();
+    this.startWavePreview();
+  }
+
+  // Compose a wave-dialog HTML using the current transient state. Reads
+  // editorDialog* fields for preset selection, advanced-open, and the
+  // composed line. The advanced form's input values come from parsing
+  // the line so they always reflect the latest preset/build output.
+  private renderWaveDialogHtml(): string {
+    const line = this.editorDialogWaveLine || "size=2-3, rate=0.7, speed=1.2, count=10";
+    let parsed: ParsedWave | null = null;
+    let parseErr = "";
+    try {
+      parsed = parseWaveLine(line);
+    } catch (e) {
+      parseErr = (e as Error).message;
+      try { parsed = parseWaveLine("size=2-3, rate=0.7, speed=1.2, count=10"); } catch { /* impossible */ }
+    }
+    if (!parsed) return "";
+    const w = parsed;
+    const hasSlots = w.slots.length > 0;
+
+    // Preset chips. Each preset's full recipe (size / speed / rate /
+    // walls / mix) is loaded into the working line on click — Advanced
+    // shows everything; the always-visible bar exposes the three knobs
+    // a player almost always wants to tweak.
+    const presetChips = WAVE_PRESETS.map((p) => `
+      <button type="button" class="editor-preset-chip${this.editorDialogPresetId === p.id ? " selected" : ""}"
+        data-action="editor-preset-pick" data-preset-id="${escapeHtml(p.id)}"
+        title="${escapeHtml(p.blurb)}">
+        ${escapeHtml(p.name)}
+      </button>
+    `).join("");
+
+    // Always-visible Count / Duration / Rate / Walls steppers — the
+    // four knobs that come up most often. Other tunables (size, speed,
+    // slot rate, wall amp/period, etc.) live in Advanced.
+    const countLabel = w.countCap === null ? "—" : String(w.countCap);
+    const durLabel = w.durOverride === null ? "—" : `${w.durOverride.toFixed(1)}s`;
+    // Rate is stored as seconds-between-spawns but displayed as
+    // blocks-per-10s (higher = denser) since players think in flow not
+    // gap. The DSL gets the seconds value back at save time.
+    const rateBlocks = Math.round(10 / w.spawnInterval);
+    const rateLabel = `${rateBlocks}/10s`;
+    const wallsName = WALL_LABEL[w.walls] ?? "No walls";
+    const quickHtml = `
+      <section class="editor-quick">
+        <div class="editor-quick-row">
+          <span class="editor-quick-label">Count${helpTipHtml("count")}</span>
+          <div class="editor-quick-controls">
+            <button type="button" class="editor-mix-step editor-mix-minus"
+              data-action="editor-bump-count" data-delta="-1"
+              ${w.countCap === null ? "disabled" : ""}>−</button>
+            <span class="editor-mix-value">${countLabel}</span>
+            <button type="button" class="editor-mix-step editor-mix-plus"
+              data-action="editor-bump-count" data-delta="1"
+              ${(w.countCap ?? 0) >= 200 ? "disabled" : ""}>+</button>
+          </div>
+        </div>
+        <div class="editor-quick-row">
+          <span class="editor-quick-label">Duration${helpTipHtml("dur")}</span>
+          <div class="editor-quick-controls">
+            <button type="button" class="editor-mix-step editor-mix-minus"
+              data-action="editor-bump-dur" data-delta="-0.5"
+              ${w.durOverride === null ? "disabled" : ""}>−</button>
+            <span class="editor-mix-value">${durLabel}</span>
+            <button type="button" class="editor-mix-step editor-mix-plus"
+              data-action="editor-bump-dur" data-delta="0.5"
+              ${(w.durOverride ?? 0) >= 120 ? "disabled" : ""}>+</button>
+          </div>
+        </div>
+        <div class="editor-quick-row">
+          <span class="editor-quick-label">Rate${helpTipHtml("rate")}</span>
+          <div class="editor-quick-controls">
+            <button type="button" class="editor-mix-step editor-mix-minus"
+              data-action="editor-bump-rate" data-delta="-5"
+              ${w.spawnInterval >= 1.95 ? "disabled" : ""}>−</button>
+            <span class="editor-mix-value">${rateLabel}</span>
+            <button type="button" class="editor-mix-step editor-mix-plus"
+              data-action="editor-bump-rate" data-delta="5"
+              ${w.spawnInterval <= 0.0501 ? "disabled" : ""}>+</button>
+          </div>
+        </div>
+        <div class="editor-quick-row">
+          <span class="editor-quick-label">Walls${helpTipHtml("walls")}</span>
+          <div class="editor-quick-walls-controls">
+            <button type="button" class="editor-walls-arrow"
+              data-action="editor-cycle-walls" data-dir="-1" aria-label="Previous wall">‹</button>
+            <span class="editor-walls-name">${escapeHtml(wallsName)}</span>
+            <button type="button" class="editor-walls-arrow"
+              data-action="editor-cycle-walls" data-dir="1" aria-label="Next wall">›</button>
+          </div>
+        </div>
+      </section>
+    `;
+
+    const mixHtml = this.renderClusterMixHtml();
+
+    // Advanced fields (always rendered, hidden via CSS when collapsed).
+    const advancedHtml = this.renderWaveAdvancedHtml(w);
+
+    const titleText = this.editorDialogIsNewWave
+      ? "New wave"
+      : `Wave ${(this.editorDialogWaveIdx ?? 0) + 1}`;
+    const errBanner = parseErr
+      ? `<div class="editor-dialog-err">Parse error: ${escapeHtml(parseErr)}</div>`
+      : "";
+    const slotsBanner = hasSlots
+      ? `<div class="editor-dialog-note">Custom slot pattern (${w.slots.length} slots) — locked, coming in phase 2.</div>`
+      : "";
+    const advCls = this.editorDialogAdvancedOpen ? "editor-advanced open" : "editor-advanced";
+    const advChevron = this.editorDialogAdvancedOpen ? "−" : "+";
+
+    return `
+      <div class="editor-dialog-backdrop" data-action="editor-dialog-cancel"></div>
+      <div class="editor-dialog editor-dialog-wave" role="dialog" aria-label="${titleText}">
+        <h2>${escapeHtml(titleText)}</h2>
+        ${errBanner}
+        ${slotsBanner}
+        <button type="button" class="editor-section-toggle" data-action="editor-toggle-presets">
+          <span class="editor-advanced-chevron">${this.editorDialogPresetsOpen ? "−" : "+"}</span> Preset Waves
+        </button>
+        <section class="editor-presets${this.editorDialogPresetsOpen ? " open" : ""}">
+          <div class="editor-preset-chips">${presetChips}</div>
+        </section>
+        ${quickHtml}
+        ${mixHtml}
+        <button type="button" class="editor-advanced-toggle" data-action="editor-toggle-advanced">
+          <span class="editor-advanced-chevron">${advChevron}</span> Advanced
+        </button>
+        <div class="${advCls}">
+          ${advancedHtml}
+        </div>
+        <div class="editor-dialog-actions">
+          <button type="button" class="challenge-back" data-action="editor-dialog-cancel">Cancel</button>
+          <button type="button" class="play-btn" data-action="editor-dialog-ok">${this.editorDialogIsNewWave ? "ADD" : "OK"}</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Advanced wave-form fields. Count / Duration / Rate / Walls live in
+  // the always-visible bar, so they're omitted here. Each row uses the
+  // same row layout as the basic-view quick controls so the two
+  // sections feel consistent.
+  private renderWaveAdvancedHtml(w: ParsedWave): string {
+    const originRadios = (["top", "topAngled", "side"] as const)
+      .map((o) => `<label class="editor-radio"><input type="radio" name="dialog-origin" data-dialog-field="origin" value="${o}" ${w.origin === o ? "checked" : ""}/>${o}</label>`)
+      .join("");
+    const safeColOptions: string[] = ['<option value="random">random</option>', '<option value="none">none</option>'];
+    for (let i = 0; i <= 8; i++) safeColOptions.push(`<option value="${i}">${i}</option>`);
+    const safeColVal = w.safeCol === null ? "random" : w.safeCol === "none" ? "none" : String(w.safeCol);
+    const safeColSelect = safeColOptions
+      .map((opt) => opt.replace(/value="([^"]*)"/, (_m, v) => `value="${v}"${v === safeColVal ? " selected" : ""}`))
+      .join("");
+    return `
+      <div class="editor-dialog-body">
+        <label class="editor-field">
+          <span class="editor-field-label">Size min${helpTipHtml("sizeMin")}</span>
+          <input type="number" min="1" max="5" step="1" data-dialog-field="sizeMin" value="${w.sizeMin}"/>
+        </label>
+        <label class="editor-field">
+          <span class="editor-field-label">Size max${helpTipHtml("sizeMax")}</span>
+          <input type="number" min="1" max="5" step="1" data-dialog-field="sizeMax" value="${w.sizeMax}"/>
+        </label>
+        <label class="editor-field">
+          <span class="editor-field-label">Speed${helpTipHtml("speed")}</span>
+          <input type="number" min="0.5" max="3" step="0.05" data-dialog-field="speed" value="${w.baseSpeedMul}"/>
+        </label>
+        <label class="editor-field">
+          <span class="editor-field-label">Slot rate${helpTipHtml("slotRate")}</span>
+          <input type="number" min="0.05" max="2" step="0.05" data-dialog-field="slotRate" value="${w.slotInterval}"/>
+        </label>
+        <label class="editor-field">
+          <span class="editor-field-label">Wall amp${helpTipHtml("wallAmp")}</span>
+          <input type="number" min="0" max="0.5" step="0.02" data-dialog-field="wallAmp" value="${w.wallAmp}"/>
+        </label>
+        <label class="editor-field">
+          <span class="editor-field-label">Wall period${helpTipHtml("wallPeriod")}</span>
+          <input type="number" min="0.05" max="5" step="0.1" data-dialog-field="wallPeriod" value="${w.wallPeriod}"/>
+        </label>
+        <label class="editor-field">
+          <span class="editor-field-label">Safe column${helpTipHtml("safeCol")}</span>
+          <select data-dialog-field="safeCol">${safeColSelect}</select>
+        </label>
+        <fieldset class="editor-radio-group">
+          <legend>Origin${helpTipHtml("origin")}</legend>
+          ${originRadios}
+        </fieldset>
+        <label class="editor-field">
+          <span class="editor-field-label">Tilt (rad)${helpTipHtml("dir")}</span>
+          <input type="number" min="-1" max="1" step="0.05" data-dialog-field="dir" value="${w.defaultDir}"/>
+        </label>
+      </div>
+    `;
+  }
+
+  // Re-build the line from the active preset and re-render. Used when
+  // the user clicks a preset chip or moves a preset slider. The cluster
+  // mix is intentionally NOT touched here — sliders shape the wave,
+  // they don't reset block weights.
+  private rebuildFromPreset(): void {
+    const preset = this.editorDialogPresetId ? getPreset(this.editorDialogPresetId) : null;
+    if (!preset) return;
+    this.editorDialogWaveLine = preset.build(this.editorDialogPresetValues);
+    this.renderEditorEdit();
+  }
+
+  // Helper: parse the working dialog line, mutate the parsed wave via
+  // `mutate`, then recompose and re-render. Used by the always-visible
+  // Count / Duration / Walls controls so each tweak round-trips through
+  // the parser (catches anything that would have failed validation).
+  private mutateDialogWave(mutate: (w: ParsedWave) => void): void {
+    let parsed: ParsedWave;
+    try {
+      parsed = parseWaveLine(this.editorDialogWaveLine || "size=2-3, rate=0.7, speed=1.2, count=10");
+    } catch {
+      return;
+    }
+    mutate(parsed);
+    this.editorDialogWaveLine = composeWaveLine(parsed);
+    this.renderEditorEdit();
+  }
+
+  // Same as mutateDialogWave but skips the DOM re-render. Used by the
+  // advanced-form input listeners so live edits feed the preview
+  // without yanking focus out of the input on every keystroke.
+  private mutateDialogWaveQuiet(mutate: (w: ParsedWave) => void): void {
+    let parsed: ParsedWave;
+    try {
+      parsed = parseWaveLine(this.editorDialogWaveLine || "size=2-3, rate=0.7, speed=1.2, count=10");
+    } catch {
+      return;
+    }
+    mutate(parsed);
+    this.editorDialogWaveLine = composeWaveLine(parsed);
+  }
+
+  // Read a single Advanced form field's current value and apply it to
+  // the working line. Live-fed by `input` / `change` listeners so the
+  // preview reflects the edit immediately.
+  private applyAdvancedFieldToLine(target: HTMLInputElement | HTMLSelectElement): void {
+    const field = target.dataset.dialogField;
+    if (!field) return;
+    const value = target.value;
+    this.mutateDialogWaveQuiet((w) => {
+      switch (field) {
+        case "sizeMin": {
+          const n = parseInt(value, 10);
+          if (Number.isFinite(n)) {
+            w.sizeMin = Math.max(1, Math.min(5, n));
+            if (w.sizeMin > w.sizeMax) w.sizeMax = w.sizeMin;
+          }
+          break;
+        }
+        case "sizeMax": {
+          const n = parseInt(value, 10);
+          if (Number.isFinite(n)) {
+            w.sizeMax = Math.max(1, Math.min(5, n));
+            if (w.sizeMax < w.sizeMin) w.sizeMin = w.sizeMax;
+          }
+          break;
+        }
+        case "speed": {
+          const n = parseFloat(value);
+          if (Number.isFinite(n) && n > 0) w.baseSpeedMul = n;
+          break;
+        }
+        case "slotRate": {
+          const n = parseFloat(value);
+          if (Number.isFinite(n) && n >= 0.05) w.slotInterval = n;
+          break;
+        }
+        case "wallAmp": {
+          const n = parseFloat(value);
+          if (Number.isFinite(n) && n >= 0 && n <= 0.5) w.wallAmp = n;
+          break;
+        }
+        case "wallPeriod": {
+          const n = parseFloat(value);
+          if (Number.isFinite(n) && n > 0.05) w.wallPeriod = n;
+          break;
+        }
+        case "safeCol": {
+          if (value === "none") w.safeCol = "none";
+          else if (value === "random") w.safeCol = null;
+          else {
+            const n = parseInt(value, 10);
+            if (Number.isFinite(n) && n >= 0 && n <= 8) w.safeCol = n;
+          }
+          break;
+        }
+        case "origin": {
+          if (value === "top" || value === "topAngled" || value === "side") {
+            w.origin = value;
+          }
+          break;
+        }
+        case "dir": {
+          const n = parseFloat(value);
+          if (Number.isFinite(n)) w.defaultDir = n;
+          break;
+        }
+      }
+    });
+    // Live walls update if the safeCol / wall amp changed for an
+    // already-zigzag wall — the existing tickWalls + tickWavePreview
+    // setup will pick up the new wall amp/period on the next tick.
+  }
+
+  // Always-visible Count stepper. Stepping below 1 unsets the cap
+  // entirely (count=null → "—"); step from null lifts to 1.
+  private bumpQuickCount(delta: number): void {
+    this.mutateDialogWave((w) => {
+      const cur = w.countCap;
+      if (delta > 0) {
+        const base = cur === null ? 0 : cur;
+        w.countCap = Math.min(200, base + delta);
+      } else if (cur !== null) {
+        const next = cur + delta;
+        w.countCap = next < 1 ? null : next;
+      }
+    });
+  }
+
+  // Always-visible Duration stepper. Step 0.5s; below 0.5 unsets dur
+  // (dur=null → "—"); step from null lifts to 0.5.
+  private bumpQuickDur(delta: number): void {
+    this.mutateDialogWave((w) => {
+      const cur = w.durOverride;
+      if (delta > 0) {
+        const base = cur === null ? 0 : cur;
+        const next = Math.min(120, Math.round((base + delta) * 2) / 2);
+        w.durOverride = next < 0.5 ? 0.5 : next;
+      } else if (cur !== null) {
+        const next = Math.round((cur + delta) * 2) / 2;
+        w.durOverride = next < 0.5 ? null : next;
+      }
+    });
+  }
+
+  // ----- Wave preview loop ---------------------------------------------
+
+  // Start a fresh preview run. Clears any in-flight clusters, applies
+  // walls + safe-column from the current working line, reseeds the rng,
+  // and resets the slot/prob/dur counters. Called on dialog open and on
+  // preset pick — other tweaks update live during tick.
+  private startWavePreview(): void {
+    let parsed: ParsedWave;
+    try { parsed = parseWaveLine(this.editorDialogWaveLine); } catch { return; }
+    // Clear any leftover bodies from the previous loop.
+    for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+    this.clusters = [];
+    this.clusterByBodyId.clear();
+    for (const d of this.debris) Composite.remove(this.engine.world, d.body);
+    this.debris = [];
+    this.sideWarnings = [];
+    // Apply walls.
+    if (parsed.walls === "none") this.setWall("none", 0);
+    else if (parsed.walls === "zigzag") this.setWall("zigzag", 1.0, { amp: parsed.wallAmp, period: parsed.wallPeriod });
+    else if (parsed.walls === "narrow") this.setWall("narrow", 1.0);
+    else this.setWall("pinch", 1.0);
+    // Pick safe column for prob spawns (mirrors beginChallengeWave).
+    if (parsed.safeCol === "none") this.safeColumn = 99;
+    else if (typeof parsed.safeCol === "number") this.safeColumn = parsed.safeCol - 4;
+    else {
+      const halfFull = Math.floor(BOARD_COLS / 2);
+      this.safeColumn = Math.floor(Math.random() * (halfFull * 2 + 1)) - halfFull;
+    }
+    // Fresh rng so the preview doesn't reuse leftover sequence state.
+    this.rng = mulberry32(Math.floor(Math.random() * 0xffffffff));
+    this.editorDialogPreview = {
+      slotIdx: 0,
+      slotTimer: parsed.slotInterval,
+      probCount: 0,
+      spawnTimer: parsed.spawnInterval,
+      waveTimer: parsed.durOverride ?? 0,
+      restartDelay: 0,
+    };
+    document.body.classList.add("editor-previewing");
+  }
+
+  private stopWavePreview(): void {
+    if (!this.editorDialogPreview) {
+      document.body.classList.remove("editor-previewing");
+      return;
+    }
+    this.editorDialogPreview = null;
+    for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+    this.clusters = [];
+    this.clusterByBodyId.clear();
+    for (const d of this.debris) Composite.remove(this.engine.world, d.body);
+    this.debris = [];
+    this.sideWarnings = [];
+    document.body.classList.remove("editor-previewing");
+  }
+
+  // Per-frame preview tick. Re-parses the working line each frame so
+  // rate/count/dur/walls/mix tweaks apply live. End condition triggers
+  // a short delay, then a fresh restart.
+  private tickWavePreview(dt: number): void {
+    const p = this.editorDialogPreview;
+    if (!p) return;
+    let parsed: ParsedWave;
+    try { parsed = parseWaveLine(this.editorDialogWaveLine); } catch { return; }
+    // Live mix override: if the user has bumped any non-default value,
+    // weights come from editorDialogPctValues so the preview reflects
+    // their tweaks immediately.
+    const mix = this.editorDialogPctValues;
+    const mixSum = Object.values(mix).reduce((a, b) => a + (b ?? 0), 0);
+    if (mixSum > 0) parsed.weights = { ...mix };
+
+    // Live walls: setWall lerps, so flipping to a different wall mid-loop
+    // looks intentional rather than jarring.
+    if (this.wall.kind !== parsed.walls && this.wall.pendingKind !== parsed.walls) {
+      if (parsed.walls === "none") this.setWall("none", 0);
+      else if (parsed.walls === "zigzag") this.setWall("zigzag", 1.0, { amp: parsed.wallAmp, period: parsed.wallPeriod });
+      else if (parsed.walls === "narrow") this.setWall("narrow", 1.0);
+      else this.setWall("pinch", 1.0);
+    }
+
+    if (p.restartDelay > 0) {
+      p.restartDelay -= dt;
+      if (p.restartDelay <= 0 && this.clusters.length === 0) {
+        // Reset counters for next loop. Keep the wall state lerping so
+        // the canvas stays continuous.
+        p.slotIdx = 0;
+        p.slotTimer = parsed.slotInterval;
+        p.probCount = 0;
+        p.spawnTimer = parsed.spawnInterval;
+        p.waveTimer = parsed.durOverride ?? 0;
+      } else if (p.restartDelay <= 0) {
+        // Clusters still on screen — wait for them to fall off before
+        // looping. Hold the timer at 0.
+        p.restartDelay = 0;
+      }
+      return;
+    }
+
+    // Slot stream.
+    if (parsed.slots.length > 0 && p.slotIdx < parsed.slots.length) {
+      p.slotTimer -= dt;
+      if (p.slotTimer <= 0) {
+        const slot = parsed.slots[p.slotIdx];
+        if (slot !== null && slot !== undefined) this.spawnFromSlot(slot, parsed);
+        p.slotIdx += 1;
+        p.slotTimer = parsed.slotInterval;
+      }
+    }
+    // Probabilistic stream.
+    const probLimit = parsed.countCap;
+    const probEnabled = (probLimit === null || p.probCount < probLimit);
+    if (probEnabled) {
+      p.spawnTimer -= dt;
+      if (p.spawnTimer <= 0) {
+        this.spawnChallengeProbabilistic(parsed);
+        p.probCount += 1;
+        p.spawnTimer = parsed.spawnInterval;
+      }
+    }
+    // Dur countdown.
+    if (parsed.durOverride !== null) p.waveTimer -= dt;
+    // End check.
+    const slotsDone = p.slotIdx >= parsed.slots.length;
+    const probDone = probLimit === null ? false : p.probCount >= probLimit;
+    const durDone = parsed.durOverride !== null && p.waveTimer <= 0;
+    const streamsDone = slotsDone && (probLimit === null ? parsed.slots.length > 0 : probDone);
+    if (durDone || streamsDone) {
+      p.restartDelay = 1.0;
+    }
+  }
+
+  // Always-visible Rate stepper. UI displays blocks per 10s (higher =
+  // denser); delta is in those same units. Internally the wave still
+  // stores `spawnInterval` in seconds (= 10 / blocksPer10s). Snaps to
+  // multiples of 5 blocks/10s, clamped 5..200 (= 2.0s..0.05s).
+  private bumpQuickRate(deltaBlocks: number): void {
+    this.mutateDialogWave((w) => {
+      const curBlocks = 10 / w.spawnInterval;
+      const snapped = Math.round(curBlocks / 5) * 5;
+      const nextBlocks = Math.max(5, Math.min(200, snapped + deltaBlocks));
+      w.spawnInterval = 10 / nextBlocks;
+    });
+  }
+
+  // Always-visible Walls cycler. Wraps through none / pinch / zigzag /
+  // narrow. The mini preview canvas above the label re-paints in the
+  // post-render pass.
+  private cycleWalls(dir: number): void {
+    this.mutateDialogWave((w) => {
+      const idx = WALL_CYCLE.indexOf(w.walls);
+      const len = WALL_CYCLE.length;
+      const nextIdx = ((idx < 0 ? 0 : idx) + dir + len) % len;
+      w.walls = WALL_CYCLE[nextIdx]!;
+    });
+  }
+
+  // Position a help popup so it stays inside the viewport. The dialog
+  // has `transform: translate(-50%, -50%)`, which makes it a containing
+  // block for `position: fixed` descendants — so we can't use fixed
+  // positioning here. Instead we keep the popup's default
+  // `position: absolute` (anchored to the help-wrap) and only nudge
+  // `left` / `top` to clamp the rect inside the viewport.
+  private positionHelpPopup(_btn: HTMLElement, popup: HTMLElement): void {
+    const PAD = 8;
+    // Reset any previous tweaks so the measurement is clean.
+    popup.style.position = "";
+    popup.style.left = "";
+    popup.style.top = "";
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const rect = popup.getBoundingClientRect();
+    if (rect.right > vw - PAD) {
+      popup.style.left = `${-(rect.right - (vw - PAD))}px`;
+    } else if (rect.left < PAD) {
+      popup.style.left = `${PAD - rect.left}px`;
+    }
+    if (rect.bottom > vh - PAD) {
+      popup.style.top = `${-rect.height - 4}px`;
+    }
+  }
+
+  // Cluster-mix block: 7 rows (one per kind). Each row shows the cluster
+  // icon, kind name, and a -/+ stepper around the current %. `normal`
+  // is the auto-balancer — it has no buttons, just shows the residual
+  // so the total always equals 100%.
+  private renderClusterMixHtml(): string {
+    const order: ClusterKind[] = ["normal", "sticky", "slow", "fast", "coin", "shield", "drone"];
+    const rows = order.map((kind) => {
+      const isNormal = kind === "normal";
+      const value = this.editorDialogPctValues[kind] ?? 0;
+      const buttons = isNormal
+        ? `<span class="editor-mix-residual">auto</span>`
+        : `
+          <button type="button" class="editor-mix-step editor-mix-minus"
+            data-action="editor-mix-bump" data-kind="${kind}" data-delta="-5"
+            ${value <= 0 ? "disabled" : ""}>−</button>
+          <span class="editor-mix-value">${value}<span class="editor-mix-pct">%</span></span>
+          <button type="button" class="editor-mix-step editor-mix-plus"
+            data-action="editor-mix-bump" data-kind="${kind}" data-delta="5"
+            ${(this.editorDialogPctValues.normal ?? 0) <= 0 ? "disabled" : ""}>+</button>
+        `;
+      const label = kind === "normal" ? "Normal" : kind.charAt(0).toUpperCase() + kind.slice(1);
+      return `
+        <div class="editor-mix-row${isNormal ? " editor-mix-row-normal" : ""}" data-mix-kind="${kind}">
+          <canvas class="editor-mix-icon" data-mix-icon="${kind}" width="36" height="36"></canvas>
+          <span class="editor-mix-name">${label}</span>
+          <div class="editor-mix-controls">
+            ${isNormal ? `<span class="editor-mix-value">${value}<span class="editor-mix-pct">%</span></span>` : ""}
+            ${buttons}
+          </div>
+        </div>
+      `;
+    }).join("");
+    return `
+      <section class="editor-mix">
+        <div class="editor-mix-header">
+          <span>Cluster mix${helpTipHtml("pct")}</span>
+          <span class="editor-mix-total">100%</span>
+        </div>
+        <div class="editor-mix-rows">${rows}</div>
+      </section>
+    `;
+  }
+
+  // Adjust a non-normal kind by delta, debiting/crediting `normal` so
+  // the total stays at exactly 100%. Clamps when normal would cross
+  // zero (positive bumps) or 100 (negative bumps). No-op for kind="normal".
+  private bumpClusterMix(kind: ClusterKind, delta: number): void {
+    if (kind === "normal") return;
+    const cur = this.editorDialogPctValues[kind] ?? 0;
+    const norm = this.editorDialogPctValues.normal ?? 0;
+    let actualDelta = delta;
+    if (delta > 0) {
+      // Bumping up — debit normal. If normal can't cover the bump, take
+      // whatever is available.
+      actualDelta = Math.min(delta, norm);
+    } else {
+      // Bumping down — refund to normal. Floor the kind at 0.
+      actualDelta = Math.max(delta, -cur);
+    }
+    if (actualDelta === 0) return;
+    this.editorDialogPctValues = {
+      ...this.editorDialogPctValues,
+      [kind]: cur + actualDelta,
+      normal: norm - actualDelta,
+    };
+    this.renderEditorEdit();
+  }
+
+  // Read the wave dialog form, compose a DSL line, validate, and apply.
+  // Branches on `editorDialogIsNewWave` to either append a new wave or
+  // replace the wave at `editorDialogWaveIdx`.
+  private applyWaveDialog(): void {
+    const c = this.editingCustom;
+    if (!c) return;
+    const isNew = this.editorDialogIsNewWave;
+    const idx = this.editorDialogWaveIdx;
+    if (!isNew && idx === null) return;
+    const dlg = this.overlay.querySelector<HTMLElement>(".editor-dialog");
+    if (!dlg) return;
+
+    const getField = (name: string): string => {
+      const el = dlg.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-dialog-field="${name}"]`);
+      if (el && "value" in el) return el.value;
+      return "";
+    };
+    const getRadio = (name: string): string => {
+      const el = dlg.querySelector<HTMLInputElement>(`input[name="dialog-${name}"]:checked`);
+      return el?.value ?? "";
+    };
+
+    const tokens: string[] = [];
+    // Carry forward slot tokens read-only — phase 1 doesn't edit them.
+    // For a brand-new wave there's no source line, so slots stay empty.
+    let parsedExisting: ParsedWave | null = null;
+    if (!isNew && idx !== null) {
+      const existingLine = c.waves[idx] ?? "";
+      try { parsedExisting = parseWaveLine(existingLine); } catch { /* ignore */ }
+    }
+
+    const sizeMin = parseInt(getField("sizeMin"), 10);
+    const sizeMax = parseInt(getField("sizeMax"), 10);
+    if (Number.isFinite(sizeMin) && Number.isFinite(sizeMax)) {
+      const lo = Math.max(1, Math.min(5, sizeMin));
+      const hi = Math.max(lo, Math.min(5, sizeMax));
+      tokens.push(lo === hi ? `size=${lo}` : `size=${lo}-${hi}`);
+    }
+
+    const speed = parseFloat(getField("speed"));
+    if (Number.isFinite(speed) && speed > 0) tokens.push(`speed=${speed}`);
+    const slotRate = parseFloat(getField("slotRate"));
+    if (Number.isFinite(slotRate) && slotRate >= 0.05) tokens.push(`slotRate=${slotRate}`);
+
+    // Count / Duration / Rate / Walls live on the always-visible bar
+    // and have been keeping editorDialogWaveLine up to date as the user
+    // tweaks them — read them straight off the parsed working line so
+    // the OK output reflects the live preview. wallAmp / wallPeriod are
+    // still in Advanced; pull them from the form.
+    let parsedWorking: ParsedWave | null = null;
+    try { parsedWorking = parseWaveLine(this.editorDialogWaveLine); } catch { /* fall through */ }
+
+    const rateVal = parsedWorking?.spawnInterval ?? 0.55;
+    tokens.push(`rate=${rateVal}`);
+    if (parsedWorking?.countCap !== null && parsedWorking?.countCap !== undefined) {
+      tokens.push(`count=${parsedWorking.countCap}`);
+    }
+    if (parsedWorking?.durOverride !== null && parsedWorking?.durOverride !== undefined) {
+      tokens.push(`dur=${parsedWorking.durOverride}`);
+    }
+    const walls = parsedWorking?.walls ?? "none";
+    if (walls !== "none") tokens.push(`walls=${walls}`);
+    const wallAmp = parseFloat(getField("wallAmp"));
+    if (Number.isFinite(wallAmp) && wallAmp >= 0 && wallAmp <= 0.5 && walls === "zigzag") {
+      tokens.push(`wallAmp=${wallAmp}`);
+    }
+    const wallPeriod = parseFloat(getField("wallPeriod"));
+    if (Number.isFinite(wallPeriod) && wallPeriod > 0.05 && walls === "zigzag") {
+      tokens.push(`wallPeriod=${wallPeriod}`);
+    }
+
+    const safeCol = getField("safeCol");
+    if (safeCol === "none") tokens.push("safeCol=none");
+    else if (safeCol !== "random" && safeCol !== "") {
+      const n = parseInt(safeCol, 10);
+      if (Number.isFinite(n) && n >= 0 && n <= 8) tokens.push(`safeCol=${n}`);
+    }
+
+    const origin = getRadio("origin");
+    if (origin && origin !== "top") tokens.push(`origin=${origin}`);
+    const dir = parseFloat(getField("dir"));
+    if (Number.isFinite(dir) && dir !== 0) tokens.push(`dir=${dir}`);
+
+    // Cluster mix lives outside the form (basic view) — read straight
+    // from editorDialogPctValues. Skip writing pct= when the row is
+    // pure normal=100 so the DSL stays clean.
+    const kinds: ClusterKind[] = ["normal", "sticky", "slow", "fast", "coin", "shield", "drone"];
+    const mix = this.editorDialogPctValues;
+    const pctParts: string[] = [];
+    let hasNonDefault = false;
+    for (const k of kinds) {
+      const v = Math.max(0, Math.round(mix[k] ?? 0));
+      if (v > 0) pctParts.push(`${k}:${v}`);
+      if ((k === "normal" && v !== 100) || (k !== "normal" && v > 0)) hasNonDefault = true;
+    }
+    if (hasNonDefault && pctParts.length > 0) {
+      tokens.push(`pct=${pctParts.join(",")}`);
+    }
+
+    // Append slot tokens from the original line (phase 1: read-only).
+    if (parsedExisting && parsedExisting.slots.length > 0) {
+      for (const s of parsedExisting.slots) {
+        if (s === null) tokens.push("000");
+        else tokens.push(`${s.size}${s.col}${s.angleIdx}`);
+      }
+    }
+
+    const newLine = tokens.join(", ");
+
+    // Validate before applying.
+    try {
+      parseWaveLine(newLine);
+    } catch (e) {
+      const errEl = dlg.querySelector<HTMLElement>(".editor-dialog-err");
+      const msg = `Invalid: ${(e as Error).message}`;
+      if (errEl) errEl.textContent = msg;
+      else dlg.insertAdjacentHTML("afterbegin", `<div class="editor-dialog-err">${escapeHtml(msg)}</div>`);
+      return;
+    }
+
+    this.stopWavePreview();
+    if (isNew) {
+      c.waves = [...c.waves, newLine];
+      this.editorSelectedWaveIdx = c.waves.length - 1;
+    } else if (idx !== null) {
+      c.waves[idx] = newLine;
+    }
+    this.editingCustom = upsertCustomChallenge(c);
+    this.editorDialog = null;
+    this.editorDialogWaveIdx = null;
+    this.editorDialogIsNewWave = false;
+    this.editorDialogPresetId = null;
+    this.editorDialogPresetValues = {};
+    this.editorDialogWaveLine = "";
+    this.editorDialogPctValues = {
+      normal: 100, sticky: 0, slow: 0, fast: 0, coin: 0, shield: 0, drone: 0,
+    };
+    this.renderEditorEdit();
+  }
+
+  // ----- Settings dialog ----------------------------------------------
+
+  private renderSettingsDialogHtml(c: CustomChallenge): string {
+    const diffBtns = [1, 2, 3, 4, 5]
+      .map((d) => `<button type="button" class="editor-diff-btn${c.difficulty === d ? " selected" : ""}" data-dialog-difficulty="${d}">${d}</button>`)
+      .join("");
+    return `
+      <div class="editor-dialog-backdrop" data-action="editor-dialog-cancel"></div>
+      <div class="editor-dialog editor-dialog-settings" role="dialog" aria-label="Challenge settings">
+        <h2>Options</h2>
+        <div class="editor-dialog-body">
+          <label class="editor-field">
+            <span class="editor-field-label">Slow duration (s)${helpTipHtml("slowDuration")}</span>
+            <input type="number" min="0" max="30" step="0.5" data-settings-field="slowDuration" value="${c.effects.slowDuration}"/>
+          </label>
+          <label class="editor-field">
+            <span class="editor-field-label">Fast duration (s)${helpTipHtml("fastDuration")}</span>
+            <input type="number" min="0" max="30" step="0.5" data-settings-field="fastDuration" value="${c.effects.fastDuration}"/>
+          </label>
+          <label class="editor-field">
+            <span class="editor-field-label">Shield duration (s)${helpTipHtml("shieldDuration")}</span>
+            <input type="number" min="0" max="60" step="0.5" data-settings-field="shieldDuration" value="${c.effects.shieldDuration}"/>
+          </label>
+          <label class="editor-field">
+            <span class="editor-field-label">Drone duration (s)${helpTipHtml("droneDuration")}</span>
+            <input type="number" min="0" max="60" step="0.5" data-settings-field="droneDuration" value="${c.effects.droneDuration}"/>
+          </label>
+          <fieldset class="editor-radio-group">
+            <legend>Star thresholds${helpTipHtml("starsAuto")}</legend>
+            <div class="editor-stars-row">
+              <label class="editor-field"><span class="editor-field-label">★${helpTipHtml("starOne")}</span><input type="number" min="0" step="1" data-settings-field="starOne" value="${c.stars.one}"/></label>
+              <label class="editor-field"><span class="editor-field-label">★★${helpTipHtml("starTwo")}</span><input type="number" min="0" step="1" data-settings-field="starTwo" value="${c.stars.two}"/></label>
+              <label class="editor-field"><span class="editor-field-label">★★★${helpTipHtml("starThree")}</span><input type="number" min="0" step="1" data-settings-field="starThree" value="${c.stars.three}"/></label>
+            </div>
+            <button type="button" class="challenge-back editor-auto-btn" data-action="editor-settings-auto">Auto-suggest</button>
+          </fieldset>
+          <fieldset class="editor-radio-group">
+            <legend>Difficulty${helpTipHtml("difficulty")}</legend>
+            <div class="editor-diff-row">${diffBtns}</div>
+            <button type="button" class="challenge-back editor-auto-btn" data-action="editor-settings-auto-diff">Auto-suggest</button>
+          </fieldset>
+        </div>
+        <div class="editor-dialog-actions">
+          <button type="button" class="challenge-back" data-action="editor-dialog-cancel">Cancel</button>
+          <button type="button" class="play-btn" data-action="editor-dialog-ok">OK</button>
+        </div>
+      </div>
+    `;
+  }
+
+  private applySettingsDialog(): void {
+    const c = this.editingCustom;
+    if (!c) return;
+    const dlg = this.overlay.querySelector<HTMLElement>(".editor-dialog");
+    if (!dlg) return;
+    const getNum = (name: string, fallback: number): number => {
+      const el = dlg.querySelector<HTMLInputElement>(`[data-settings-field="${name}"]`);
+      const n = parseFloat(el?.value ?? "");
+      return Number.isFinite(n) && n >= 0 ? n : fallback;
+    };
+    c.effects.slowDuration = getNum("slowDuration", c.effects.slowDuration);
+    c.effects.fastDuration = getNum("fastDuration", c.effects.fastDuration);
+    c.effects.shieldDuration = getNum("shieldDuration", c.effects.shieldDuration);
+    c.effects.droneDuration = getNum("droneDuration", c.effects.droneDuration);
+    c.stars.one = Math.max(0, Math.round(getNum("starOne", c.stars.one)));
+    c.stars.two = Math.max(0, Math.round(getNum("starTwo", c.stars.two)));
+    c.stars.three = Math.max(0, Math.round(getNum("starThree", c.stars.three)));
+    const diffSel = dlg.querySelector<HTMLButtonElement>(".editor-diff-btn.selected");
+    if (diffSel) {
+      const d = parseInt(diffSel.dataset.dialogDifficulty ?? String(c.difficulty), 10);
+      if (d >= 1 && d <= 5) c.difficulty = d as 1 | 2 | 3 | 4 | 5;
+    }
+    this.editingCustom = upsertCustomChallenge(c);
+    this.editorDialog = null;
+    this.renderEditorEdit();
+  }
+
+  private autoSuggestStars(): void {
+    const c = this.editingCustom;
+    if (!c) return;
+    const def = toChallengeDef(c);
+    const t = computeStarThresholds(def);
+    // Update the dialog inputs in place so the user can still adjust.
+    const dlg = this.overlay.querySelector<HTMLElement>(".editor-dialog");
+    if (!dlg) return;
+    const setVal = (name: string, value: number) => {
+      const el = dlg.querySelector<HTMLInputElement>(`[data-settings-field="${name}"]`);
+      if (el) el.value = String(value);
+    };
+    setVal("starOne", t.one);
+    setVal("starTwo", t.two);
+    setVal("starThree", t.three);
+  }
+
+  // Estimate a difficulty rating (1..5) by walking the wave list and
+  // weighting length, average + peak speed, walls density, and
+  // power-up presence. Cosmetic — drives the difficulty hex count on
+  // the challenge card, not gameplay.
+  private autoSuggestDifficulty(): void {
+    const c = this.editingCustom;
+    if (!c) return;
+    const parsed: ParsedWave[] = [];
+    for (const line of c.waves) {
+      try { parsed.push(parseWaveLine(line)); } catch { /* skip bad waves */ }
+    }
+    if (parsed.length === 0) return;
+
+    let speedSum = 0;
+    let speedMax = 0;
+    let wallsCount = 0;
+    let hardWallsCount = 0;
+    let helpfulSum = 0;
+    for (const w of parsed) {
+      speedSum += w.baseSpeedMul;
+      if (w.baseSpeedMul > speedMax) speedMax = w.baseSpeedMul;
+      if (w.walls !== "none") wallsCount += 1;
+      if (w.walls === "narrow" || w.walls === "zigzag") hardWallsCount += 1;
+      const wsum = Object.values(w.weights).reduce((a, b) => a + (b ?? 0), 0) || 1;
+      const helpful =
+        ((w.weights.sticky ?? 0) +
+          (w.weights.slow ?? 0) +
+          (w.weights.coin ?? 0) +
+          (w.weights.shield ?? 0)) /
+        wsum;
+      helpfulSum += helpful;
+    }
+    const length = parsed.length;
+    const speedAvg = speedSum / length;
+    const wallsRate = wallsCount / length;
+    const hardWallsRate = hardWallsCount / length;
+    const helpfulPct = helpfulSum / length;
+
+    // Each factor adds roughly 0..1; sum + 1 gives a 1..5 rating after
+    // clamping. Tuned against the shipped roster's block 1..6 spread.
+    let score = 1;
+    score += Math.min(1.5, Math.max(0, (length - 10) / 40));
+    score += Math.min(1.5, Math.max(0, (speedAvg - 0.9) * 1.5));
+    score += Math.min(0.5, Math.max(0, (speedMax - 1.5) / 1.4));
+    score += wallsRate;
+    score += hardWallsRate * 0.5;
+    score -= Math.min(0.5, helpfulPct);
+    const diff = Math.max(1, Math.min(5, Math.round(score))) as 1 | 2 | 3 | 4 | 5;
+
+    // Update both the dialog UI and the working model so OK can read
+    // the selected button as before.
+    const dlg = this.overlay.querySelector<HTMLElement>(".editor-dialog");
+    if (!dlg) return;
+    dlg.querySelectorAll<HTMLButtonElement>(".editor-diff-btn").forEach((b) => {
+      const d = parseInt(b.dataset.dialogDifficulty ?? "0", 10);
+      b.classList.toggle("selected", d === diff);
+    });
+  }
+
+  // ----- Publish (debug only) ------------------------------------------
+
+  private publishCustomChallenge(custom: CustomChallenge): void {
+    if (!this.debugEnabled) return;
+    const rosterId = window.prompt('Roster ID? (e.g. "7-1")', "");
+    if (!rosterId) return;
+    const blockMatch = rosterId.match(/^(\d)-(\d)$/);
+    const block = blockMatch ? Math.max(1, Math.min(6, parseInt(blockMatch[1]!, 10))) : 1;
+    const index = blockMatch ? Math.max(1, Math.min(5, parseInt(blockMatch[2]!, 10))) : 1;
+    const def = {
+      id: rosterId,
+      name: custom.name,
+      block,
+      index,
+      difficulty: custom.difficulty,
+      effects: { ...custom.effects },
+      waves: [...custom.waves],
+    };
+    const json = JSON.stringify(def, null, 2);
+    void navigator.clipboard?.writeText(json).catch(() => { /* ignore */ });
+    // Also dump to console so debug users can inspect even without
+    // clipboard permission.
+    // eslint-disable-next-line no-console
+    console.log("[editor] published:", json);
+    window.alert("Challenge definition copied to clipboard (and logged to console).");
+  }
+
   private renderUnlockShop(): void {
     const price = this.unlockProduct?.displayPrice;
     const priceLine = price ? `<span class="unlock-shop-price">${escapeHtml(price)}</span>` : "";
@@ -1378,6 +3295,7 @@ export class Game {
         <ul class="unlock-shop-list">
           <li><span class="unlock-shop-bullet">★</span><span>Open every challenge in all 6 blocks immediately</span></li>
           <li><span class="unlock-shop-bullet">★</span><span>Unlock <strong>PAINFUL</strong> difficulty</span></li>
+          <li><span class="unlock-shop-bullet">★</span><span>Build and play your own challenges in the <strong>Challenge Editor</strong></span></li>
           <li><span class="unlock-shop-bullet">★</span><span>One-time purchase, restores across devices</span></li>
         </ul>
         <div class="unlock-shop-actions">
@@ -1541,6 +3459,46 @@ export class Game {
       sections.push(html);
       if (idx === lastUnlockedIdx && iapHtml) sections.push(iapHtml);
     });
+    // Player-authored "My Challenges" section appended after the roster
+    // and IAP banner. Shown once the IAP is owned (or in debug mode),
+    // since the editor is gated behind that — no point showing an empty
+    // section to players who can't author challenges yet.
+    if (progress.purchasedUnlock || this.debugEnabled) {
+      const customs = listCustomChallenges();
+      if (customs.length > 0) {
+        const customCards = customs.map((c) => {
+          const tint = difficultyTint(c.difficulty);
+          const hexes: string[] = [];
+          for (let i = 0; i < c.difficulty; i++) {
+            hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
+          }
+          const starsHtml = `<div class="challenge-card-stars">${
+            [0, 1, 2].map((i) =>
+              `<span class="challenge-card-star${i < c.starsEarned ? " earned" : ""}">★</span>`,
+            ).join("")
+          }</div>`;
+          const bestText = c.best > 0 ? `Best: ${c.best}` : "Best: —";
+          return `
+            <button type="button" class="challenge-card challenge-card-custom" data-custom-challenge-id="${escapeHtml(c.id)}">
+              <span class="challenge-card-id">CUSTOM</span>
+              <span class="challenge-card-name">${escapeHtml(c.name)}</span>
+              <div class="challenge-card-hexes">${hexes.join("")}</div>
+              ${starsHtml}
+              <span class="challenge-card-best">${bestText}</span>
+            </button>
+          `;
+        }).join("");
+        sections.push(`
+          <section class="challenge-block">
+            <header class="challenge-block-header">
+              <span>My Challenges</span>
+              <span class="progress">${customs.length}</span>
+            </header>
+            <div class="challenge-cards challenge-cards-custom">${customCards}</div>
+          </section>
+        `);
+      }
+    }
     this.overlay.innerHTML = `
       <div class="challenge-select">
         <div class="challenge-select-top">
@@ -1581,10 +3539,14 @@ export class Game {
   private renderChallengeComplete(newlyUnlocked: number[] = []): void {
     const def = this.activeChallenge;
     if (!def) return;
+    const isCustom = isCustomChallenge(def);
+    const customRecord = isCustom ? getCustomChallenge(def.id) : undefined;
     const progress = loadChallengeProgress();
-    const best = progress.best[def.id] ?? 0;
+    const best = isCustom ? (customRecord?.best ?? 0) : (progress.best[def.id] ?? 0);
     const newBest = this.score >= best;
-    const thresholds = computeStarThresholds(def);
+    const thresholds = isCustom && customRecord
+      ? customRecord.stars
+      : computeStarThresholds(def);
     const earned = awardStars(this.score, thresholds);
     const starHtml: string[] = [];
     for (let i = 0; i < 3; i++) {
@@ -1623,10 +3585,11 @@ export class Game {
           )
           .join("")
       : "";
+    const idLabel = isCustom ? "CUSTOM" : def.id;
     this.overlay.innerHTML = `
       <div class="challenge-intro">
         <p class="challenge-complete-banner">Challenge Complete</p>
-        <span class="id">${def.id}</span>
+        <span class="id">${escapeHtml(idLabel)}</span>
         <h1>${escapeHtml(def.name)}</h1>
         <div class="challenge-stars-big">${starHtml.join("")}</div>
         <div class="challenge-score-bar">
@@ -1735,7 +3698,7 @@ export class Game {
       localStorage.removeItem(ROTATE_TUTORIAL_STORAGE_KEY);
       localStorage.removeItem(CONTROLS_HINT_STORAGE_KEY);
     } catch { /* ignore */ }
-    const original = btn.textContent ?? "Reset hints";
+    const original = btn.textContent ?? "Hints";
     btn.textContent = "Reset!";
     btn.disabled = true;
     setTimeout(() => {
@@ -1747,13 +3710,16 @@ export class Game {
   private quitToMenu(): void {
     if (this.state !== "paused") return;
     const wasChallenge = this.gameMode === "challenge";
+    const wasCustom = wasChallenge && this.activeChallenge !== null && isCustomChallenge(this.activeChallenge);
     this.resetRunState(0);
     this.setGameMode("endless");
     this.activeChallenge = null;
     this.effectOverrides = null;
     this.setSliderEnabled(true);
     stopMusic();
-    if (wasChallenge) {
+    if (wasCustom) {
+      this.returnFromCustomRun();
+    } else if (wasChallenge) {
       this.openChallengeSelect();
     } else {
       this.state = "menu";
@@ -1798,6 +3764,14 @@ export class Game {
     this.floaters = [];
     this.sideWarnings = [];
     this.shieldTimer = 0;
+    this.tinyTimer = 0;
+    this.tinyMax = 1;
+    this.bigTimer = 0;
+    this.bigMax = 1;
+    this.bigLevel = 0;
+    this.bigBonus = 0;
+    this.playerHexScale = 1;
+    this.playerHexScaleTarget = 1;
     this.rotateTutorialActive = false;
     this.rotateTutorialTimer = 0;
     this.rotateTutorialStartAngle = 0;
@@ -1999,7 +3973,8 @@ export class Game {
       this.state === "menu" ||
       this.state === "challengeSelect" ||
       this.state === "challengeIntro" ||
-      this.state === "unlockShop"
+      this.state === "unlockShop" ||
+      this.state === "blocksGuide"
     ) {
       // Pre-game test drive: accept input + step physics so the player can
       // try out the controls. No spawning, no scoring, no wave system.
@@ -2011,6 +3986,17 @@ export class Game {
         this.player.clampBoundsX(r.left, r.right);
       }
       this.player.update(dt);
+      return;
+    }
+
+    // Editor wave-dialog preview: simulate the working wave on the
+    // canvas behind the dialog. No player, no scoring; the loop just
+    // restarts when the wave's end conditions fire.
+    if ((this.state === "editorEdit" || this.state === "editorHome") && this.editorDialogPreview) {
+      Engine.update(this.engine, Math.min(dt * 1000, 1000 / 30));
+      this.cleanupOffscreenBodies();
+      this.tickWalls(dt);
+      this.tickWavePreview(dt);
       return;
     }
 
@@ -2050,37 +4036,25 @@ export class Game {
       }
     }
 
-    // Pinch interpolates toward target each real-frame.
-    const wallLerp = 1 - Math.exp(-dt * 4);
-    this.wall.amount += (this.wall.amountTarget - this.wall.amount) * wallLerp;
-    if (this.wall.kind === "zigzag") this.wall.phase += dt;
-    if (this.wall.warningT > 0) {
-      this.wall.warningT = Math.max(0, this.wall.warningT - dt);
-      // Warning just expired — start lerping the wall in.
-      if (this.wall.warningT === 0 && this.wall.postWarningAmount > 0) {
-        this.wall.amountTarget = this.wall.postWarningAmount;
-        this.wall.postWarningAmount = 0;
+    // Tiny / big size effects tick in wall-clock time, parallel to the
+    // slow/fast time effect. Tiny just expires silently (size restores).
+    // Big banks the accumulated bonus pool when the timer runs out clean.
+    if (this.tinyTimer > 0) {
+      this.tinyTimer = Math.max(0, this.tinyTimer - dt);
+      if (this.tinyTimer === 0) this.updatePlayerScaleTarget();
+    }
+    if (this.bigTimer > 0) {
+      this.bigTimer = Math.max(0, this.bigTimer - dt);
+      if (this.bigTimer === 0) {
+        this.awardBigBonus();
+        this.bigLevel = 0;
+        this.bigMax = 1;
+        this.updatePlayerScaleTarget();
       }
     }
-    if (this.wall.pushHoldT > 0) {
-      this.wall.pushHoldT = Math.max(0, this.wall.pushHoldT - dt);
-      if (this.wall.pushHoldT === 0) this.wall.pushDir = 0;
-    }
-    // Once the current wall has retracted, either apply the queued
-    // kind (which kicks off the warning + lerp-in cycle) or settle
-    // back to "none".
-    if (this.wall.amount < 0.01 && this.wall.amountTarget === 0 && this.wall.warningT === 0) {
-      if (this.wall.pendingKind !== null) {
-        this.wall.kind = this.wall.pendingKind;
-        this.wall.amp = this.wall.pendingAmp;
-        this.wall.period = this.wall.pendingPeriod;
-        this.wall.warningT = 1.0;
-        this.wall.warningKind = this.wall.pendingKind;
-        this.wall.pendingKind = null;
-      } else if (this.wall.kind !== "none" && this.wall.postWarningAmount === 0) {
-        this.wall.kind = "none";
-      }
-    }
+    this.animatePlayerScale(dt);
+
+    this.tickWalls(dt);
 
     // ROTATE tutorial: tick its timer and dismiss when the player has
     // turned the blob enough or 5 seconds have passed.
@@ -2203,6 +4177,9 @@ export class Game {
         this.score += 1;
         if (this.timeEffect === "fast") {
           this.fastBonus += this.fastMultiplier() - 1;
+        }
+        if (this.bigTimer > 0) {
+          this.bigBonus += this.bigMultiplier() - 1;
         }
         this.comboHits = 0;
         this.scoreEl.textContent = String(this.score);
@@ -2421,6 +4398,69 @@ export class Game {
     this.timeEffect = null;
     this.timeEffectTimer = 0;
     this.timeScale = 1;
+  }
+
+  private awardBigBonus(): void {
+    if (this.bigBonus <= 0) return;
+    const banked = this.bigBonus;
+    this.score += banked;
+    this.scoreEl.textContent = String(this.score);
+    this.checkScoreMilestones();
+    const p = this.fastBonusHudPos();
+    this.spawnFloater(
+      `+${banked}`,
+      p.x,
+      p.y,
+      "#dab8ff",
+      "rgba(180, 100, 255, 0.95)",
+      {
+        vy: 0,
+        lifetime: 1.8,
+        fontSize: Math.max(56, Math.round(this.hexSize * 3.2)),
+        grand: true,
+        peakScale: 1.6,
+      },
+    );
+    this.bigBonus = 0;
+  }
+
+  // Player took a blue-cluster hit while big was active. Same forfeit
+  // pattern as fast: scatter a red "lost" pop, end the effect, reset
+  // pool + level so the next pickup starts fresh at 3X.
+  private loseBigBonus(): void {
+    if (this.bigTimer <= 0) return;
+    const lost = this.bigBonus;
+    const p = this.fastBonusHudPos();
+    if (lost > 0) {
+      this.spawnFloater(
+        `-${lost}`,
+        p.x,
+        p.y,
+        "#ffb0b0",
+        "rgba(255, 80, 80, 0.95)",
+        { vy: 60, vx: 0, lifetime: 1.0, shake: true },
+      );
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2 + Math.random() * 0.4;
+        this.spawnFloater(
+          `-${Math.max(1, Math.round(lost / 5))}`,
+          p.x,
+          p.y,
+          "#ff8a8a",
+          "rgba(255, 70, 70, 0.95)",
+          {
+            vx: Math.cos(a) * 180,
+            vy: Math.sin(a) * 180,
+            lifetime: 0.7,
+          },
+        );
+      }
+    }
+    this.bigBonus = 0;
+    this.bigLevel = 0;
+    this.bigTimer = 0;
+    this.bigMax = 1;
+    this.updatePlayerScaleTarget();
   }
 
   private spawnFloater(
@@ -2699,6 +4739,10 @@ export class Game {
         this.handleShieldContact(cluster);
       } else if (cluster.kind === "drone") {
         this.handleDroneContact(cluster);
+      } else if (cluster.kind === "tiny") {
+        this.handleTinyContact(cluster);
+      } else if (cluster.kind === "big") {
+        this.handleBigContact(cluster);
       } else {
         // slow / fast power-up: activate the time effect, scatter the blob
         // into debris, and clear combo (helpful pickup).
@@ -2743,8 +4787,8 @@ export class Game {
       "SHIELD",
       center.x,
       center.y,
-      "#dff2ff",
-      "rgba(120, 220, 255, 0.95)",
+      "#f0f0f0",
+      "rgba(220, 220, 220, 0.95)",
     );
     this.scatterPickupDebris(cluster);
     cluster.alive = false;
@@ -2761,6 +4805,61 @@ export class Game {
       center.y,
       "#eedfff",
       "rgba(210, 170, 255, 0.95)",
+    );
+    this.scatterPickupDebris(cluster);
+    cluster.alive = false;
+    this.comboHits = 0;
+  }
+
+  private handleTinyContact(cluster: FallingCluster): void {
+    playSfx("shield");
+    const center = cluster.body.position;
+    if (this.tinyTimer > 0) {
+      // Re-hit while still tiny: bank the small bonus and refresh the
+      // duration. No further size change (stays at TINY_PLAYER_SCALE).
+      this.score += TINY_REHIT_BONUS;
+      this.scoreEl.textContent = String(this.score);
+      this.checkScoreMilestones();
+      this.spawnFloater(
+        `+${TINY_REHIT_BONUS}`,
+        center.x,
+        center.y,
+        "#cbd9ff",
+        "rgba(90, 130, 255, 0.95)",
+      );
+    } else {
+      this.spawnFloater(
+        "TINY",
+        center.x,
+        center.y,
+        "#cbd9ff",
+        "rgba(90, 130, 255, 0.95)",
+      );
+    }
+    const dur = this.tinyDuration();
+    this.tinyTimer = dur;
+    this.tinyMax = dur;
+    this.updatePlayerScaleTarget();
+    this.scatterPickupDebris(cluster);
+    cluster.alive = false;
+    this.comboHits = 0;
+  }
+
+  private handleBigContact(cluster: FallingCluster): void {
+    playSfx("fast_up");
+    this.bigLevel += 1;
+    const dur = this.bigDuration();
+    this.bigTimer = dur;
+    this.bigMax = dur;
+    this.updatePlayerScaleTarget();
+    const mul = this.bigMultiplier();
+    const center = cluster.body.position;
+    this.spawnFloater(
+      `${mul}X`,
+      center.x,
+      center.y,
+      "#dab8ff",
+      "rgba(180, 100, 255, 0.95)",
     );
     this.scatterPickupDebris(cluster);
     cluster.alive = false;
@@ -2979,9 +5078,9 @@ export class Game {
     // Soft fill.
     ctx.globalCompositeOperation = "lighter";
     const fill = ctx.createRadialGradient(com.x, com.y, 0, com.x, com.y, radius);
-    fill.addColorStop(0, "rgba(120, 220, 255, 0)");
-    fill.addColorStop(0.7, `rgba(120, 220, 255, ${0.05 + pulse * 0.05})`);
-    fill.addColorStop(1, `rgba(120, 220, 255, ${0.18 + pulse * 0.12})`);
+    fill.addColorStop(0, "rgba(220, 220, 220, 0)");
+    fill.addColorStop(0.7, `rgba(220, 220, 220, ${0.05 + pulse * 0.05})`);
+    fill.addColorStop(1, `rgba(220, 220, 220, ${0.18 + pulse * 0.12})`);
     ctx.fillStyle = fill;
     ctx.beginPath();
     ctx.arc(com.x, com.y, radius, 0, Math.PI * 2);
@@ -2990,13 +5089,13 @@ export class Game {
 
     // Crisp ring + countdown arc.
     ctx.save();
-    ctx.strokeStyle = `rgba(170, 230, 255, ${0.55 + pulse * 0.25})`;
+    ctx.strokeStyle = `rgba(230, 230, 230, ${0.55 + pulse * 0.25})`;
     ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.arc(com.x, com.y, radius, 0, Math.PI * 2);
     ctx.stroke();
 
-    ctx.strokeStyle = "rgba(220, 240, 255, 0.95)";
+    ctx.strokeStyle = "rgba(245, 245, 245, 0.95)";
     ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.arc(com.x, com.y, radius, -Math.PI / 2, -Math.PI / 2 + t * Math.PI * 2);
@@ -3041,9 +5140,11 @@ export class Game {
       setTimeout(() => playSfx("impact"), i * 45);
     }
 
-    // A normal-cluster hit while fast is active vaporises the accumulated
-    // bonus pool — scatter it as red fragments and end the effect.
+    // A normal-cluster hit while fast or big is active vaporises the
+    // accumulated bonus pool(s) — scatter them as red fragments and end
+    // the effect(s). Fast and big bank/forfeit independently.
     this.loseFastBonus();
+    this.loseBigBonus();
 
     // Snapshot pre-hit size so the lose check only counts hits taken while
     // already in the danger zone. Otherwise a fast 5→6→7 combo would end
@@ -3383,6 +5484,9 @@ export class Game {
     if (this.timeEffect === "fast") {
       this.fastBonus += COIN_SCORE_BONUS * (this.fastMultiplier() - 1);
     }
+    if (this.bigTimer > 0) {
+      this.bigBonus += COIN_SCORE_BONUS * (this.bigMultiplier() - 1);
+    }
     this.checkScoreMilestones();
     const center = cluster.body.position;
     this.spawnFloater(`+${COIN_SCORE_BONUS}`, center.x, center.y, "#ffe28a", "rgba(255, 175, 70, 0.95)");
@@ -3546,18 +5650,26 @@ export class Game {
       const stickyEnd = fastEnd + STICKY_SPAWN_CHANCE * cfg.stickyMul;
       const shieldEnd = stickyEnd + SHIELD_SPAWN_CHANCE * cfg.shieldMul;
       const droneEnd = shieldEnd + DRONE_SPAWN_CHANCE * cfg.droneMul;
+      const tinyEnd = droneEnd + TINY_SPAWN_CHANCE * cfg.tinyMul;
+      const bigEnd = tinyEnd + BIG_SPAWN_CHANCE * cfg.bigMul;
+      // Each helpful kind owns its own score gate. Slow/fast/sticky/shield/
+      // drone share the global POWERUP_MIN_SCORE floor; tiny/big honour
+      // only their per-difficulty gate so hard can let them spawn from
+      // score 0 without dragging the rest of the powerups in early.
       if (r < coinEnd) {
         kind = "coin";
-      } else if (this.score >= POWERUP_MIN_SCORE) {
-        if (r < slowEnd) kind = "slow";
-        else if (r < fastEnd) kind = "fast";
-        else if (r < stickyEnd && this.score >= STICKY_MIN_SCORE) kind = "sticky";
-        else if (r < shieldEnd && this.score >= SHIELD_MIN_SCORE) kind = "shield";
-        else if (r < droneEnd && this.score >= DRONE_MIN_SCORE) kind = "drone";
-      }
+      } else if (r < slowEnd && this.score >= POWERUP_MIN_SCORE) kind = "slow";
+      else if (r < fastEnd && this.score >= POWERUP_MIN_SCORE) kind = "fast";
+      else if (r < stickyEnd && this.score >= STICKY_MIN_SCORE) kind = "sticky";
+      else if (r < shieldEnd && this.score >= SHIELD_MIN_SCORE) kind = "shield";
+      else if (r < droneEnd && this.score >= DRONE_MIN_SCORE) kind = "drone";
+      else if (r < tinyEnd && this.score >= (cfg.tinyMinScore ?? TINY_MIN_SCORE)) kind = "tiny";
+      else if (r < bigEnd && this.score >= (cfg.bigMinScore ?? BIG_MIN_SCORE)) kind = "big";
     }
 
     // Coin / shield / drone pickups and swarm hexes are always single-cell.
+    // Tiny / big drop as 2-5 cell polyhexes so they read as "real" blocks
+    // the player has to dodge into rather than as small pickups.
     const shape: Shape =
       kind === "coin" ||
       kind === "shield" ||
@@ -3682,11 +5794,12 @@ export class Game {
     this.resize();
   }
 
-  startChallenge(def: ChallengeDef): void {
+  startChallenge(def: ChallengeDef, opts?: { seed?: number; startWaveIdx?: number }): void {
     this.setGameMode("challenge");
     this.activeChallenge = def;
     this.effectOverrides = def.effects ?? null;
-    this.challengeWaveIdx = 0;
+    const startIdx = Math.max(0, Math.min(def.waves.length - 1, opts?.startWaveIdx ?? 0));
+    this.challengeWaveIdx = startIdx;
     this.challengeSlotIdx = 0;
     this.challengeProbCount = 0;
     this.challengeWaveTimer = 0;
@@ -3695,10 +5808,11 @@ export class Game {
     this.challengeFinishingHold = 0;
     this.progress = 0;
     this.progressDisplayed = 0;
-    // Seed the spawn-side RNG from the challenge id so replays produce
-    // the same wave sequence (shapes, sizes, kind dispatches, side-entry
-    // direction, column picks). Endless mode keeps Math.random.
-    this.rng = mulberry32(hashSeed(def.id));
+    // Seed the spawn-side RNG. Roster challenges hash their ID; custom
+    // challenges pass an explicit numeric seed in opts so the editor's
+    // seed input fully controls determinism. Endless mode keeps Math.random.
+    const seed = typeof opts?.seed === "number" ? (opts.seed >>> 0) : hashSeed(def.id);
+    this.rng = mulberry32(seed);
     this.beginChallengeWave();
     trackChallengeStart(def.block);
   }
@@ -3987,6 +6101,28 @@ export class Game {
       "rgba(120, 255, 170, 0.95)",
     );
 
+    // Custom challenges save into hexrain.customChallenges.v1 (their own
+    // best/stars), bypassing the roster progress key entirely. Achievement
+    // checks only fire for roster challenges — earning a Block badge from
+    // a player-authored level would be misleading.
+    if (isCustomChallenge(def)) {
+      // For custom challenges the per-challenge stars come from the
+      // user-editable thresholds rather than computeStarThresholds.
+      const custom = getCustomChallenge(def.id);
+      let stars: 0 | 1 | 2 | 3 = 0;
+      if (custom) {
+        if (this.score >= custom.stars.three) stars = 3;
+        else if (this.score >= custom.stars.two) stars = 2;
+        else if (this.score >= custom.stars.one) stars = 1;
+      }
+      saveCustomChallengeRun(def.id, this.score, 1, stars);
+      this.state = "challengeComplete";
+      this.setPauseButtonVisible(false);
+      stopMusic();
+      this.renderChallengeComplete([]);
+      return;
+    }
+
     const beforeUnlocked = new Set(loadChallengeProgress().unlockedBlocks);
     const thresholds = computeStarThresholds(def);
     const stars = awardStars(this.score, thresholds);
@@ -4022,6 +6158,10 @@ export class Game {
   private endChallengeRun(): void {
     const def = this.activeChallenge;
     if (!def) return;
+    if (isCustomChallenge(def)) {
+      saveCustomChallengeRun(def.id, this.score, this.progress, 0);
+      return;
+    }
     saveChallengeBest(def.id, this.score, this.progress);
   }
 
@@ -4249,6 +6389,41 @@ export class Game {
   //   3. Otherwise: retract the current wall first, queue the new kind,
   //      then once retraction completes the update loop fires a 1-second
   //      warning flash before the new wall starts lerping in.
+  // Per-frame wall lerp + queued-kind transition. Shared by the live
+  // play loop and the editor wave-preview loop so wall changes during
+  // preview animate the same way they do in-game.
+  private tickWalls(dt: number): void {
+    const wallLerp = 1 - Math.exp(-dt * 4);
+    this.wall.amount += (this.wall.amountTarget - this.wall.amount) * wallLerp;
+    if (this.wall.kind === "zigzag") this.wall.phase += dt;
+    if (this.wall.warningT > 0) {
+      this.wall.warningT = Math.max(0, this.wall.warningT - dt);
+      if (this.wall.warningT === 0 && this.wall.postWarningAmount > 0) {
+        this.wall.amountTarget = this.wall.postWarningAmount;
+        this.wall.postWarningAmount = 0;
+      }
+    }
+    if (this.wall.pushHoldT > 0) {
+      this.wall.pushHoldT = Math.max(0, this.wall.pushHoldT - dt);
+      if (this.wall.pushHoldT === 0) this.wall.pushDir = 0;
+    }
+    // Once the current wall has retracted, either apply the queued
+    // kind (which kicks off the warning + lerp-in cycle) or settle
+    // back to "none".
+    if (this.wall.amount < 0.01 && this.wall.amountTarget === 0 && this.wall.warningT === 0) {
+      if (this.wall.pendingKind !== null) {
+        this.wall.kind = this.wall.pendingKind;
+        this.wall.amp = this.wall.pendingAmp;
+        this.wall.period = this.wall.pendingPeriod;
+        this.wall.warningT = 1.0;
+        this.wall.warningKind = this.wall.pendingKind;
+        this.wall.pendingKind = null;
+      } else if (this.wall.kind !== "none" && this.wall.postWarningAmount === 0) {
+        this.wall.kind = "none";
+      }
+    }
+  }
+
   private setWall(kind: WallKind, amount: number, ampPeriod?: { amp: number; period: number }): void {
     const amp = ampPeriod?.amp ?? 0.18;
     const period = ampPeriod?.period ?? 1.4;
@@ -4495,6 +6670,38 @@ export class Game {
     const c = this.cfg();
     return this.effectOverrides?.droneDuration ?? DRONE_DURATION * (c.droneDurationMul ?? c.effectDurationMul);
   }
+  private tinyDuration(): number {
+    const c = this.cfg();
+    return this.effectOverrides?.tinyDuration ?? TINY_DURATION * (c.tinyDurationMul ?? c.effectDurationMul);
+  }
+  private bigDuration(): number {
+    const c = this.cfg();
+    return this.effectOverrides?.bigDuration ?? BIG_DURATION * (c.bigDurationMul ?? c.effectDurationMul);
+  }
+  private bigSizeScale(): number {
+    if (this.bigLevel <= 0) return 1;
+    return BIG_SIZE_BASE + (this.bigLevel - 1) * BIG_SIZE_STEP;
+  }
+  private bigMultiplier(): number {
+    if (this.bigLevel <= 0) return 1;
+    return BIG_MULTIPLIER_BASE + (this.bigLevel - 1) * BIG_MULTIPLIER_STEP;
+  }
+  private updatePlayerScaleTarget(): void {
+    const tinyFactor = this.tinyTimer > 0 ? TINY_PLAYER_SCALE : 1;
+    const bigFactor = this.bigTimer > 0 ? this.bigSizeScale() : 1;
+    this.playerHexScaleTarget = tinyFactor * bigFactor;
+  }
+  private animatePlayerScale(dt: number): void {
+    const target = this.playerHexScaleTarget;
+    const k = 1 - Math.exp(-dt * PLAYER_SCALE_RATE);
+    const next = this.playerHexScale + (target - this.playerHexScale) * k;
+    // Snap when essentially at target to avoid endless tiny rebuilds.
+    const snapped = Math.abs(next - target) < 0.002 ? target : next;
+    if (Math.abs(snapped - this.playerHexScale) >= 0.002 || snapped !== this.playerHexScale) {
+      this.playerHexScale = snapped;
+      this.player.setHexSize(this.hexSize * this.playerHexScale);
+    }
+  }
 
   private wallInsetAt(yWorld?: number): { left: number; right: number } {
     if (this.wall.amount < 0.01) return { left: 0, right: 0 };
@@ -4710,8 +6917,9 @@ export class Game {
 
     // Re-center / re-size the player after layout. setCenter places the CoM
     // at this y; the next clampToRail in the update loop will pull it up so
-    // the bounds touch the rail.
-    this.player.setHexSize(this.hexSize);
+    // the bounds touch the rail. Preserve any active tiny/big scale so a
+    // resize mid-effect doesn't pop the player back to full size.
+    this.player.setHexSize(this.hexSize * this.playerHexScale);
     this.player.setCenter(this.boardOriginX + this.boardWidth / 2, this.playerY - this.hexSize);
 
     // Regenerate starfield to fit the new canvas dimensions. Three planes
@@ -4870,7 +7078,9 @@ export class Game {
 
     // Skip drawing the player after game-over — the body has been removed
     // from the world and replaced with debris that's already animating.
-    if (this.state !== "gameover") {
+    // Also skip during the editor wave-preview loop (no player exists in
+    // that simulation, just clusters falling).
+    if (this.state !== "gameover" && !this.editorDialogPreview) {
       this.drawShield();
       this.player.draw(ctx);
       this.drawSticksInFlight();
@@ -4896,38 +7106,232 @@ export class Game {
     // the player can see the multiplier and the running bonus pool grow.
     // Skip while game-over so a dead-during-slow-mo run doesn't leave the
     // bar lingering above the GAME OVER screen.
-    if (this.timeEffect !== null && this.state !== "gameover") {
-      const frac = Math.max(0, this.timeEffectTimer / this.timeEffectMax);
+    if (this.state !== "gameover") {
       const w = this.boardWidth * 0.95;
       const x0 = this.boardOriginX + (this.boardWidth - w) / 2;
-      const y0 = this.boardOriginY + this.topInset + 6;
-      const color = this.timeEffect === "slow" ? "#ffd76b" : "#7fe89c";
-      ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
-      ctx.fillRect(x0, y0, w, 6);
-      ctx.fillStyle = color;
-      ctx.fillRect(x0, y0, w * frac, 6);
+      let yRow = this.boardOriginY + this.topInset + 6;
+      const cx = this.boardOriginX + this.boardWidth / 2;
+      const fontSize = Math.max(20, Math.round(this.hexSize * 1.05));
 
-      if (this.timeEffect === "fast") {
-        const cx = this.boardOriginX + this.boardWidth / 2;
-        const fontSize = Math.max(20, Math.round(this.hexSize * 1.05));
-        ctx.save();
-        ctx.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "top";
-        ctx.shadowColor = "rgba(120, 255, 170, 0.95)";
-        ctx.shadowBlur = 12;
-        ctx.fillStyle = "#c8ffd5";
-        const label = `${this.fastMultiplier()}X · +${this.fastBonus}`;
-        ctx.fillText(label, cx, y0 + 12);
-        ctx.shadowBlur = 0;
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = "rgba(0, 60, 20, 0.85)";
-        ctx.strokeText(label, cx, y0 + 12);
-        ctx.restore();
+      const drawBar = (
+        frac: number,
+        color: string,
+        label: string | null,
+        labelGlow: string,
+        labelFill: string,
+        labelStroke: string,
+      ) => {
+        ctx.fillStyle = "rgba(255, 255, 255, 0.08)";
+        ctx.fillRect(x0, yRow, w, 6);
+        ctx.fillStyle = color;
+        ctx.fillRect(x0, yRow, w * Math.max(0, Math.min(1, frac)), 6);
+        if (label) {
+          ctx.save();
+          ctx.font = `900 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+          ctx.shadowColor = labelGlow;
+          ctx.shadowBlur = 12;
+          ctx.fillStyle = labelFill;
+          ctx.fillText(label, cx, yRow + 12);
+          ctx.shadowBlur = 0;
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = labelStroke;
+          ctx.strokeText(label, cx, yRow + 12);
+          ctx.restore();
+          yRow += 12 + fontSize + 4;
+        } else {
+          yRow += 12;
+        }
+      };
+
+      if (this.timeEffect !== null) {
+        const frac = this.timeEffectTimer / this.timeEffectMax;
+        const color = this.timeEffect === "slow" ? "#ffd76b" : "#7fe89c";
+        const fastLabel =
+          this.timeEffect === "fast"
+            ? `${this.fastMultiplier()}X · +${this.fastBonus}`
+            : null;
+        drawBar(
+          frac,
+          color,
+          fastLabel,
+          "rgba(120, 255, 170, 0.95)",
+          "#c8ffd5",
+          "rgba(0, 60, 20, 0.85)",
+        );
+      }
+      if (this.bigTimer > 0) {
+        const frac = this.bigTimer / this.bigMax;
+        const label = `${this.bigMultiplier()}X · +${this.bigBonus}`;
+        drawBar(
+          frac,
+          "#9b3df0",
+          label,
+          "rgba(180, 100, 255, 0.95)",
+          "#dab8ff",
+          "rgba(40, 10, 80, 0.85)",
+        );
+      }
+      if (this.tinyTimer > 0) {
+        const frac = this.tinyTimer / this.tinyMax;
+        drawBar(
+          frac,
+          "#1ee0ff",
+          null,
+          "rgba(60, 230, 255, 0.95)",
+          "#c8fbff",
+          "rgba(0, 60, 80, 0.85)",
+        );
       }
     }
   }
 }
+
+// Help-text strings for editor form fields. Surfaced via small (i)
+// info buttons rendered next to each label by `helpTipHtml`. Keep
+// each line short — the popup is narrow.
+const FIELD_HELP: Record<string, string> = {
+  // Wave dialog (advanced + presets share keys where applicable).
+  sizeMin: "Smallest cluster size that can spawn (1 = single hex, 5 = giant blob).",
+  sizeMax: "Largest cluster size that can spawn.",
+  speed: "Cluster fall-speed multiplier. 1.0 = base, 2.0 = double speed.",
+  rate: "How many blocks fall per 10 seconds. Higher = denser wave.",
+  slotRate: "Seconds between slot-stream spawns (only for slot-pattern waves).",
+  count: "Maximum probabilistic spawns. Wave ends after this many. Blank = no cap.",
+  dur: "Hard time limit in seconds. Wave ends when timer expires. Blank = none.",
+  walls: "Wall configuration: pinch (red panels), zigzag (sinusoidal), narrow (tight corridor).",
+  wallAmp: "Amplitude of zigzag walls (0 = flat, 0.5 = max curve).",
+  wallPeriod: "Period of zigzag walls (higher = wider waves).",
+  safeCol: "Column kept clear of normal spawns. random = picks one each play, none = no enforcement.",
+  origin: "Where clusters enter from. top = above, topAngled = above with tilt, side = horizontal entry.",
+  dir: "Default tilt angle in radians applied to every spawn.",
+  pct: "Probability weight per cluster kind. Numbers are relative to each other.",
+  amp: "Amplitude of the zigzag walls (0 = flat, 0.5 = max curve).",
+  // Settings dialog.
+  difficulty: "Visual difficulty rating shown on the challenge card. 1 = easy, 5 = hardest.",
+  slowDuration: "Seconds of 0.5x time after picking up a SLOW block.",
+  fastDuration: "Seconds of 1.25x time + bonus pool after picking up a FAST block.",
+  shieldDuration: "Seconds of bubble protection after picking up a SHIELD block.",
+  droneDuration: "Seconds the drone sentinel stays active after pickup.",
+  starOne: "Score required for 1 star.",
+  starTwo: "Score required for 2 stars.",
+  starThree: "Score required for 3 stars.",
+  starsAuto: "Auto-suggest computes stars from your wave content. Adjust afterwards if you like.",
+  // Edit screen.
+  name: "Display name for your challenge (max 24 characters).",
+  seed: "RNG seed. The same seed produces the same cluster sequence on every replay.",
+};
+
+// Render a small (i) info button + hidden popup for a field. Click
+// toggles the popup. Empty string when the key has no help entry.
+function helpTipHtml(key: string, override?: string): string {
+  const text = override ?? FIELD_HELP[key];
+  if (!text) return "";
+  return `<span class="editor-help-wrap">
+    <button type="button" class="editor-help-btn" data-action="editor-toggle-help" aria-label="Help">i</button>
+    <span class="editor-help-text" hidden>${escapeHtml(text)}</span>
+  </span>`;
+}
+
+// Compose a DSL line from a ParsedWave. Inverse of parseWaveLine for
+// the editor — used when an always-visible control (count, dur, walls)
+// mutates the working line. Slots and weights are passed through; the
+// editor's mix lives in editorDialogPctValues and is applied at OK time
+// instead, so we omit `pct=` here to keep the working line clean.
+function composeWaveLine(w: ParsedWave): string {
+  const tokens: string[] = [];
+  if (w.sizeMin === w.sizeMax) tokens.push(`size=${w.sizeMin}`);
+  else tokens.push(`size=${w.sizeMin}-${w.sizeMax}`);
+  tokens.push(`speed=${w.baseSpeedMul}`);
+  tokens.push(`rate=${w.spawnInterval}`);
+  if (Math.abs(w.slotInterval - w.spawnInterval) > 0.001) {
+    tokens.push(`slotRate=${w.slotInterval}`);
+  }
+  if (w.countCap !== null) tokens.push(`count=${w.countCap}`);
+  if (w.durOverride !== null) tokens.push(`dur=${w.durOverride}`);
+  if (w.walls !== "none") {
+    tokens.push(`walls=${w.walls}`);
+    if (w.walls === "zigzag") {
+      tokens.push(`wallAmp=${w.wallAmp}`);
+      tokens.push(`wallPeriod=${w.wallPeriod}`);
+    }
+  }
+  if (w.safeCol === "none") tokens.push("safeCol=none");
+  else if (typeof w.safeCol === "number") tokens.push(`safeCol=${w.safeCol}`);
+  if (w.origin !== "top") tokens.push(`origin=${w.origin}`);
+  if (w.defaultDir !== 0) tokens.push(`dir=${w.defaultDir}`);
+  for (const s of w.slots) {
+    if (s === null) tokens.push("000");
+    else tokens.push(`${s.size}${s.col}${s.angleIdx}`);
+  }
+  return tokens.join(", ");
+}
+
+const WALL_CYCLE: WallKind[] = ["none", "pinch", "zigzag", "narrow"];
+const WALL_LABEL: Record<WallKind, string> = {
+  none: "No walls",
+  pinch: "Pinch",
+  zigzag: "Zigzag",
+  narrow: "Narrow",
+};
+
+// Validate a single wave line. Catches parse errors and the "does
+// nothing" case (no count, no slots, no dur+rate) — same rule as
+// validateChallenge in waveDsl.ts but per-line for the editor's
+// row-level warning badge.
+function checkWaveLine(line: string): { ok: true } | { ok: false; reason: string } {
+  let parsed: ParsedWave;
+  try {
+    parsed = parseWaveLine(line);
+  } catch (e) {
+    return { ok: false, reason: `Parse error: ${(e as Error).message}` };
+  }
+  const hasCount = parsed.countCap !== null && parsed.countCap > 0;
+  const hasSlots = parsed.slots.length > 0;
+  const probDisabledByZeroCount = parsed.countCap === 0;
+  const hasDur =
+    parsed.durOverride !== null &&
+    parsed.durOverride > 0 &&
+    parsed.spawnInterval > 0 &&
+    !probDisabledByZeroCount;
+  if (!hasCount && !hasSlots && !hasDur) {
+    return { ok: false, reason: "Wave does nothing — set a count, a duration, or a slot pattern." };
+  }
+  return { ok: true };
+}
+
+// Parse a wave DSL line and project its weights into a 7-key %-summing
+// map. Used when opening the wave dialog on an existing wave so the
+// cluster mix block reflects the wave's current weights.
+function parseLineToMix(line: string): Partial<Record<ClusterKind, number>> {
+  const KINDS: ClusterKind[] = ["normal", "sticky", "slow", "fast", "coin", "shield", "drone"];
+  const out: Partial<Record<ClusterKind, number>> = {};
+  for (const k of KINDS) out[k] = 0;
+  let parsed: ParsedWave | null = null;
+  try { parsed = parseWaveLine(line); } catch { /* fall through */ }
+  if (!parsed) {
+    out.normal = 100;
+    return out;
+  }
+  const weights = parsed.weights;
+  let sum = 0;
+  for (const k of KINDS) sum += weights[k] ?? 0;
+  if (sum === 0) {
+    out.normal = 100;
+    return out;
+  }
+  let rounded = 0;
+  for (const k of KINDS) {
+    const v = Math.round(((weights[k] ?? 0) / sum) * 100);
+    out[k] = v;
+    rounded += v;
+  }
+  // Dump rounding remainder onto normal so the row still totals 100.
+  out.normal = Math.max(0, (out.normal ?? 0) + 100 - rounded);
+  return out;
+}
+
 
 function escapeHtml(s: string): string {
   return s
@@ -4936,6 +7340,88 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+// Render a single block icon into the given canvas, mirroring the in-game
+// look so the BLOCKS guide stays visually consistent with the actual
+// clusters: hex outline for "normal", a glowing blob for the helpful
+// kinds, an ellipsoidal coin face for "coin".
+function drawBlockIcon(canvas: HTMLCanvasElement, kind: ClusterKind): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  const cx = w / 2;
+  const cy = h / 2;
+  const hexSize = Math.min(w, h) * 0.32;
+  ctx.clearRect(0, 0, w, h);
+
+  if (kind === "coin") {
+    const r = hexSize * 0.95;
+    const glowR = hexSize * 1.6;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+    halo.addColorStop(0, "rgba(255, 170, 70, 0.85)");
+    halo.addColorStop(0.5, "rgba(220, 130, 30, 0.45)");
+    halo.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 0, cx, cy, r);
+    grad.addColorStop(0, "#fff1c2");
+    grad.addColorStop(0.45, "#ffb255");
+    grad.addColorStop(1, "#a14e08");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 240, 200, 0.95)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    return;
+  }
+
+  if (kind === "normal") {
+    pathHex(ctx, cx, cy, hexSize);
+    const grad = ctx.createLinearGradient(0, cy - hexSize, 0, cy + hexSize);
+    grad.addColorStop(0, "#aac4ff");
+    grad.addColorStop(1, "#5b8bff");
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "#1c2348";
+    ctx.stroke();
+    return;
+  }
+
+  // Helpful kinds: same drawAsBlob recipe as cluster.ts.
+  const palette = blobPalette(kind);
+  const r = hexSize * 0.85;
+  const glowR = hexSize * 1.7;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+  halo.addColorStop(0, palette.haloInner);
+  halo.addColorStop(0.5, palette.haloMid);
+  halo.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  const core = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 0, cx, cy, r);
+  core.addColorStop(0, palette.coreLight);
+  core.addColorStop(1, palette.coreDark);
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
 }
 
 // Difficulty banding for the challenge-select hexes: 1-2 = green

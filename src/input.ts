@@ -25,9 +25,21 @@ export function bindInput(
   touchbar: HTMLElement,
   handler: InputHandler,
 ): () => void {
+  // Skip game keybindings when the user is typing in a form field —
+  // editor screens have name/seed inputs and dialog forms, and Q/E/Z/X
+  // double as rotate keys.
+  const isTextInputFocused = (): boolean => {
+    const el = document.activeElement as HTMLElement | null;
+    if (!el) return false;
+    const tag = el.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (el.isContentEditable) return true;
+    return false;
+  };
   const onKeyDown = (e: KeyboardEvent) => {
     const action = KEY_MAP[e.code];
     if (!action) return;
+    if (isTextInputFocused()) return;
     if (e.repeat) return;
     e.preventDefault();
     handler(action, true);
@@ -35,6 +47,7 @@ export function bindInput(
   const onKeyUp = (e: KeyboardEvent) => {
     const action = KEY_MAP[e.code];
     if (!action) return;
+    if (isTextInputFocused()) return;
     e.preventDefault();
     handler(action, false);
   };

@@ -101,7 +101,9 @@ export class FallingCluster {
       this.kind === "slow" ||
       this.kind === "fast" ||
       this.kind === "shield" ||
-      this.kind === "drone"
+      this.kind === "drone" ||
+      this.kind === "tiny" ||
+      this.kind === "big"
     );
   }
 
@@ -291,14 +293,7 @@ export class FallingCluster {
   }
 }
 
-interface BlobPalette {
-  haloInner: string;
-  haloMid: string;
-  coreLight: string;
-  coreDark: string;
-}
-
-function blobPalette(kind: ClusterKind): BlobPalette {
+export function blobPalette(kind: ClusterKind): BlobPalette {
   switch (kind) {
     case "sticky":
       return {
@@ -323,10 +318,10 @@ function blobPalette(kind: ClusterKind): BlobPalette {
       };
     case "shield":
       return {
-        haloInner: "rgba(120, 220, 255, 0.85)",
-        haloMid: "rgba(40, 160, 220, 0.45)",
-        coreLight: "#cdefff",
-        coreDark: "#0a4068",
+        haloInner: "rgba(220, 220, 220, 0.85)",
+        haloMid: "rgba(140, 140, 140, 0.45)",
+        coreLight: "#f0f0f0",
+        coreDark: "#3a3a3a",
       };
     case "drone":
       return {
@@ -334,6 +329,20 @@ function blobPalette(kind: ClusterKind): BlobPalette {
         haloMid: "rgba(140, 90, 220, 0.45)",
         coreLight: "#e6d6ff",
         coreDark: "#3c1a72",
+      };
+    case "tiny":
+      return {
+        haloInner: "rgba(90, 240, 255, 0.85)",
+        haloMid: "rgba(20, 180, 220, 0.45)",
+        coreLight: "#c8fbff",
+        coreDark: "#0a5060",
+      };
+    case "big":
+      return {
+        haloInner: "rgba(180, 100, 255, 0.85)",
+        haloMid: "rgba(100, 30, 180, 0.45)",
+        coreLight: "#dab8ff",
+        coreDark: "#2c0a5a",
       };
     default:
       return {
@@ -343,6 +352,13 @@ function blobPalette(kind: ClusterKind): BlobPalette {
         coreDark: "#1f3074",
       };
   }
+}
+
+export interface BlobPalette {
+  haloInner: string;
+  haloMid: string;
+  coreLight: string;
+  coreDark: string;
 }
 
 export interface HintPalette {
@@ -364,9 +380,13 @@ export function hintPalette(kind: ClusterKind): HintPalette {
     case "coin":
       return { fill: "#ffeac2", stroke: "rgba(70, 35, 0, 0.85)", glow: "rgba(255, 175, 70, 0.95)" };
     case "shield":
-      return { fill: "#dff2ff", stroke: "rgba(10, 60, 100, 0.85)", glow: "rgba(120, 220, 255, 0.95)" };
+      return { fill: "#f0f0f0", stroke: "rgba(40, 40, 40, 0.85)", glow: "rgba(220, 220, 220, 0.95)" };
     case "drone":
       return { fill: "#eedfff", stroke: "rgba(50, 20, 90, 0.85)", glow: "rgba(210, 170, 255, 0.95)" };
+    case "tiny":
+      return { fill: "#c8fbff", stroke: "rgba(0, 60, 80, 0.85)", glow: "rgba(60, 230, 255, 0.95)" };
+    case "big":
+      return { fill: "#e6cdff", stroke: "rgba(40, 10, 80, 0.85)", glow: "rgba(180, 100, 255, 0.95)" };
   }
 }
 
@@ -386,6 +406,10 @@ export function kindLabel(kind: ClusterKind): string {
       return "SHIELD";
     case "drone":
       return "DRONE";
+    case "tiny":
+      return "TINY";
+    case "big":
+      return "BIG";
   }
 }
 

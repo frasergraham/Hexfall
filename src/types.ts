@@ -7,7 +7,9 @@ export type ClusterKind =
   | "fast"
   | "coin"
   | "shield"
-  | "drone";
+  | "drone"
+  | "tiny"
+  | "big";
 
 export type Shape = Axial[];
 
@@ -19,7 +21,10 @@ export type GameState =
   | "paused"
   | "gameover"
   | "challengeComplete"
-  | "unlockShop";
+  | "unlockShop"
+  | "blocksGuide"
+  | "editorHome"
+  | "editorEdit";
 
 export type GameMode = "endless" | "challenge";
 

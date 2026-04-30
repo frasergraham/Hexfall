@@ -54,6 +54,8 @@ export interface ChallengeDefLike {
     fastDuration: number;
     shieldDuration: number;
     droneDuration: number;
+    tinyDuration: number;
+    bigDuration: number;
   }>;
   waves: string[];
 }
@@ -79,6 +81,8 @@ const VALID_CLUSTER_KINDS: ReadonlyArray<ClusterKind> = [
   "coin",
   "shield",
   "drone",
+  "tiny",
+  "big",
 ];
 
 const VALID_WALLS: ReadonlyArray<WallKind> = ["none", "pinch", "zigzag", "narrow"];

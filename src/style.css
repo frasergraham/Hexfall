@@ -704,6 +704,68 @@ body {
   text-decoration: line-through;
 }
 
+/* BLOCKS reference page — full-overlay scrollable list of every cluster
+   kind with a small in-game-style icon and a one-line description. */
+.blocks-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(560px, 100%);
+  max-height: 100%;
+  padding: 12px 12px 24px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.blocks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 4px;
+}
+
+.blocks-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(20, 24, 56, 0.55);
+  border: 1px solid #2a3057;
+  border-radius: 12px;
+}
+
+.blocks-icon {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+}
+
+.blocks-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+
+.blocks-name {
+  font-size: 13px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: #e8ecff;
+  text-align: left;
+}
+
+.blocks-desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #aab4dc;
+  text-align: left;
+}
+
 .play-btn {
   margin: 0;
   padding: 12px 0;
@@ -1534,4 +1596,1160 @@ body {
   font-size: 11px;
   color: #b9c0e8;
   margin-top: 2px;
+}
+
+/* === Challenge Editor === */
+
+.play-btn-lock {
+  margin-right: 6px;
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+.play-btn.locked {
+  color: #b9c0e8;
+}
+
+.editor-home,
+.editor-edit {
+  position: relative;
+  width: min(720px, 100%);
+  margin: 0 auto;
+  padding: 14px 12px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.editor-home-empty {
+  text-align: center;
+  color: #8a93cc;
+  font-size: 13px;
+  margin: 18px 0;
+}
+
+.editor-home-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.editor-home-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(120, 150, 220, 0.25);
+  border-radius: 10px;
+  background: rgba(20, 26, 50, 0.5);
+}
+
+/* Mirror the regular challenge-card layout (id pill + name + difficulty
+ * hexes + stars + best/% + date) so My Challenges reads consistently. */
+.editor-home-row-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: flex-start;
+}
+.editor-home-row-meta .challenge-card-id {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: #aab4dc;
+}
+.editor-home-row-meta .challenge-card-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #e8ecff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.editor-home-row-meta .challenge-card-hexes {
+  display: flex;
+  gap: 3px;
+}
+.editor-home-row-meta .challenge-card-stars {
+  display: flex;
+  gap: 2px;
+}
+.editor-home-row-meta .challenge-card-best {
+  font-size: 11px;
+  color: #aab4dc;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.editor-home-row-date {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #6b7299;
+}
+
+.editor-home-row-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.editor-row-btn {
+  appearance: none;
+  border: 1px solid rgba(120, 150, 220, 0.4);
+  background: rgba(40, 60, 110, 0.5);
+  color: #e8ecff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.editor-row-btn:hover { background: rgba(60, 90, 160, 0.6); }
+.editor-row-btn[disabled],
+.editor-row-btn.disabled { opacity: 0.45; cursor: not-allowed; }
+.editor-row-btn-play { background: rgba(60, 130, 90, 0.6); border-color: rgba(120, 220, 170, 0.5); }
+.editor-row-btn-edit { background: rgba(60, 90, 160, 0.6); }
+.editor-row-btn-delete { padding: 6px 9px; background: rgba(140, 50, 60, 0.5); border-color: rgba(220, 110, 130, 0.45); }
+.editor-row-btn-publish { background: rgba(120, 100, 50, 0.5); border-color: rgba(220, 200, 110, 0.45); }
+
+.editor-home-add {
+  appearance: none;
+  border: 2px dashed rgba(120, 150, 220, 0.45);
+  background: transparent;
+  color: #aab4dc;
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.editor-home-add:hover { background: rgba(120, 150, 220, 0.08); color: #e8ecff; }
+
+.editor-edit-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+/* Defaults for plain `.editor-field` (legacy uses inside dialogs etc).
+ * The edit-meta strip and dialogs override these via more specific
+ * selectors below. */
+.editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: #aab4dc;
+  flex: 1 1 auto;
+  min-width: 80px;
+}
+.editor-field-label {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+.editor-field-input,
+.editor-field input,
+.editor-field select {
+  appearance: none;
+  border: 1px solid rgba(120, 150, 220, 0.35);
+  background: rgba(13, 15, 28, 0.7);
+  color: #e8ecff;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Big PLAY button at the top of the edit screen — primary action.
+ * Centered horizontally; sits above the meta/options strip. */
+.editor-edit-play-big {
+  align-self: center;
+  margin: 4px auto 8px;
+  padding: 14px 28px;
+  font-size: 18px;
+  letter-spacing: 0.18em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: max-content;
+}
+/* Name / Seed inputs inside an edit-meta themed row. */
+.editor-meta-input {
+  appearance: none;
+  border: 1px solid rgba(120, 150, 220, 0.35);
+  background: rgba(13, 15, 28, 0.7);
+  color: #e8ecff;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  min-width: 0;
+  width: 180px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.editor-meta-input-seed {
+  width: 130px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 12px;
+  text-align: right;
+}
+
+/* OPTIONS button under name / seed — opens the settings dialog. */
+.editor-options-btn {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(120, 150, 220, 0.3);
+  background: rgba(20, 26, 50, 0.45);
+  color: #d1d8ff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  margin-top: 2px;
+}
+.editor-options-btn:hover {
+  background: rgba(40, 55, 90, 0.6);
+  color: #e8ecff;
+}
+.editor-options-icon {
+  font-size: 16px;
+}
+
+.editor-wave-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.editor-wave-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(120, 150, 220, 0.25);
+  border-radius: 10px;
+  background: rgba(20, 26, 50, 0.5);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.editor-wave-row.selected {
+  border-color: rgba(160, 230, 200, 0.7);
+  box-shadow: 0 0 0 1px rgba(120, 220, 180, 0.3) inset;
+}
+.editor-wave-row.dragging {
+  opacity: 0.7;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.45);
+}
+
+.editor-drag-handle {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #6b7299;
+  font-size: 14px;
+  letter-spacing: 1px;
+  padding: 8px 6px;
+  cursor: grab;
+  touch-action: none;
+}
+.editor-drag-handle:hover { color: #aab4dc; }
+.editor-drag-handle:active { cursor: grabbing; }
+
+/* Canvas-wrap occupies the bulk of the row. Holds the SPEED/RATE info
+ * strip above the thumbnail canvas plus an absolute-positioned warning
+ * badge in the corner if the wave is invalid. */
+.editor-wave-canvas-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.editor-wave-thumb {
+  width: 100%;
+  height: 64px;
+  display: block;
+  border: 1px solid rgba(120, 150, 220, 0.2);
+  border-radius: 6px;
+  background: rgba(8, 10, 22, 0.8);
+}
+
+/* Block-caps SPEED · RATE · ×N strip above the canvas thumbnail. */
+.editor-wave-info {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  font-size: 9px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  letter-spacing: 0.18em;
+  color: #d1d8ff;
+}
+.editor-wave-info-item {
+  white-space: nowrap;
+}
+.editor-wave-info-label {
+  color: #6b7299;
+  font-weight: 700;
+  margin-right: 4px;
+  text-transform: uppercase;
+}
+.editor-wave-info-error {
+  color: #ff8a98;
+  text-transform: none;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+.editor-wave-error {
+  color: #ff8a98;
+}
+
+.editor-add-wave {
+  appearance: none;
+  border: 2px dashed rgba(120, 150, 220, 0.45);
+  background: transparent;
+  color: #aab4dc;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  border-radius: 10px;
+  padding: 12px;
+  cursor: pointer;
+}
+.editor-add-wave:hover { background: rgba(120, 150, 220, 0.08); color: #e8ecff; }
+.editor-add-wave[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+/* === Editor dialogs === */
+
+.editor-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 22, 0.78);
+  z-index: 50;
+}
+
+.editor-dialog {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 51;
+  width: min(440px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  background: linear-gradient(180deg, rgba(28, 34, 60, 0.98), rgba(14, 18, 36, 0.98));
+  border: 1px solid rgba(120, 150, 220, 0.35);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.editor-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #e8ecff;
+}
+
+.editor-dialog-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+}
+.editor-dialog-body .editor-radio-group,
+.editor-dialog-body .editor-pct-group {
+  grid-column: 1 / -1;
+}
+
+/* Inside the advanced section of the wave dialog, lay each row out
+ * like the basic-view quick controls: label on the left, control on
+ * the right, themed background. Single-column so each row is a full
+ * horizontal strip. The settings dialog uses the same layout. */
+.editor-dialog-wave .editor-advanced .editor-dialog-body,
+.editor-dialog-settings .editor-dialog-body {
+  grid-template-columns: 1fr;
+}
+.editor-dialog-wave .editor-advanced .editor-field,
+.editor-dialog-settings .editor-field {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: rgba(20, 26, 50, 0.45);
+  border: 1px solid rgba(120, 150, 220, 0.2);
+  border-radius: 6px;
+}
+.editor-dialog-wave .editor-advanced .editor-field-label,
+.editor-dialog-settings .editor-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: #d1d8ff;
+  text-transform: uppercase;
+}
+.editor-dialog-wave .editor-advanced .editor-field input,
+.editor-dialog-wave .editor-advanced .editor-field select,
+.editor-dialog-settings .editor-field input,
+.editor-dialog-settings .editor-field select {
+  width: auto;
+  min-width: 90px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  text-align: right;
+}
+.editor-dialog-wave .editor-advanced .editor-radio-group,
+.editor-dialog-settings .editor-radio-group {
+  background: rgba(20, 26, 50, 0.45);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+}
+.editor-dialog-wave .editor-advanced .editor-radio-group legend,
+.editor-dialog-settings .editor-radio-group legend {
+  /* Render legend inline as a label (left column) instead of inset. */
+  float: left;
+  padding: 0;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+.editor-dialog-wave .editor-advanced .editor-radio,
+.editor-dialog-settings .editor-radio {
+  margin-right: 6px;
+}
+
+/* Settings dialog: difficulty + star-thresholds fieldsets get a
+ * stacked row look (legend full-width above the controls). */
+.editor-dialog-settings .editor-radio-group {
+  display: block;
+  padding: 8px 10px;
+}
+.editor-dialog-settings .editor-radio-group legend {
+  float: none;
+  display: block;
+  margin-bottom: 6px;
+}
+/* Star thresholds: stack each ★/★★/★★★ row vertically so the inputs
+ * fit the dialog width without horizontal scroll. */
+.editor-dialog-settings .editor-stars-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.editor-dialog-settings .editor-stars-row .editor-field {
+  background: rgba(13, 15, 28, 0.55);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+}
+
+/* Auto-suggest button under stars + difficulty fieldsets. */
+.editor-dialog-settings .editor-auto-btn {
+  margin-top: 6px;
+  width: 100%;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.editor-dialog-err {
+  background: rgba(220, 80, 90, 0.18);
+  border: 1px solid rgba(255, 130, 140, 0.5);
+  color: #ffd2d6;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.editor-dialog-note {
+  background: rgba(120, 100, 50, 0.2);
+  border: 1px solid rgba(220, 200, 110, 0.4);
+  color: #ffe6a6;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.editor-radio-group,
+.editor-pct-group {
+  border: 1px solid rgba(120, 150, 220, 0.25);
+  border-radius: 8px;
+  padding: 6px 10px 8px;
+  margin: 0;
+}
+.editor-radio-group legend,
+.editor-pct-group legend {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #aab4dc;
+  padding: 0 4px;
+}
+
+.editor-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 12px;
+  font-size: 12px;
+  color: #d1d8ff;
+}
+.editor-radio input { accent-color: #5b8bff; }
+
+.editor-pct-row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.editor-pct-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #aab4dc;
+  letter-spacing: 0.1em;
+}
+
+.editor-diff-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.editor-diff-btn {
+  appearance: none;
+  flex: 1;
+  border: 1px solid rgba(120, 150, 220, 0.35);
+  background: rgba(20, 26, 50, 0.5);
+  color: #aab4dc;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.editor-diff-btn.selected {
+  background: rgba(60, 130, 90, 0.6);
+  border-color: rgba(120, 220, 170, 0.6);
+  color: #fff;
+}
+
+.editor-stars-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.editor-stars-row .editor-field { flex: 1 1 0; }
+
+.editor-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+.editor-dialog-actions .play-btn { padding: 10px 18px; font-size: 13px; }
+
+/* "My Challenges" section on the CHALLENGES screen. */
+.challenge-cards-custom {
+  gap: 10px;
+}
+.challenge-card-custom {
+  border-color: rgba(220, 170, 255, 0.55) !important;
+}
+
+/* === Wave dialog: presets + advanced collapsible === */
+
+.editor-dialog-wave {
+  width: min(480px, calc(100% - 24px));
+}
+
+.editor-presets {
+  display: none;
+  margin-bottom: 10px;
+  padding: 10px;
+  background: rgba(8, 10, 22, 0.5);
+  border: 1px solid rgba(120, 150, 220, 0.2);
+  border-radius: 8px;
+}
+.editor-presets.open {
+  display: block;
+}
+
+.editor-presets-hint {
+  margin: 6px 2px 0;
+  font-size: 11px;
+  color: #aab4dc;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.editor-preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: center;
+}
+
+/* Generic section-toggle button used by both PRESET WAVES and
+ * ADVANCED collapsibles. Mirrors the existing advanced toggle look. */
+.editor-section-toggle {
+  appearance: none;
+  width: 100%;
+  border: 1px dashed rgba(120, 150, 220, 0.4);
+  background: transparent;
+  color: #aab4dc;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+.editor-section-toggle:hover {
+  background: rgba(120, 150, 220, 0.08);
+  color: #e8ecff;
+}
+
+.editor-preset-chip {
+  appearance: none;
+  border: 1px solid rgba(120, 150, 220, 0.4);
+  background: rgba(20, 26, 50, 0.7);
+  color: #d1d8ff;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.editor-preset-chip:hover {
+  background: rgba(60, 90, 160, 0.6);
+}
+.editor-preset-chip.selected {
+  background: rgba(60, 130, 90, 0.65);
+  border-color: rgba(120, 220, 170, 0.65);
+  color: #fff;
+}
+
+.editor-preset-params {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.editor-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.editor-slider-row input[type="range"] {
+  flex: 1 1 auto;
+  accent-color: #7fe89c;
+}
+.editor-slider-value {
+  flex: 0 0 48px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 12px;
+  color: #e8ecff;
+  text-align: right;
+}
+
+.editor-advanced-toggle {
+  appearance: none;
+  width: 100%;
+  border: 1px dashed rgba(120, 150, 220, 0.4);
+  background: transparent;
+  color: #aab4dc;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+.editor-advanced-toggle:hover {
+  background: rgba(120, 150, 220, 0.08);
+  color: #e8ecff;
+}
+.editor-advanced-chevron {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: #d1d8ff;
+}
+
+.editor-advanced {
+  display: none;
+}
+.editor-advanced.open {
+  display: block;
+}
+
+/* === Help tooltips ===
+ * Small (i) info button next to a field label. Tap toggles a popup
+ * positioned absolutely below the button. Hidden by default; click
+ * also closes any other open popup so they don't pile up.
+ */
+.editor-help-wrap {
+  position: relative;
+  display: inline-flex;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.editor-help-btn {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(120, 150, 220, 0.5);
+  background: rgba(40, 60, 110, 0.55);
+  color: #d1d8ff;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: serif;
+  font-style: italic;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+.editor-help-btn:hover {
+  background: rgba(60, 90, 160, 0.7);
+  color: #fff;
+}
+
+.editor-help-text[hidden] { display: none; }
+.editor-help-text {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 60;
+  width: 220px;
+  max-width: calc(100vw - 32px);
+  background: rgba(28, 36, 70, 0.98);
+  border: 1px solid rgba(160, 180, 240, 0.5);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-style: normal;
+  letter-spacing: normal;
+  text-transform: none;
+  color: #e8ecff;
+  line-height: 1.45;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+}
+
+/* === Cluster mix block (wave dialog basic view) === */
+
+.editor-mix {
+  margin-bottom: 10px;
+  padding: 10px;
+  background: rgba(8, 10, 22, 0.5);
+  border: 1px solid rgba(120, 150, 220, 0.2);
+  border-radius: 8px;
+}
+
+.editor-mix-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #aab4dc;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.editor-mix-total {
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 11px;
+  color: #7fe89c;
+  letter-spacing: 0.08em;
+}
+
+.editor-mix-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.editor-mix-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(20, 26, 50, 0.45);
+}
+
+.editor-mix-row-normal {
+  background: rgba(20, 26, 50, 0.25);
+  border: 1px dashed rgba(120, 150, 220, 0.2);
+}
+
+.editor-mix-icon {
+  width: 36px;
+  height: 36px;
+  display: block;
+}
+
+.editor-mix-name {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #d1d8ff;
+  text-transform: uppercase;
+}
+
+.editor-mix-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editor-mix-step {
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid rgba(120, 150, 220, 0.4);
+  background: linear-gradient(180deg, rgba(70, 90, 150, 0.65), rgba(40, 55, 100, 0.65));
+  color: #e8ecff;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition: transform 80ms ease;
+}
+.editor-mix-step:hover {
+  background: linear-gradient(180deg, rgba(90, 120, 190, 0.75), rgba(60, 80, 140, 0.75));
+}
+.editor-mix-step:active { transform: scale(0.92); }
+.editor-mix-step[disabled] {
+  opacity: 0.35;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.editor-mix-plus {
+  border-color: rgba(120, 220, 170, 0.5);
+  background: linear-gradient(180deg, rgba(80, 160, 110, 0.65), rgba(40, 100, 70, 0.65));
+}
+.editor-mix-plus:hover {
+  background: linear-gradient(180deg, rgba(110, 200, 140, 0.8), rgba(60, 130, 90, 0.8));
+}
+.editor-mix-minus {
+  border-color: rgba(220, 130, 140, 0.5);
+  background: linear-gradient(180deg, rgba(170, 80, 90, 0.65), rgba(120, 50, 60, 0.65));
+}
+.editor-mix-minus:hover {
+  background: linear-gradient(180deg, rgba(220, 110, 120, 0.8), rgba(160, 70, 80, 0.8));
+}
+
+.editor-mix-value {
+  display: inline-block;
+  min-width: 38px;
+  text-align: center;
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.04em;
+}
+.editor-mix-pct {
+  font-size: 10px;
+  font-weight: 500;
+  color: #aab4dc;
+  margin-left: 1px;
+}
+
+.editor-mix-residual {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #6b7299;
+}
+
+.editor-mix-row-normal .editor-mix-value { color: #aab4dc; }
+
+/* === Editor / in-game separation ===
+ * The editor is unambiguously a menu, so we hide the play canvas (and
+ * any in-flight cluster wreckage) while it's open. This is set on
+ * <body> by setEditorActive() in game.ts.
+ */
+body.editor-active #game,
+body.editor-active .canvas-wheel,
+body.editor-active .controls-hint {
+  visibility: hidden;
+}
+
+body.editor-active .stage {
+  background:
+    radial-gradient(circle at 50% 0%, rgba(40, 56, 110, 0.35), transparent 50%),
+    linear-gradient(180deg, #0d0f1c 0%, #060812 100%);
+}
+
+/* Editor screens should fully cover the stage so the menu's gradient
+ * isn't fighting with editor styles. */
+.editor-home,
+.editor-edit {
+  min-height: 100%;
+}
+
+/* === Wave row validation warning ===
+ * Red exclamation badge next to "Wave N" when checkWaveLine() rejects
+ * the row (parse error or "does nothing"). The whole row also gets a
+ * dim red border so the broken wave is visible even with the badge
+ * obscured by a long summary line.
+ */
+.editor-wave-row.invalid {
+  border-color: rgba(255, 130, 140, 0.55);
+  box-shadow: 0 0 0 1px rgba(255, 100, 110, 0.18) inset;
+}
+
+.editor-wave-warn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(220, 80, 90, 0.95);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: help;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  z-index: 2;
+}
+
+/* === Wave dialog: PRESET WAVES section title === */
+.editor-presets-title {
+  margin: 0 0 8px;
+  padding: 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #aab4dc;
+}
+
+/* === Wave dialog: always-visible quick controls (Count / Dur / Walls) === */
+.editor-quick {
+  margin-bottom: 10px;
+  padding: 10px;
+  background: rgba(8, 10, 22, 0.5);
+  border: 1px solid rgba(120, 150, 220, 0.2);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editor-quick-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(20, 26, 50, 0.45);
+}
+
+.editor-quick-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: #d1d8ff;
+  text-transform: uppercase;
+}
+
+.editor-quick-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Walls cycler: just `< LABEL >` — the live preview behind the dialog
+ * already shows what each wall kind looks like in motion. */
+.editor-quick-walls-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.editor-walls-name {
+  min-width: 90px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #e8ecff;
+  text-align: center;
+}
+
+.editor-walls-arrow {
+  appearance: none;
+  width: 28px;
+  height: 36px;
+  border-radius: 6px;
+  border: 1px solid rgba(120, 150, 220, 0.4);
+  background: linear-gradient(180deg, rgba(70, 90, 150, 0.65), rgba(40, 55, 100, 0.65));
+  color: #e8ecff;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition: transform 80ms ease;
+}
+.editor-walls-arrow:hover {
+  background: linear-gradient(180deg, rgba(90, 120, 190, 0.75), rgba(60, 80, 140, 0.75));
+}
+.editor-walls-arrow:active { transform: scale(0.92); }
+
+/* === Wave-dialog live preview ===
+ * While a wave dialog is open, the canvas behind it runs the working
+ * wave on loop (no player). Re-enable the canvas, drop the dialog
+ * backdrop's opacity so the preview reads through, and hide the
+ * controls hint that would otherwise float over it.
+ */
+body.editor-active.editor-previewing #game {
+  visibility: visible;
+}
+body.editor-active.editor-previewing .canvas-wheel,
+body.editor-active.editor-previewing .controls-hint {
+  visibility: hidden;
+}
+
+body.editor-previewing .editor-dialog-backdrop {
+  background: rgba(8, 10, 22, 0.45);
+}
+
+/* Live-preview mode: the canvas behind the dialog is the show, so
+ * everything chrome-y (the overlay's radial-gradient backdrop, the
+ * dialog frame, the editor-edit content underneath) goes invisible and
+ * only the actual controls float as 75%-opaque cards over the preview. */
+
+/* The overlay's own gradient background dims the canvas by 70-92% — kill
+ * it so the preview reads at the same brightness as the live game. */
+body.editor-previewing .overlay {
+  background: transparent;
+}
+
+/* Hide the editor-edit content sitting behind the dialog (back button,
+ * name/seed strip, wave list) so only the dialog + preview show. */
+body.editor-previewing .editor-edit > *:not(.editor-dialog-backdrop):not(.editor-dialog) {
+  visibility: hidden;
+}
+
+/* Outer dialog + section containers fully transparent. */
+body.editor-previewing .editor-dialog-wave,
+body.editor-previewing .editor-presets,
+body.editor-previewing .editor-quick,
+body.editor-previewing .editor-mix,
+body.editor-previewing .editor-advanced.open,
+body.editor-previewing .editor-dialog-body {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Backdrop barely there — a faint dim so taps land somewhere visible. */
+body.editor-previewing .editor-dialog-backdrop {
+  background: rgba(8, 10, 22, 0.08);
+}
+
+/* === Controls (75% opaque) === */
+
+body.editor-previewing .editor-dialog-wave > h2 {
+  display: inline-block;
+  background: rgba(8, 10, 22, 0.75);
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 150, 220, 0.35);
+}
+
+body.editor-previewing .editor-section-toggle,
+body.editor-previewing .editor-advanced-toggle {
+  background: rgba(8, 10, 22, 0.75);
+}
+
+body.editor-previewing .editor-mix-header {
+  background: rgba(8, 10, 22, 0.75);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+body.editor-previewing .editor-quick-row,
+body.editor-previewing .editor-mix-row,
+body.editor-previewing .editor-dialog-wave .editor-advanced .editor-field,
+body.editor-previewing .editor-dialog-wave .editor-advanced .editor-radio-group {
+  background: rgba(8, 10, 22, 0.75);
+  border: 1px solid rgba(120, 150, 220, 0.3);
+}
+
+body.editor-previewing .editor-mix-row-normal {
+  background: rgba(8, 10, 22, 0.55);
+}
+
+body.editor-previewing .editor-preset-chip {
+  background: rgba(20, 26, 50, 0.85);
+}
+body.editor-previewing .editor-preset-chip.selected {
+  background: rgba(60, 130, 90, 0.85);
+}
+
+body.editor-previewing .editor-field-input,
+body.editor-previewing .editor-field input,
+body.editor-previewing .editor-field select {
+  background: rgba(13, 15, 28, 0.75);
 }
