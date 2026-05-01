@@ -55,6 +55,7 @@ import {
   makeRandomSeed,
   MAX_CUSTOM_NAME_LEN,
   MAX_WAVES_PER_CUSTOM,
+  remixCustomChallenge,
   saveCustomChallengeRun,
   toChallengeDef,
   upsertCustomChallenge,
@@ -264,6 +265,33 @@ function loadSeenHints(): Set<ClusterKind> {
 function saveSeenHints(set: Set<ClusterKind>): void {
   try {
     localStorage.setItem(SEEN_HINTS_STORAGE_KEY, JSON.stringify([...set]));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+// Persisted UI state: whether each collapsible section on the
+// challenge select screen is collapsed. Generic helper so adding a
+// new section (e.g. Community) only needs a key string. Default
+// collapsed = false so new players see content on first visit.
+type CollapsibleKey = "official" | "myChallenges" | "community";
+const COLLAPSED_KEYS: Record<CollapsibleKey, string> = {
+  official: "hexrain.challengeSelect.officialCollapsed.v1",
+  myChallenges: "hexrain.challengeSelect.myChallengesCollapsed.v1",
+  community: "hexrain.challengeSelect.communityCollapsed.v1",
+};
+
+function loadCollapsed(key: CollapsibleKey): boolean {
+  try {
+    return localStorage.getItem(COLLAPSED_KEYS[key]) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveCollapsed(key: CollapsibleKey, collapsed: boolean): void {
+  try {
+    localStorage.setItem(COLLAPSED_KEYS[key], collapsed ? "1" : "0");
   } catch {
     /* quota / private mode */
   }
@@ -989,19 +1017,6 @@ export class Game {
         this.quitToMenu();
         return;
       }
-      // Debug "start at N" button (only present when ?debug=1).
-      const debugPlayBtn = target?.closest('button[data-action="debug-play"]') as HTMLButtonElement | null;
-      if (debugPlayBtn) {
-        playSfx("click");
-        const select = this.overlay.querySelector<HTMLSelectElement>("#debugStartScore");
-        const score = parseInt(select?.value ?? "0", 10);
-        this.debugStartScore = Number.isFinite(score) ? score : 0;
-        this.setGameMode("endless");
-        this.activeChallenge = null;
-        this.effectOverrides = null;
-        this.startOrRestart(this.debugStartScore);
-        return;
-      }
       // PLAY / PLAY AGAIN button on menu and game-over overlays.
       const playBtn = target?.closest('button[data-action="play"]') as HTMLButtonElement | null;
       if (playBtn) {
@@ -1032,11 +1047,24 @@ export class Game {
         this.setGameMode("endless");
         this.activeChallenge = null;
         this.effectOverrides = null;
-        // Debug-mode replays restart from the same picked score so the
-        // tester doesn't have to hop back to the menu and re-pick it.
-        const replayScore =
-          this.debugEnabled && this.debugStartScore > 0 ? this.debugStartScore : 0;
-        this.startOrRestart(replayScore);
+        // In debug, the PLAY button starts a run at whatever score is
+        // selected in the start-at dropdown (read freshly each click
+        // so toggling the menu's dropdown actually takes effect).
+        // Outside debug, runs always start at 0.
+        let startScore = 0;
+        if (this.debugEnabled) {
+          const sel = this.overlay.querySelector<HTMLSelectElement>("#debugStartScore");
+          const v = parseInt(sel?.value ?? "0", 10);
+          if (Number.isFinite(v)) {
+            startScore = v;
+            this.debugStartScore = v;
+          } else if (this.state === "gameover") {
+            // PLAY AGAIN on gameover when the dropdown isn't on screen:
+            // fall back to the last picked score.
+            startScore = this.debugStartScore;
+          }
+        }
+        this.startOrRestart(startScore);
         return;
       }
       // CHALLENGES menu button.
@@ -1099,6 +1127,19 @@ export class Game {
         return;
       }
       // Back from challenge select / intro / complete.
+      // Challenge select: collapse / expand a section header (Official,
+      // My Challenges, Community). The section key comes from
+      // data-section so all three share one route.
+      const collapseToggleBtn = target?.closest('button[data-action="toggle-collapse"]') as HTMLButtonElement | null;
+      if (collapseToggleBtn) {
+        playSfx("click");
+        const key = collapseToggleBtn.dataset.section as CollapsibleKey | undefined;
+        if (key && key in COLLAPSED_KEYS) {
+          saveCollapsed(key, !loadCollapsed(key));
+          if (this.state === "challengeSelect") this.renderChallengeSelect();
+        }
+        return;
+      }
       const backBtn = target?.closest('button[data-action="challenge-back"]') as HTMLButtonElement | null;
       if (backBtn) {
         playSfx("click");
@@ -1180,6 +1221,24 @@ export class Game {
         const id = editorPublishBtn.dataset.customId;
         const c = id ? getCustomChallenge(id) : undefined;
         if (c) this.publishCustomChallenge(c);
+        return;
+      }
+      // Editor home: REMIX on a roster row clones it into My Challenges
+      // and drops the player straight into the new copy's edit screen.
+      const editorRemixBtn = target?.closest('button[data-action="editor-remix"]') as HTMLButtonElement | null;
+      if (editorRemixBtn) {
+        playSfx("click");
+        const rosterId = editorRemixBtn.dataset.rosterId;
+        const def = rosterId ? CHALLENGES.find((d) => d.id === rosterId) : undefined;
+        if (def) {
+          const cloned = remixCustomChallenge({
+            name: def.name,
+            difficulty: def.difficulty,
+            effects: def.effects ?? {},
+            waves: def.waves,
+          });
+          this.openEditorEdit(cloned);
+        }
         return;
       }
       // Editor edit: back to home (autosave is already on every mutation).
@@ -1415,6 +1474,14 @@ export class Game {
         const field = advCycleBtn.dataset.field ?? "";
         const dir = parseInt(advCycleBtn.dataset.dir ?? "0", 10);
         if (field && dir !== 0) this.cycleAdvancedField(field, dir);
+        return;
+      }
+      // Wave dialog Advanced: on/off toggle (currently just dirRandom).
+      const advToggleBtn = target?.closest('button[data-action="editor-adv-toggle"]') as HTMLButtonElement | null;
+      if (advToggleBtn && !advToggleBtn.disabled) {
+        playSfx("click");
+        const field = advToggleBtn.dataset.field ?? "";
+        if (field) this.toggleAdvancedField(field);
         return;
       }
       // Wave dialog: cluster mix +/- bump.
@@ -1783,38 +1850,39 @@ export class Game {
     host.innerHTML = cells.join("");
   }
 
-  // ?debug=1 swaps the menu's PLAY button for a row of "start at N"
-  // shortcuts so test runs can begin at high scores without grinding.
-  // Challenge screens never get these — they have their own debug
-  // affordance via the unlocked-by-default block list (DEBUG_MODE in
-  // challenges.ts).
+  // ?debug=1 keeps the regular PLAY button and adds a "start at N"
+  // dropdown next to it so testers can begin a run at any score
+  // without grinding. The PLAY click handler reads the dropdown's
+  // value when debug is enabled. Challenge screens never get this —
+  // they have their own debug affordance via the unlocked-by-default
+  // block list (DEBUG_MODE in challenges.ts).
   private debugApplyMenu(): void {
     if (!this.debugEnabled) return;
     const playBtn = this.overlay.querySelector<HTMLButtonElement>(
       'button.play-btn[data-action="play"]',
     );
     if (!playBtn) return;
-    const row = document.createElement("div");
-    row.className = "debug-start-buttons";
-    const label = document.createElement("span");
-    label.className = "debug-label";
-    label.textContent = "DEBUG · start at";
-    row.appendChild(label);
+    const wrap = document.createElement("label");
+    wrap.className = "debug-start-wrap";
+    const labelEl = document.createElement("span");
+    labelEl.className = "debug-start-label";
+    labelEl.textContent = "START AT";
+    wrap.appendChild(labelEl);
     const select = document.createElement("select");
     select.id = "debugStartScore";
-    for (let s = 100; s <= 1500; s += 100) {
+    select.className = "debug-start-select";
+    for (let s = 0; s <= 1500; s += 100) {
       const opt = document.createElement("option");
       opt.value = String(s);
       opt.textContent = String(s);
+      if (s === this.debugStartScore) opt.selected = true;
       select.appendChild(opt);
     }
-    row.appendChild(select);
-    const goBtn = document.createElement("button");
-    goBtn.type = "button";
-    goBtn.textContent = "GO";
-    goBtn.dataset.action = "debug-play";
-    row.appendChild(goBtn);
-    playBtn.replaceWith(row);
+    wrap.appendChild(select);
+    // Insert the picker immediately after the PLAY button so the
+    // regular play affordance is preserved and the start-at picker
+    // sits unobtrusively beside it.
+    playBtn.insertAdjacentElement("afterend", wrap);
   }
 
   start(): void {
@@ -2190,11 +2258,15 @@ export class Game {
               ? "editor-row-btn editor-row-btn-publish"
               : "editor-row-btn editor-row-btn-publish disabled";
             const publishAttr = this.debugEnabled ? "" : "disabled";
+            const remixLine = c.remixedFrom
+              ? `<span class="editor-home-row-remix">Remixed from: ${escapeHtml(c.remixedFrom)}</span>`
+              : "";
             return `
               <div class="editor-home-row" data-custom-id="${escapeHtml(c.id)}">
                 <div class="editor-home-row-meta">
                   <span class="challenge-card-id">CUSTOM</span>
                   <span class="challenge-card-name">${escapeHtml(c.name)}</span>
+                  ${remixLine}
                   <div class="challenge-card-hexes">${hexes.join("")}</div>
                   ${starsHtml}
                   <span class="challenge-card-best">${bestScoreText} ${pctText}</span>
@@ -2209,6 +2281,46 @@ export class Game {
             `;
           })
           .join("");
+
+    // Remix-existing section: every roster challenge in an unlocked block
+    // gets a row with a single REMIX button that clones it into My
+    // Challenges. Locked blocks are excluded — players shouldn't be able
+    // to remix content they haven't unlocked.
+    const progress = loadChallengeProgress();
+    const unlockedSet = new Set(progress.unlockedBlocks);
+    const remixSource = CHALLENGES.filter((def) => unlockedSet.has(def.block));
+    const remixRows = remixSource
+      .map((def) => {
+        const tint = difficultyTint(def.difficulty);
+        const hexes: string[] = [];
+        for (let i = 0; i < def.difficulty; i++) {
+          hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
+        }
+        return `
+          <div class="editor-home-row editor-home-row-remix-source">
+            <div class="editor-home-row-meta">
+              <span class="challenge-card-id">${escapeHtml(def.id)}</span>
+              <span class="challenge-card-name">${escapeHtml(def.name)}</span>
+              <div class="challenge-card-hexes">${hexes.join("")}</div>
+            </div>
+            <div class="editor-home-row-actions">
+              <button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-remix" data-roster-id="${escapeHtml(def.id)}">REMIX</button>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+    const remixSection = remixSource.length > 0
+      ? `
+        <section class="challenge-block">
+          <header class="challenge-block-header">
+            <span>Remix Existing</span>
+            <span class="progress">${remixSource.length}</span>
+          </header>
+          <div class="editor-home-rows">${remixRows}</div>
+        </section>
+      `
+      : "";
 
     this.overlay.innerHTML = `
       <div class="editor-home">
@@ -2227,6 +2339,7 @@ export class Game {
             <button type="button" class="editor-home-add" data-action="editor-new" aria-label="Create new custom challenge">+</button>
           </div>
         </section>
+        ${remixSection}
       </div>
     `;
   }
@@ -2297,7 +2410,6 @@ export class Game {
       `;
     }).join("");
 
-    const seedHex = `0x${(c.seed >>> 0).toString(16).padStart(8, "0")}`;
     const dialogHtml = this.editorDialog === "wave"
       ? this.renderWaveDialogHtml()
       : this.editorDialog === "customWave"
@@ -2325,13 +2437,6 @@ export class Game {
             <span class="editor-quick-label">Name${helpTipHtml("name")}</span>
             <div class="editor-quick-controls">
               <input class="editor-meta-input" data-editor-field="name" type="text" maxlength="${MAX_CUSTOM_NAME_LEN}" value="${escapeHtml(c.name)}" />
-            </div>
-          </div>
-          <div class="editor-quick-row">
-            <span class="editor-quick-label">Seed${helpTipHtml("seed")}</span>
-            <div class="editor-quick-controls">
-              <input class="editor-meta-input editor-meta-input-seed" data-editor-field="seed" type="text" inputmode="numeric" value="${c.seed}" />
-              <button type="button" class="editor-mix-step editor-mix-plus" data-action="editor-randomize-seed" aria-label="Random seed" title="${seedHex}">⟳</button>
             </div>
           </div>
           <button type="button" class="editor-options-btn" data-action="editor-open-settings">
@@ -2789,7 +2894,24 @@ export class Game {
         ${this.renderAdvStepper("wallPeriod", "Wall period", w.wallPeriod, { min: 0.05, max: 5, step: 0.1, format: fmt1, disabled: !isZigzag })}
         ${this.renderAdvCycler("safeCol", "Safe column", safeColLabel)}
         ${this.renderAdvCycler("origin", "Origin", originLabel)}
-        ${this.renderAdvStepper("dir", "Tilt (rad)", w.defaultDir, { min: -1, max: 1, step: 0.05, format: fmt2 })}
+        ${this.renderAdvStepper("dir", "Tilt", w.defaultDir, { min: -0.35, max: 0.35, step: 0.05, format: fmt2 })}
+        ${this.renderAdvToggle("dirRandom", "Random tilt", w.defaultDirRandom)}
+      </div>
+    `;
+  }
+
+  // Themed on/off toggle for Advanced fields. Renders as `[ OFF | ON ]`
+  // matching the look of the cycler control. Source of truth lives on
+  // the working line, so flipping it round-trips through composeWaveLine.
+  private renderAdvToggle(field: string, label: string, on: boolean): string {
+    return `
+      <div class="editor-quick-row">
+        <span class="editor-quick-label">${escapeHtml(label)}${helpTipHtml(field)}</span>
+        <div class="editor-quick-controls">
+          <button type="button" class="editor-walls-arrow"
+            data-action="editor-adv-toggle" data-field="${field}"
+            aria-pressed="${on ? "true" : "false"}">${on ? "ON" : "OFF"}</button>
+        </div>
       </div>
     `;
   }
@@ -2810,6 +2932,12 @@ export class Game {
         </div>
       </div>
     `;
+  }
+
+  private toggleAdvancedField(field: string): void {
+    this.mutateDialogWave((w) => {
+      if (field === "dirRandom") w.defaultDirRandom = !w.defaultDirRandom;
+    });
   }
 
   private cycleAdvancedField(field: string, dir: number): void {
@@ -2892,7 +3020,7 @@ export class Game {
           break;
         }
         case "dir": {
-          w.defaultDir = clampRound(w.defaultDir + delta, -1, 1, 0.05);
+          w.defaultDir = clampRound(w.defaultDir + delta, -0.35, 0.35, 0.05);
           break;
         }
       }
@@ -3002,7 +3130,9 @@ export class Game {
         }
         case "dir": {
           const n = parseFloat(value);
-          if (Number.isFinite(n)) w.defaultDir = n;
+          if (Number.isFinite(n)) {
+            w.defaultDir = Math.max(-0.35, Math.min(0.35, n));
+          }
           break;
         }
       }
@@ -3874,6 +4004,13 @@ export class Game {
       <div class="editor-dialog editor-dialog-settings" role="dialog" aria-label="Challenge settings">
         <h2>Options</h2>
         <div class="editor-dialog-body">
+          <div class="editor-quick-row">
+            <span class="editor-quick-label">Seed${helpTipHtml("seed")}</span>
+            <div class="editor-quick-controls">
+              <input class="editor-meta-input editor-meta-input-seed" data-editor-field="seed" type="text" inputmode="numeric" value="${c.seed}" />
+              <button type="button" class="editor-mix-step editor-mix-plus" data-action="editor-randomize-seed" aria-label="Random seed">⟳</button>
+            </div>
+          </div>
           ${this.renderSettingsStepper("slowDuration", "Slow duration (s)", c.effects.slowDuration, { min: 0, max: 30, step: 0.5, format: fmtSec })}
           ${this.renderSettingsStepper("fastDuration", "Fast duration (s)", c.effects.fastDuration, { min: 0, max: 30, step: 0.5, format: fmtSec })}
           ${this.renderSettingsStepper("shieldDuration", "Shield duration (s)", c.effects.shieldDuration, { min: 0, max: 60, step: 0.5, format: fmtSec })}
@@ -4248,7 +4385,13 @@ export class Game {
     // Placement: directly after the highest-numbered unlocked block, so
     // it sits adjacent to the wall the player is currently bumping into
     // rather than floating at the top of the screen on every visit.
-    const showIapBanner = !progress.purchasedUnlock;
+    // Once every block is unlocked organically there's nothing the IAP
+    // can grant the player, so suppress the banner. (Custom-challenge
+    // editor access is still gated on purchasedUnlock — that's
+    // intentional and unaffected by this check.)
+    const totalBlocks = Math.max(...CHALLENGES.map((c) => c.block));
+    const allBlocksUnlocked = progress.unlockedBlocks.length >= totalBlocks;
+    const showIapBanner = !progress.purchasedUnlock && !allBlocksUnlocked;
     const priceLabel = this.unlockProduct?.displayPrice;
     const iapHtml = showIapBanner
       ? `
@@ -4262,10 +4405,26 @@ export class Game {
       : "";
     const lastUnlockedIdx = Math.max(0, ...progress.unlockedBlocks.map((n) => n - 1));
     const sections: string[] = [];
+    // Wrap the six official blocks (and the interleaved IAP banner) in
+    // a collapsible "Official Challenges" section so players returning
+    // to play their custom challenges or My Challenges can hide the
+    // (often very tall) roster grid. State persists across sessions
+    // via localStorage. When collapsed the inner body is hidden via
+    // CSS — the header still renders so the player can re-expand.
+    const officialCollapsed = loadCollapsed("official");
+    const completedRoster = CHALLENGES.filter((c) => progress.completed.includes(c.id)).length;
+    const officialBlocks: string[] = [];
     blockHtmlByIndex.forEach((html, idx) => {
-      sections.push(html);
-      if (idx === lastUnlockedIdx && iapHtml) sections.push(iapHtml);
+      officialBlocks.push(html);
+      if (idx === lastUnlockedIdx && iapHtml) officialBlocks.push(iapHtml);
     });
+    sections.push(renderCollapsibleSection({
+      key: "official",
+      title: "Official Challenges",
+      progress: `${completedRoster}/${CHALLENGES.length}`,
+      collapsed: officialCollapsed,
+      body: officialBlocks.join(""),
+    }));
     // Player-authored "My Challenges" section appended after the roster
     // and IAP banner. Shown once the IAP is owned (or in debug mode),
     // since the editor is gated behind that — no point showing an empty
@@ -4295,17 +4454,29 @@ export class Game {
             </button>
           `;
         }).join("");
-        sections.push(`
-          <section class="challenge-block">
-            <header class="challenge-block-header">
-              <span>My Challenges</span>
-              <span class="progress">${customs.length}</span>
-            </header>
-            <div class="challenge-cards challenge-cards-custom">${customCards}</div>
-          </section>
-        `);
+        sections.push(renderCollapsibleSection({
+          key: "myChallenges",
+          title: "My Challenges",
+          progress: String(customs.length),
+          collapsed: loadCollapsed("myChallenges"),
+          body: `<div class="challenge-cards challenge-cards-custom">${customCards}</div>`,
+        }));
       }
     }
+    // Community Challenges placeholder. Same collapsible chrome so the
+    // three sections feel like a set; body announces upcoming
+    // shared-challenges feature so players know more is on the way.
+    sections.push(renderCollapsibleSection({
+      key: "community",
+      title: "Community Challenges",
+      collapsed: loadCollapsed("community"),
+      body: `
+        <div class="challenge-community-placeholder">
+          <span class="challenge-community-tag">COMING SOON</span>
+          <p>Player-shared challenges will live here once the editor opens up to publishing.</p>
+        </div>
+      `,
+    }));
     this.overlay.innerHTML = `
       <div class="challenge-select">
         <div class="challenge-select-top">
@@ -6814,7 +6985,13 @@ export class Game {
     } else {
       x = railCenter + colStep * colWidth;
       y = this.boardOriginY - this.hexSize * 4;
-      const tilt = angle.tilt + (angle.randomTilt ? (this.rng() - 0.5) * angle.randomTilt : 0) + wave.defaultDir;
+      // Wave-level tilt bias: when `dirRandom` is set, each spawn picks
+      // a random angle in [-defaultDir, +defaultDir]; otherwise it's a
+      // fixed offset added to the slot's own tilt.
+      const dirBias = wave.defaultDirRandom
+        ? (this.rng() * 2 - 1) * wave.defaultDir
+        : wave.defaultDir;
+      const tilt = angle.tilt + (angle.randomTilt ? (this.rng() - 0.5) * angle.randomTilt : 0) + dirBias;
       vx = Math.sin(tilt) * speed;
       vy = Math.cos(tilt) * speed;
     }
@@ -6864,7 +7041,11 @@ export class Game {
     // frame in update() so gravity can't drive slow waves up to
     // terminal velocity.
     const speed = Math.min(CHALLENGE_MAX_FALL_SPEED, CHALLENGE_BASE_FALL_SPEED * wave.baseSpeedMul);
-    const tilt = wave.defaultDir;
+    // dirRandom: each spawn picks a random tilt in [-defaultDir, +defaultDir].
+    // Without it, every probabilistic cluster falls at the same fixed angle.
+    const tilt = wave.defaultDirRandom
+      ? (this.rng() * 2 - 1) * wave.defaultDir
+      : wave.defaultDir;
     const vx = Math.sin(tilt) * speed;
     const vy = Math.cos(tilt) * speed;
     this.spawnChallengeCluster(kind, shape, x, y, vx, vy);
@@ -7360,8 +7541,13 @@ export class Game {
     if (!def) return;
     const baseW = 8;
     const w = baseW + (this.waveBumpT > 0 ? 6 * this.waveBumpT * 5 : 0);
-    const y0 = this.boardOriginY;
-    const h = this.boardHeight;
+    // Inset from the top so the curved corners on modern iPhones (and
+    // the dynamic island row) don't clip the top of the bar. The
+    // existing `topInset` already places content below the HUD,
+    // which clears the corner curve. Add a small extra gap for the
+    // percent label that sits above the left bar.
+    const y0 = this.boardOriginY + this.topInset + 12;
+    const h = this.boardHeight - (y0 - this.boardOriginY) - 4;
     // Hug the viewport edges so the bars feel like a frame around the
     // canvas. canvas.width is dpr-scaled; cssWidth is what our render
     // coords use after setTransform(dpr,...).
@@ -7369,15 +7555,10 @@ export class Game {
     const cssWidth = this.canvas.width / dpr;
     const xLeft = 4;
     const xRight = cssWidth - baseW - 4;
+    // Both bars at full alpha so the screen reads as a symmetric
+    // pair of progress columns rather than a primary + faded mirror.
     this.drawProgressBar(ctx, xLeft, y0, w, h, def.waves.length, 1.0);
-    this.drawProgressBar(ctx, xRight, y0, w, h, def.waves.length, 0.4);
-    // Percent label sits above the left bar only.
-    const pct = Math.round(this.progressDisplayed * 100);
-    ctx.fillStyle = "rgba(232, 236, 255, 0.85)";
-    ctx.font = "bold 10px -apple-system, system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "alphabetic";
-    ctx.fillText(`${pct}%`, xLeft + w / 2, y0 - 4);
+    this.drawProgressBar(ctx, xRight, y0, w, h, def.waves.length, 1.0);
   }
 
   private drawProgressBar(
@@ -8055,7 +8236,8 @@ const FIELD_HELP: Record<string, string> = {
   wallPeriod: "Period of zigzag walls (higher = wider waves).",
   safeCol: "Column kept clear of normal spawns. random = picks one each play, none = no enforcement.",
   origin: "Where clusters enter from. top = above, topAngled = above with tilt, side = horizontal entry.",
-  dir: "Default tilt angle in radians applied to every spawn.",
+  dir: "Tilt angle applied to every spawn. Negative leans left, positive leans right.",
+  dirRandom: "Randomise tilt per spawn within ±Tilt instead of using a fixed bias.",
   pct: "Probability weight per cluster kind. Numbers are relative to each other.",
   amp: "Amplitude of the zigzag walls (0 = flat, 0.5 = max curve).",
   // Settings dialog.
@@ -8070,12 +8252,40 @@ const FIELD_HELP: Record<string, string> = {
   starThree: "Score required for 3 stars.",
   starsAuto: "Auto-suggest computes stars from your wave content. Adjust afterwards if you like.",
   // Edit screen.
-  name: "Display name for your challenge (max 24 characters).",
+  name: `Display name for your challenge (max ${MAX_CUSTOM_NAME_LEN} characters).`,
   seed: "RNG seed. The same seed produces the same cluster sequence on every replay.",
 };
 
 // Render a small (i) info button + hidden popup for a field. Click
 // toggles the popup. Empty string when the key has no help entry.
+// Render a collapsible section on the challenge select screen
+// (Official Challenges, My Challenges, Community). Header is a
+// button with chevron + title + optional progress label. Body is
+// the inner HTML, hidden via CSS when `.collapsed`.
+function renderCollapsibleSection(opts: {
+  key: CollapsibleKey;
+  title: string;
+  progress?: string;
+  collapsed: boolean;
+  body: string;
+}): string {
+  const progressHtml = opts.progress
+    ? `<span class="progress">${escapeHtml(opts.progress)}</span>`
+    : "";
+  return `
+    <section class="challenge-official${opts.collapsed ? " collapsed" : ""}">
+      <button type="button" class="challenge-official-header"
+        data-action="toggle-collapse" data-section="${opts.key}"
+        aria-expanded="${opts.collapsed ? "false" : "true"}">
+        <span class="challenge-official-chevron" aria-hidden="true">${opts.collapsed ? "▶" : "▼"}</span>
+        <span class="challenge-official-title">${escapeHtml(opts.title)}</span>
+        ${progressHtml}
+      </button>
+      <div class="challenge-official-body">${opts.body}</div>
+    </section>
+  `;
+}
+
 function helpTipHtml(key: string, override?: string): string {
   const text = override ?? FIELD_HELP[key];
   if (!text) return "";
@@ -8112,6 +8322,7 @@ function composeWaveLine(w: ParsedWave): string {
   else if (typeof w.safeCol === "number") tokens.push(`safeCol=${w.safeCol}`);
   if (w.origin !== "top") tokens.push(`origin=${w.origin}`);
   if (w.defaultDir !== 0) tokens.push(`dir=${w.defaultDir}`);
+  if (w.defaultDirRandom) tokens.push(`dirRandom=1`);
   for (const s of w.slots) {
     if (s === null) tokens.push("000");
     else tokens.push(`${slotKindToPrefix(s.kind)}${s.size}${s.col}${s.angleIdx}`);

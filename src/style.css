@@ -25,37 +25,22 @@ body {
   position: relative;
   display: flex;
   flex-direction: column;
+  width: 100vw;
   height: 100dvh;
-  max-width: 540px;
   margin: 0 auto;
 }
 
-/* Web-only: lock the play frame to an iPhone 17 aspect ratio
-   (2622:1206 ≈ 19.5:9) and centre it against the dark page bg so
-   desktop/tablet previews match what ships on iOS. iOS's WKWebView
-   already runs full-bleed inside the device frame, so we leave the
-   native build on the default layout above. main.ts adds .web to
-   <body> when Capacitor.getPlatform() === "web".
-
-   We pin #app to a fixed design size (540 × 1174) and CSS-scale it
-   down with transform when the viewport can't fit. That keeps every
-   internal px-sized control (buttons, fonts, paddings, slider,
-   overlay layout) in its designed proportions even on a tiny
-   browser window — no internal layout breakage. Absolute
-   centring + translate avoids flexbox quirks where an oversized
-   child gets clipped instead of scaled cleanly. */
-body.web #app {
-  /* Pillarbox/letterbox to iPhone 17 aspect (1206:2622). At typical
-     desktop sizes this resolves to iPhone-sized dimensions, so the
-     internal layout is exactly what ships natively — no transform
-     scaling, no centering quirks. inset:0 + margin:auto centres in
-     both axes. */
-  position: fixed;
-  inset: 0;
-  margin: auto;
+/* During gameplay (and the editor's live wave preview) lock the
+   whole frame to iPhone 17 portrait aspect (1206:2622) so the play
+   area is consistent across iPhone, iPad, and desktop browsers —
+   same column count, same hex-to-screen ratio. Outside gameplay
+   the menu/editor UIs fill the full viewport so iPad's main menu
+   doesn't sit in a narrow pillarbox. iPhone screens already match
+   this aspect, so the in-play lock is a no-op there. */
+body.in-play #app,
+body.editor-previewing #app {
   width: min(100vw, calc(100dvh * 1206 / 2622));
   height: min(100dvh, calc(100vw * 2622 / 1206));
-  max-width: none;
 }
 
 .hud[hidden],
@@ -281,7 +266,9 @@ body.web #app {
   position: relative;
   flex: 1 1 auto;
   height: 88px;
-  background: #1f2440;
+  /* No fill — only the track line and the hex knob are visible. The
+     touchbar wrapper supplies the bottom strip's background colour. */
+  background: transparent;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -562,56 +549,40 @@ body.web #app {
   margin-right: 1px;
 }
 
-/* --- Debug start-at-score buttons (only present with ?debug=1) ---
-   Replaces the menu's PLAY button so test runs can begin at high
-   scores without grinding. Lives inline in the menu's play-group. */
-
-.debug-start-buttons {
-  display: flex;
-  flex-wrap: wrap;
+/* Small "START AT N" picker that sits next to the menu's PLAY
+   button when ?debug=1 is set. Intentionally muted — minimal label,
+   no colour-coded debug framing — so it doesn't dominate the menu. */
+.debug-start-wrap {
+  align-self: center;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: rgba(13, 15, 28, 0.6);
-  border: 1px solid rgba(255, 200, 100, 0.35);
-  border-radius: 10px;
-}
-
-.debug-start-buttons .debug-label {
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  color: rgba(255, 220, 150, 0.9);
-}
-
-.debug-start-buttons button,
-.debug-start-buttons select {
-  padding: 10px 14px;
-  background: rgba(255, 200, 100, 0.18);
-  color: #ffe28a;
-  border: 1px solid rgba(255, 200, 100, 0.5);
-  border-radius: 8px;
-  font-family: inherit;
-  font-size: 16px;
-  font-weight: 700;
+  gap: 6px;
+  margin: 6px 0 0;
   cursor: pointer;
-  letter-spacing: 0.04em;
-  -webkit-tap-highlight-color: transparent;
 }
-
-.debug-start-buttons select {
+.debug-start-label {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: #aab4dc;
+  text-transform: uppercase;
+}
+.debug-start-select {
   appearance: none;
   -webkit-appearance: none;
-  padding-right: 28px;
-  /* Tiny chevron drawn as a background SVG so the dropdown reads as one. */
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path fill='%23ffe28a' d='M6 8 0 0h12z'/></svg>");
+  padding: 4px 22px 4px 10px;
+  background: rgba(20, 24, 44, 0.65);
+  color: #aab4dc;
+  border: 1px solid rgba(120, 150, 220, 0.3);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path fill='%23aab4dc' d='M6 8 0 0h12z'/></svg>");
   background-repeat: no-repeat;
-  background-position: right 10px center;
-  background-size: 10px 6px;
-}
-
-.debug-start-buttons button:active {
-  background: rgba(255, 200, 100, 0.32);
+  background-position: right 7px center;
+  background-size: 8px 5px;
 }
 
 .tbtn {
@@ -981,6 +952,11 @@ body.web #app {
   gap: 18px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  /* Force the screen to occupy the full overlay height so the
+     overlay's `safe center` always anchors content to the top —
+     when sections are collapsed the page no longer floats in the
+     vertical middle of the screen. */
+  height: 100%;
   max-height: 100%;
 }
 
@@ -1119,6 +1095,94 @@ body.web #app {
 
 .challenge-block.locked .challenge-block-header {
   color: #6f7aa6;
+}
+
+/* Collapsible "Official Challenges" wrapper around the six roster
+   blocks. Header is a button that toggles `.collapsed`; the body
+   stack of blocks is hidden via display:none when collapsed so My
+   Challenges (and any future custom sections) sit closer to the
+   top of the screen. */
+.challenge-official {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.challenge-official-header {
+  appearance: none;
+  background: rgba(20, 24, 44, 0.55);
+  border: 1px solid rgba(91, 139, 255, 0.22);
+  border-radius: 12px;
+  color: #d1d8ff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms;
+}
+.challenge-official-header:hover,
+.challenge-official-header:active {
+  background: rgba(30, 36, 64, 0.7);
+}
+.challenge-official-chevron {
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  color: #aab4dc;
+}
+.challenge-official-title {
+  flex: 1 1 auto;
+  text-align: left;
+}
+.challenge-official-header .progress {
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: #aab4dc;
+}
+.challenge-official-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.challenge-official.collapsed .challenge-official-body {
+  display: none;
+}
+
+/* Community Challenges placeholder body — communicates that more is
+   on the way without taking up the full block-card footprint. */
+.challenge-community-placeholder {
+  background: rgba(20, 24, 44, 0.55);
+  border: 1px dashed rgba(170, 100, 220, 0.35);
+  border-radius: 12px;
+  padding: 18px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.challenge-community-tag {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.28em;
+  color: #c9a4ff;
+  background: rgba(170, 100, 220, 0.15);
+  border: 1px solid rgba(170, 100, 220, 0.4);
+  border-radius: 999px;
+  padding: 4px 12px;
+}
+.challenge-community-placeholder p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #aab4dc;
+  max-width: 36ch;
 }
 
 .challenge-block-header .progress {
@@ -1723,6 +1787,21 @@ body.web #app {
   text-overflow: ellipsis;
   max-width: 100%;
 }
+.editor-home-row-meta .editor-home-row-remix {
+  font-size: 10px;
+  color: #8a93cc;
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+/* Remix-source rows (entries in the "Remix Existing" list) are
+   roster challenges, not authored — slightly muted accent so the
+   eye separates them from My Challenges. */
+.editor-home-row.editor-home-row-remix-source {
+  border-left-color: rgba(170, 180, 220, 0.35);
+}
 .editor-home-row-meta .challenge-card-hexes {
   display: flex;
   gap: 3px;
@@ -1836,14 +1915,17 @@ body.web #app {
 .editor-edit-play-big {
   align-self: center;
   margin: 4px auto 8px;
-  padding: 14px 28px;
+  /* Match the main-menu PLAY button width so the visual weight is
+     consistent. .play-btn baseline is 340px; we inherit the rest of
+     its styling and just tweak the inner padding to match. */
+  width: 340px;
+  padding: 12px 0;
   font-size: 18px;
   letter-spacing: 0.18em;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  width: max-content;
 }
 /* Name / Seed inputs inside an edit-meta themed row. */
 .editor-meta-input {
@@ -1855,15 +1937,40 @@ body.web #app {
   border-radius: 6px;
   font-size: 13px;
   min-width: 0;
-  width: 180px;
+  /* Name input is wider than Seed input by exactly the width of the
+     dice button (26px) + gap (6px), so Name's left edge lines up
+     with Seed's left edge — the row reads as a vertical pair
+     regardless of the trailing randomise button on Seed. */
+  width: 182px;
   max-width: 100%;
   box-sizing: border-box;
 }
 .editor-meta-input-seed {
-  width: 130px;
+  width: 150px;
   font-family: ui-monospace, "SF Mono", monospace;
   font-size: 12px;
   text-align: right;
+}
+
+/* Edit-screen meta row: Name input stretches to fill the available
+   width of the edit page so longer names aren't truncated. Label
+   sits to the left, input fills the rest of the row. */
+.editor-edit-meta .editor-quick-row {
+  grid-template-columns: auto 1fr;
+}
+.editor-edit-meta .editor-quick-controls {
+  justify-self: stretch;
+}
+.editor-edit-meta .editor-meta-input {
+  width: 100%;
+}
+
+/* Options dialog labels stay flush-left so the column of "Slow
+   duration / Fast duration / …" reads as an aligned list rather
+   than chasing the varying-width controls on the right. */
+.editor-dialog-settings .editor-quick-label {
+  text-align: left;
+  justify-self: start;
 }
 
 /* OPTIONS button under name / seed — opens the settings dialog. */

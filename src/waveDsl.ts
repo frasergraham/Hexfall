@@ -35,6 +35,11 @@ export interface ParsedWave {
   slotInterval: number;
   origin: WaveOrigin;
   defaultDir: number;
+  /** When true, every spawn picks a random tilt in [-defaultDir,
+   *  +defaultDir] instead of using defaultDir as a fixed bias. The
+   *  DSL token is `dirRandom=1` (or 0). The magnitude lives in
+   *  `defaultDir`; this is just the on/off switch. */
+  defaultDirRandom: boolean;
   sizeMin: number;
   sizeMax: number;
   walls: WallKind;
@@ -257,6 +262,7 @@ export function parseWaveLine(line: string): ParsedWave {
     slotInterval: 0.55,
     origin: "top",
     defaultDir: 0,
+    defaultDirRandom: false,
     sizeMin: 2,
     sizeMax: 5,
     walls: "none",
@@ -325,6 +331,12 @@ export function parseWaveLine(line: string): ParsedWave {
       }
       case "dir": {
         wave.defaultDir = parseFloatStrict(value, token);
+        break;
+      }
+      case "dirrandom": {
+        // Truthy if any of "1", "true", "yes". Anything else = off.
+        const v = value.toLowerCase();
+        wave.defaultDirRandom = v === "1" || v === "true" || v === "yes";
         break;
       }
       case "size": {

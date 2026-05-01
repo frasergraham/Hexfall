@@ -41,6 +41,12 @@ export interface CustomChallenge {
   best: number;
   bestPct: number;
   starsEarned: 0 | 1 | 2 | 3;
+  /** Source attribution for challenges cloned via the editor's
+   *  "Remix Existing" flow. Holds the original roster challenge's
+   *  display name (e.g. "Calm Block 2"). Surfaced in the editor home
+   *  list as small "Remixed from: …" text. Undefined for from-scratch
+   *  challenges. */
+  remixedFrom?: string;
 }
 
 export interface CustomChallengeStore {
@@ -114,6 +120,9 @@ function fillDefaults(c: Partial<CustomChallenge>): CustomChallenge {
     best: numOr(c.best, 0),
     bestPct: clamp(numOr(c.bestPct, 0), 0, 100),
     starsEarned: clampStars(c.starsEarned ?? 0),
+    remixedFrom: typeof c.remixedFrom === "string" && c.remixedFrom.length > 0
+      ? c.remixedFrom
+      : undefined,
   };
 }
 
@@ -174,6 +183,40 @@ export function createCustomChallenge(): CustomChallenge {
   return fresh;
 }
 
+// Clone a roster (or other ChallengeDef-shaped) challenge into the
+// custom store so the player can tweak it. Copies waves, effects,
+// difficulty, picks a fresh seed + id, zeroes run stats, and stamps
+// `remixedFrom` with the source's display name for attribution. The
+// new copy is named "<Original> Remix" so it doesn't collide with
+// the original in the editor list.
+export function remixCustomChallenge(source: {
+  name: string;
+  difficulty: number;
+  effects: Partial<CustomChallengeEffects>;
+  waves: string[];
+}): CustomChallenge {
+  const store = loadCustomChallenges();
+  const trimmedName = source.name.length > MAX_CUSTOM_NAME_LEN - 6
+    ? source.name.slice(0, MAX_CUSTOM_NAME_LEN - 6).trimEnd()
+    : source.name;
+  const fresh = fillDefaults({
+    name: `${trimmedName} Remix`,
+    difficulty: clampDifficulty(source.difficulty) as 1 | 2 | 3 | 4 | 5,
+    effects: {
+      slowDuration: numOr(source.effects.slowDuration, DEFAULT_EFFECTS.slowDuration),
+      fastDuration: numOr(source.effects.fastDuration, DEFAULT_EFFECTS.fastDuration),
+      shieldDuration: numOr(source.effects.shieldDuration, DEFAULT_EFFECTS.shieldDuration),
+      droneDuration: numOr(source.effects.droneDuration, DEFAULT_EFFECTS.droneDuration),
+      dangerSize: numOr(source.effects.dangerSize, DEFAULT_EFFECTS.dangerSize),
+    },
+    waves: [...source.waves],
+    remixedFrom: source.name,
+  });
+  store.challenges.push(fresh);
+  saveStore(store);
+  return fresh;
+}
+
 // Persist a complete CustomChallenge. Bumps updatedAt. Run-stat fields
 // (best/bestPct/starsEarned) are preserved from the existing record so
 // editing a challenge doesn't wipe its stats.
@@ -188,6 +231,9 @@ export function upsertCustomChallenge(c: CustomChallenge): CustomChallenge {
     starsEarned: prev?.starsEarned ?? c.starsEarned ?? 0,
     createdAt: prev?.createdAt ?? c.createdAt,
     updatedAt: Date.now(),
+    // Attribution is set at creation (remix flow) and never overwritten
+    // by subsequent edits — it's a permanent label, like "based on" credit.
+    remixedFrom: prev?.remixedFrom ?? c.remixedFrom,
   });
   if (idx >= 0) store.challenges[idx] = merged;
   else store.challenges.push(merged);
