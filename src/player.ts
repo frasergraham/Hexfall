@@ -96,6 +96,12 @@ export class Player {
   invulnTimer = 0;
   pulse = 0;
 
+  // Orphan listener: fires whenever an automatic connectivity sweep
+  // drops cells (e.g. an addCell that landed a sticky in flight onto
+  // a slot whose neighbours had since been ripped away by a heal).
+  // Game wires this to spawnDebris so the dropped cells fly off.
+  private orphanListener: ((orphans: Array<{ cell: Axial; worldX: number; worldY: number }>) => void) | null = null;
+
   private hexSize: number;
   private engine: Engine;
   private collisionCategory: number;
@@ -298,10 +304,19 @@ export class Player {
     return bestCell;
   }
 
+  setOrphanListener(cb: ((orphans: Array<{ cell: Axial; worldX: number; worldY: number }>) => void) | null): void {
+    this.orphanListener = cb;
+  }
+
   addCell(cell: Axial): void {
     if (this.cells.some((c) => c.q === cell.q && c.r === cell.r)) return;
     this.cells.push(cell);
     this.rebuildBody();
+    // Adding a cell can land disconnected if the slot was bridged by
+    // cells that got removed while a stick-in-flight was homing — see
+    // the heal-during-flight scenario. Auto-sweep so the new cell
+    // either stays attached or falls off as debris.
+    this.dropOrphans();
   }
 
   removeCell(cell: Axial): boolean {
@@ -310,15 +325,27 @@ export class Player {
     this.cells = this.cells.filter((c) => !(c.q === cell.q && c.r === cell.r));
     if (this.cells.length === before) return false;
     this.rebuildBody();
+    // Removing a cell may have left two halves connected only through
+    // the removed cell — auto-sweep so callers don't have to remember.
+    this.dropOrphans();
     return true;
   }
 
-  // After a cell is removed the remaining blob may have split into two or
-  // more disconnected pieces. Keep the largest component, capture world
-  // positions for the rest, prune them, and return the pruned info so the
-  // caller can spawn debris that tumbles away from the body.
-  pruneDisconnected(): Array<{ cell: Axial; worldX: number; worldY: number }> {
-    if (this.cells.length <= 1) return [];
+  // Public alias kept for callers (sticky handler) that want to
+  // explicitly trigger a connectivity sweep — e.g. after a batch of
+  // removes where each individual removal already auto-swept, this
+  // is a no-op but harmless. Returns nothing; orphans flow through
+  // the listener.
+  pruneDisconnected(): void {
+    this.dropOrphans();
+  }
+
+  // Find connected components, keep the largest, drop the rest as
+  // orphans (capturing their world positions before the rebuild),
+  // and fire the orphan listener so the caller can spawn debris.
+  // Idempotent: a single-component blob makes this a cheap no-op.
+  private dropOrphans(): void {
+    if (this.cells.length <= 1) return;
 
     const cellSet = new Set(this.cells.map((c) => `${c.q},${c.r}`));
     const visited = new Set<string>();
@@ -343,7 +370,7 @@ export class Player {
       components.push(component);
     }
 
-    if (components.length <= 1) return [];
+    if (components.length <= 1) return;
 
     components.sort((a, b) => b.length - a.length);
     const keep = components[0]!;
@@ -359,7 +386,90 @@ export class Player {
     const keepSet = new Set(keep.map((c) => `${c.q},${c.r}`));
     this.cells = this.cells.filter((c) => keepSet.has(`${c.q},${c.r}`));
     this.rebuildBody();
-    return removed;
+    if (this.orphanListener && removed.length > 0) this.orphanListener(removed);
+  }
+
+  // After pruneDisconnected, the blob may still have a "barbell" shape:
+  // two clusters joined by a single bridge cell, technically one
+  // connected component but with a visible gap. Find any cell whose
+  // removal would split the blob into pieces where the smaller side
+  // is at most `MAX_DROP_FRAC` of the total. Drop the smaller side
+  // (and the bridge cell itself) as orphans; the result flows through
+  // the orphan listener (set via setOrphanListener) so callers can
+  // spawn outward-flying debris.
+  //
+  // Iterates until no further drops are possible — a long worm of a
+  // shape collapses into its central core through repeated drops.
+  pruneNarrowSections(): void {
+    const MAX_DROP_FRAC = 0.34; // smaller side ≤ ~1/3 of cells
+    const orphans: Array<{ cell: Axial; worldX: number; worldY: number }> = [];
+    if (this.cells.length <= 2) return;
+
+    while (this.cells.length > 2) {
+      const cellKeys = this.cells.map((c) => `${c.q},${c.r}`);
+      const cellSet = new Set(cellKeys);
+      let bestBridge: { cellIdx: number; smaller: Axial[] } | null = null;
+      let bestSkew = 0;
+
+      for (let i = 0; i < this.cells.length; i++) {
+        const candKey = cellKeys[i]!;
+        const reduced = new Set(cellSet);
+        reduced.delete(candKey);
+
+        // BFS over the cell-set minus the candidate; collect components.
+        const visited = new Set<string>();
+        const comps: Axial[][] = [];
+        for (const startKey of reduced) {
+          if (visited.has(startKey)) continue;
+          const [q, r] = startKey.split(",").map(Number);
+          const stack: Axial[] = [{ q: q!, r: r! }];
+          const comp: Axial[] = [];
+          while (stack.length > 0) {
+            const c = stack.pop()!;
+            const ck = `${c.q},${c.r}`;
+            if (visited.has(ck)) continue;
+            visited.add(ck);
+            comp.push(c);
+            for (const n of neighborsOf(c)) {
+              const nk = `${n.q},${n.r}`;
+              if (reduced.has(nk) && !visited.has(nk)) stack.push(n);
+            }
+          }
+          comps.push(comp);
+        }
+
+        if (comps.length < 2) continue;
+        comps.sort((a, b) => b.length - a.length);
+        const largest = comps[0]!.length;
+        const smaller = this.cells.length - 1 - largest;
+        if (smaller === 0) continue;
+        if (smaller / this.cells.length > MAX_DROP_FRAC) continue;
+        const skew = largest / smaller;
+        if (skew > bestSkew) {
+          bestSkew = skew;
+          bestBridge = {
+            cellIdx: i,
+            smaller: comps.slice(1).flatMap((c) => c),
+          };
+        }
+      }
+
+      if (!bestBridge) break;
+
+      // Capture world positions BEFORE rebuild — same trick
+      // pruneDisconnected uses.
+      const bridge = this.cells[bestBridge.cellIdx]!;
+      const toDrop: Axial[] = [bridge, ...bestBridge.smaller];
+      for (const c of toDrop) {
+        const wp = this.cellWorldCenter(c);
+        orphans.push({ cell: c, worldX: wp.x, worldY: wp.y });
+      }
+      const dropKeys = new Set(toDrop.map((c) => `${c.q},${c.r}`));
+      this.cells = this.cells.filter((c) => !dropKeys.has(`${c.q},${c.r}`));
+      this.rebuildBody();
+    }
+
+    if (this.orphanListener && orphans.length > 0) this.orphanListener(orphans);
   }
 
   // Close interior gaps in the blob. After a flurry of sticky removals the
@@ -462,6 +572,10 @@ export class Player {
     }
 
     if (changed) this.rebuildBody();
+    // Defensive: if compact's swap heuristic ever leaves the blob in
+    // two pieces (it shouldn't — stillConnectedWithout guards each
+    // swap — but the invariant is cheap to enforce), drop the orphans.
+    if (changed) this.dropOrphans();
     return changed;
   }
 
@@ -512,7 +626,10 @@ export class Player {
   }
 
   update(dt: number): void {
-    this.pulse += dt * 5;
+    // Slower danger pulse (was 5 rad/s) — the previous beat read as
+    // frantic in the critical window; this keeps it noticeable but
+    // doesn't drown out the rest of the screen during the fatal frame.
+    this.pulse += dt * 3.2;
     if (this.invulnTimer > 0) this.invulnTimer = Math.max(0, this.invulnTimer - dt);
     // criticalCharge: ramp up fast (snap into the warning) and decay slower
     // (so the player can see the threat clearing rather than blinking off).
@@ -552,9 +669,11 @@ export class Player {
       const cellIdx = i - 1;
       const darken = Math.min(0.45, cellIdx * 0.06);
       const grad = ctx.createLinearGradient(0, -sz, 0, sz);
-      // While in the fatal window, lerp the green→red along with the pulse so
-      // the body reads as "hot": mostly red, throbbing brighter on the beat.
-      const tint = charge * (0.7 + dangerPulse * 0.3);
+      // While in the fatal window, lerp the green→red along with the
+      // pulse so the body reads as "hot". The pulse contribution is
+      // intentionally small (~10% of the tint range) so the body
+      // colour reads as "danger" without the saturation flickering.
+      const tint = charge * (0.8 + dangerPulse * 0.1);
       const top = lerpHex("#9bf0c2", "#ff6b7a", tint);
       const bot = lerpHex("#2ec27a", "#a31c2c", tint);
       grad.addColorStop(0, scaleColor(top, 1 - darken));
@@ -562,18 +681,23 @@ export class Player {
       ctx.fillStyle = grad;
 
       if (charge > 0.01) {
-        ctx.shadowColor = `rgba(255, 70, 90, ${0.45 + 0.45 * dangerPulse * charge})`;
-        ctx.shadowBlur = (8 + 16 * dangerPulse) * charge;
+        // Tighter shadow band: alpha 0.5..0.65, blur 10..16 px (was
+        // 0.45..0.9 / 8..24). The glow stays present but the throb
+        // is subtle rather than frantic.
+        ctx.shadowColor = `rgba(255, 70, 90, ${(0.5 + 0.15 * dangerPulse) * charge})`;
+        ctx.shadowBlur = (10 + 6 * dangerPulse) * charge;
       }
       ctx.fill();
       ctx.shadowBlur = 0;
 
       let strokeAlpha = 1;
       if (this.inDanger || charge > 0.01) {
-        // Outline alone when warning, brighter + thicker pulse when critical.
-        const pulseGain = 0.4 + 0.6 * charge;
-        ctx.strokeStyle = `rgba(255, 92, 110, ${0.6 + dangerPulse * pulseGain})`;
-        ctx.lineWidth = 2 + dangerPulse * (1.5 + 2.0 * charge);
+        // Outline gets a small pulse — bright enough to read as "this
+        // body is alarmed" but with a much smaller line-width swing
+        // (was 2..5.5px, now 2.5..3.6px at full charge).
+        const pulseGain = 0.2 + 0.2 * charge;
+        ctx.strokeStyle = `rgba(255, 92, 110, ${0.7 + dangerPulse * pulseGain})`;
+        ctx.lineWidth = 2.5 + dangerPulse * (0.4 + 0.7 * charge);
       } else {
         ctx.strokeStyle = "#1c4a30";
         ctx.lineWidth = 1.5;

@@ -881,6 +881,11 @@ export class Game {
       collisionCategory: CAT_PLAYER,
       collisionMask: CAT_CLUSTER,
     });
+    // Player auto-runs a connectivity sweep after every cell mutation
+    // (addCell/removeCell/compact). Anything that falls off arrives
+    // here so the game can spawn debris with appropriate outward
+    // momentum from the player's centre.
+    this.player.setOrphanListener((orphans) => this.spawnPlayerOrphans(orphans));
 
     Events.on(this.engine, "collisionStart", (e) => this.onCollisionStart(e));
 
@@ -5797,6 +5802,7 @@ export class Game {
       collisionCategory: CAT_PLAYER,
       collisionMask: CAT_CLUSTER,
     });
+    this.player.setOrphanListener((orphans) => this.spawnPlayerOrphans(orphans));
     this.scoreEl.textContent = String(this.score);
   }
 
@@ -5974,6 +5980,26 @@ export class Game {
       this.cleanupOffscreenBodies();
       this.tickWalls(dt);
       this.tickWavePreview(dt);
+      return;
+    }
+    // Gameover: keep stepping physics so the wreckage from endGame()
+    // tumbles behind the overlay (and ages off-screen). No input,
+    // contacts, spawns or wave logic — those are gated by the
+    // "playing" state below. Without this branch, the player blob
+    // shatters into debris but the debris is frozen in place because
+    // nothing steps the engine until PLAY AGAIN.
+    if (this.state === "gameover") {
+      Engine.update(this.engine, Math.min(dt * 1000, 1000 / 30));
+      const screenBottom = this.boardOriginY + this.boardHeight + this.hexSize;
+      this.debris = this.debris.filter((d) => {
+        const alive = d.update(dt);
+        if (!alive || d.body.position.y > screenBottom) {
+          Composite.remove(this.engine.world, d.body);
+          return false;
+        }
+        return true;
+      });
+      this.cleanupOffscreenBodies();
       return;
     }
     if (this.state !== "playing") {
@@ -7243,6 +7269,31 @@ export class Game {
     }
   }
 
+  // Listener wired to Player.setOrphanListener — fires whenever an
+  // automatic connectivity sweep drops cells. Spawns each orphan as
+  // a debris piece flying outward from the player's centre.
+  private spawnPlayerOrphans(
+    orphans: ReadonlyArray<{ cell: Axial; worldX: number; worldY: number }>,
+  ): void {
+    for (const o of orphans) {
+      this.spawnDebris({
+        x: o.worldX,
+        y: o.worldY,
+        angle: this.player.body.angle,
+        velocity: this.player.body.velocity,
+        angularVelocity: this.player.body.angularVelocity,
+        impulse: {
+          x:
+            Math.sign(o.worldX - this.player.body.position.x) *
+              (1.5 + Math.random() * 1.5) +
+            (Math.random() - 0.5),
+          y: -1 - Math.random() * 2,
+        },
+        kind: "normal",
+      });
+    }
+  }
+
   private spawnDebris(opts: {
     x: number;
     y: number;
@@ -7437,30 +7488,13 @@ export class Game {
       }
       for (const item of toRemove) this.player.removeCell(item.cell);
 
-      // After all targeted removals, the remaining blob may have split.
-      // Keep the largest component and scatter the rest as outward debris.
-      const orphans = this.player.pruneDisconnected();
-      for (const o of orphans) {
-        this.spawnDebris({
-          x: o.worldX,
-          y: o.worldY,
-          angle: this.player.body.angle,
-          velocity: this.player.body.velocity,
-          angularVelocity: this.player.body.angularVelocity,
-          impulse: {
-            x:
-              Math.sign(o.worldX - this.player.body.position.x) *
-                (1.5 + Math.random() * 1.5) +
-              (Math.random() - 0.5),
-            y: -1 - Math.random() * 2,
-          },
-          kind: "normal",
-        });
-      }
-
-      // Heals can leave a hole where the removed cells used to bridge two
-      // wings of the blob. Compact pulls the outer cells inward to close it.
-      this.player.compact();
+      // After all targeted removals, drop any "barbell" shapes (still
+      // technically one component but joined by a thin neck) — true
+      // disconnections are auto-handled inside Player.removeCell now.
+      // The orphan listener (wired in the Game constructor) spawns
+      // debris for everything that falls off, so this call is fire-
+      // and-forget.
+      this.player.pruneNarrowSections();
     }
 
     // The sticky cluster itself shatters into debris.
