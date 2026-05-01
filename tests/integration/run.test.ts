@@ -104,32 +104,57 @@ function restoreMathRandom(): void {
   Math.random = realMathRandom;
 }
 
-async function runChallenge(challengeId: string, ticks: number, seed: number): Promise<RunTrace> {
-  seedMathRandom(seed);
+interface RunOptions {
+  /** Challenge id to drive (e.g. "1-1"). Mutually exclusive with `endless`. */
+  challengeId?: string;
+  /** When set, drives endless mode at this difficulty. */
+  endless?: { difficulty: "easy" | "medium" | "hard" | "hardcore" };
+  ticks: number;
+  seed: number;
+}
+
+async function runSimulation(opts: RunOptions): Promise<RunTrace> {
+  seedMathRandom(opts.seed);
   const dom = buildDom();
   Object.defineProperty(dom.canvas, "getBoundingClientRect", {
     value: () => ({ width: 360, height: 640, top: 0, left: 0, right: 360, bottom: 640, x: 0, y: 0, toJSON: () => "" }),
   });
   const { Game } = await import("../../src/game");
   const { challengeById } = await import("../../src/challenges");
-  const def = challengeById(challengeId);
-  if (!def) throw new Error(`Challenge ${challengeId} missing`);
   const game = new Game(dom);
   game.start();
   const internals = game as unknown as {
-    beginChallengeStart(def: typeof def): void;
+    beginChallengeStart(def: ReturnType<typeof challengeById>): void;
+    startOrRestart(initialScore?: number): void;
+    setGameMode(mode: "endless" | "challenge"): void;
     update(dt: number): void;
     score: number;
     state: string;
     clusters: Array<{ body: { id: number }; kind: string }>;
     player: { size(): number };
+    difficulty: string;
   };
-  internals.beginChallengeStart(def);
+
+  const label =
+    opts.challengeId ??
+    (opts.endless ? `endless-${opts.endless.difficulty}` : "?");
+
+  if (opts.challengeId) {
+    const def = challengeById(opts.challengeId);
+    if (!def) throw new Error(`Challenge ${opts.challengeId} missing`);
+    internals.beginChallengeStart(def);
+  } else if (opts.endless) {
+    internals.difficulty = opts.endless.difficulty;
+    internals.setGameMode("endless");
+    internals.startOrRestart(0);
+  } else {
+    throw new Error("runSimulation requires challengeId or endless");
+  }
 
   const DT = 16 / 1000;
   const trace: RunTrace = {
-    challengeId,
-    ticks,
+    challengeId: label,
+    ticks: opts.ticks,
     dtMs: 16,
     finalScore: 0,
     finalState: "",
@@ -140,7 +165,7 @@ async function runChallenge(challengeId: string, ticks: number, seed: number): P
   };
   let lastState = "";
   const seenBodyIds = new Set<number>();
-  for (let i = 0; i < ticks; i++) {
+  for (let i = 0; i < opts.ticks; i++) {
     internals.update(DT);
     trace.clusterCountTimeline.push(internals.clusters.length);
     trace.playerSizeTimeline.push(internals.player.size());
@@ -158,6 +183,10 @@ async function runChallenge(challengeId: string, ticks: number, seed: number): P
   trace.finalScore = internals.score;
   trace.finalState = internals.state;
   return trace;
+}
+
+async function runChallenge(challengeId: string, ticks: number, seed: number): Promise<RunTrace> {
+  return runSimulation({ challengeId, ticks, seed });
 }
 
 function fixturePath(name: string): string {
@@ -203,6 +232,95 @@ describe("integration smoke — deterministic challenge runs", () => {
     try {
       const trace = await runChallenge("3-3", 600, 0xbadcab);
       compareOrCapture(trace, "integration-run-3-3");
+    } finally {
+      restoreMathRandom();
+    }
+  });
+
+  // ----- Pickup-heavy fixtures ------------------------------------------
+  // 1-3 mixes slow pickups; 1-5 introduces fast; 5-1 uses shields. Long
+  // runs (1500 ticks ≈ 24 s in-game) so each pickup has time to spawn,
+  // collide with the player, fire its handle*Contact, and expire.
+
+  it("Challenge 1-3 (Slow Roll) — 1500 ticks, slow pickups", async () => {
+    try {
+      const trace = await runChallenge("1-3", 1500, 0x510);
+      compareOrCapture(trace, "integration-run-1-3-pickups");
+    } finally {
+      restoreMathRandom();
+    }
+  });
+
+  it("Challenge 1-5 (Soft Landing) — 1500 ticks, slow + fast", async () => {
+    try {
+      const trace = await runChallenge("1-5", 1500, 0xfa57);
+      compareOrCapture(trace, "integration-run-1-5-pickups");
+    } finally {
+      restoreMathRandom();
+    }
+  });
+
+  it("Challenge 5-1 (Long Haul) — 2000 ticks, shields + endurance", async () => {
+    try {
+      const trace = await runChallenge("5-1", 2000, 0x5c1e1d);
+      compareOrCapture(trace, "integration-run-5-1-shields");
+    } finally {
+      restoreMathRandom();
+    }
+  });
+
+  // ----- Death scenario --------------------------------------------------
+  // Drive the hardest shipped challenge (6-5 Gauntlet of Fear) for long
+  // enough that the player almost certainly dies, exercising endGame +
+  // the post-death gameover state where physics keeps stepping for the
+  // wreckage. If this run doesn't reach gameover we still capture the
+  // trace; the fixture pins whatever happens deterministically.
+
+  it("Challenge 6-5 (Gauntlet of Fear) — 3000 ticks, expect game over", async () => {
+    try {
+      const trace = await runChallenge("6-5", 3000, 0xdead);
+      compareOrCapture(trace, "integration-run-6-5-death");
+    } finally {
+      restoreMathRandom();
+    }
+  });
+
+  // ----- Endless mode fixtures ------------------------------------------
+  // Endless mode uses Math.random for spawns; with a seeded Math.random
+  // the run is fully deterministic. Each difficulty has different spawn
+  // weights, so all four exercise different config branches.
+
+  it("Endless EASY — 1500 ticks", async () => {
+    try {
+      const trace = await runSimulation({ endless: { difficulty: "easy" }, ticks: 1500, seed: 0xea51 });
+      compareOrCapture(trace, "integration-run-endless-easy");
+    } finally {
+      restoreMathRandom();
+    }
+  });
+
+  it("Endless MEDIUM — 1500 ticks", async () => {
+    try {
+      const trace = await runSimulation({ endless: { difficulty: "medium" }, ticks: 1500, seed: 0x6ed1 });
+      compareOrCapture(trace, "integration-run-endless-medium");
+    } finally {
+      restoreMathRandom();
+    }
+  });
+
+  it("Endless HARD — 1500 ticks", async () => {
+    try {
+      const trace = await runSimulation({ endless: { difficulty: "hard" }, ticks: 1500, seed: 0xa12d });
+      compareOrCapture(trace, "integration-run-endless-hard");
+    } finally {
+      restoreMathRandom();
+    }
+  });
+
+  it("Endless HARDCORE — 1500 ticks", async () => {
+    try {
+      const trace = await runSimulation({ endless: { difficulty: "hardcore" }, ticks: 1500, seed: 0xc02e });
+      compareOrCapture(trace, "integration-run-endless-hardcore");
     } finally {
       restoreMathRandom();
     }
