@@ -196,7 +196,7 @@ export const CHALLENGES: ChallengeDef[] = [
       "count=0, slotRate=0.5, speed=1.3, 140,240,340,440,540,440,340,240,140",
       "size=3-4, rate=0.6, speed=1.45, count=12, walls=pinch, pct=normal:55,coin:35,sticky:10",
       "size=1, rate=0.16, speed=1.5, count=22",
-      "size=4, rate=0.55, speed=1.55, count=14, pct=normal:60,coin:30,fast:10",
+      "size=4, rate=0.55, speed=1.55, count=14, pct=normal:55,coin:25,sticky:10,fast:10",
       "size=1, rate=0.15, speed=1.6, count=26",
     ],
   },
@@ -239,7 +239,7 @@ export const CHALLENGES: ChallengeDef[] = [
       "size=3-4, rate=0.65, speed=1.5, count=12, walls=narrow",
       "count=0, slotRate=0.45, speed=1.45, walls=narrow, 230,330,430,000,330,230,430,000,330",
       "size=1, rate=0.16, speed=1.55, count=24",
-      "size=3, rate=0.55, speed=1.6, count=14, walls=narrow, pct=normal:60,fast:20,sticky:10,coin:10",
+      "size=3, rate=0.55, speed=1.6, count=14, walls=narrow, pct=normal:55,fast:15,sticky:20,coin:10",
       "size=1, rate=0.15, speed=1.65, count=26, walls=narrow",
       "count=0, slotRate=0.4, speed=1.65, walls=narrow, 130,230,330,000,230,330,130,000,230",
     ],
@@ -259,7 +259,7 @@ export const CHALLENGES: ChallengeDef[] = [
       "size=3-4, rate=0.65, speed=1.4, count=12, walls=zigzag",
       "count=0, slotRate=0.45, speed=1.4, walls=zigzag, 140,340,540,000,240,440,140,340,540",
       "size=1, rate=0.16, speed=1.45, count=22, walls=zigzag",
-      "size=3-4, rate=0.55, speed=1.5, count=13, walls=zigzag, pct=normal:65,fast:15,sticky:10,coin:10",
+      "size=3-4, rate=0.55, speed=1.5, count=13, walls=zigzag, pct=normal:55,fast:15,sticky:20,coin:5,tiny:5",
       "size=1, rate=0.15, speed=1.55, count=26, walls=zigzag",
     ],
   },
@@ -279,7 +279,7 @@ export const CHALLENGES: ChallengeDef[] = [
       "count=0, slotRate=0.45, speed=1.45, walls=zigzag, 130,230,330,430,530,000,230,330,430",
       "size=3-4, rate=0.6, speed=1.55, count=12, walls=narrow, pct=normal:55,fast:15,sticky:15,slow:10,coin:5",
       "size=1, rate=0.15, speed=1.6, count=26, walls=zigzag",
-      "size=3, rate=0.5, speed=1.65, count=14, walls=narrow",
+      "size=3, rate=0.5, speed=1.65, count=14, walls=narrow, pct=normal:55,sticky:25,fast:15,coin:5",
     ],
   },
   {
@@ -293,7 +293,7 @@ export const CHALLENGES: ChallengeDef[] = [
       "size=3-4, rate=0.7, speed=1.35, count=10, walls=pinch, pct=normal:55,sticky:30,coin:15",
       "count=0, slotRate=0.5, speed=1.3, walls=pinch, 130,230,330,430,530,000,230,330,430",
       "size=1, rate=0.16, speed=1.4, count=22",
-      "size=3-4, rate=0.65, speed=1.45, count=12, walls=zigzag, pct=normal:50,sticky:35,fast:5,coin:10",
+      "size=3-4, rate=0.65, speed=1.45, count=12, walls=zigzag, pct=normal:50,sticky:30,fast:5,coin:10,tiny:5",
       "size=1, rate=0.16, speed=1.5, count=24, walls=zigzag",
       "size=3-4, rate=0.55, speed=1.55, count=13, pct=normal:55,sticky:30,fast:5,coin:10",
       "count=0, slotRate=0.45, speed=1.5, walls=zigzag, 130,330,530,000,230,430,000,130,330,530",
@@ -310,7 +310,7 @@ export const CHALLENGES: ChallengeDef[] = [
       "size=3, rate=0.75, speed=1.3, count=9, walls=zigzag, pct=normal:60,fast:20,sticky:10,coin:10",
       "count=0, slotRate=0.5, speed=1.3, walls=zigzag, 130,230,330,430,530,330,230,130,330",
       "size=1, rate=0.18, speed=1.4, count=20, walls=zigzag",
-      "size=3-4, rate=0.7, speed=1.4, count=11, walls=zigzag, pct=normal:55,fast:25,slow:10,sticky:10",
+      "size=3-4, rate=0.7, speed=1.4, count=11, walls=zigzag, pct=normal:50,fast:25,slow:10,sticky:10,tiny:5",
       "size=1, rate=0.18, speed=1.45, count=22, walls=zigzag",
       "count=0, slotRate=0.45, speed=1.45, walls=zigzag, 140,240,340,440,540,000,340,440,540,440,340",
       "size=3-4, rate=0.6, speed=1.55, count=12, walls=narrow",
@@ -318,7 +318,7 @@ export const CHALLENGES: ChallengeDef[] = [
       "size=3, rate=0.5, speed=1.65, count=14, walls=zigzag, pct=normal:60,fast:20,sticky:10,coin:10",
       "count=0, slotRate=0.4, speed=1.65, walls=zigzag, 130,230,330,430,530,000,230,330,430,000,130,530",
       "size=1, rate=0.15, speed=1.7, count=28, walls=zigzag",
-      "size=3, rate=0.45, speed=1.75, count=15, walls=zigzag",
+      "size=3, rate=0.45, speed=1.75, count=15, walls=zigzag, pct=normal:55,sticky:25,fast:10,big:5,coin:5",
     ],
   },
   {
@@ -330,7 +330,7 @@ export const CHALLENGES: ChallengeDef[] = [
       "size=3, rate=0.7, speed=1.4, count=10, walls=zigzag, pct=normal:55,fast:20,sticky:15,coin:10",
       "count=0, slotRate=0.45, speed=1.35, walls=zigzag, 130,230,330,430,530,000,330,230,430,530,130",
       "size=1, rate=0.16, speed=1.45, count=20, walls=zigzag",
-      "size=3-4, rate=0.65, speed=1.5, count=11, walls=zigzag, pct=normal:50,fast:25,slow:10,sticky:10,coin:5",
+      "size=3-4, rate=0.65, speed=1.5, count=11, walls=zigzag, pct=normal:45,fast:25,slow:10,sticky:10,coin:5,tiny:5",
       "size=1, rate=0.16, speed=1.55, count=22, walls=zigzag",
       "count=0, slotRate=0.4, speed=1.55, walls=zigzag, 140,340,540,000,240,440,140,340,540,440,340,240",
       "size=3-4, rate=0.55, speed=1.6, count=13, walls=narrow",
@@ -338,7 +338,7 @@ export const CHALLENGES: ChallengeDef[] = [
       "size=3, rate=0.5, speed=1.7, count=14, walls=zigzag, pct=normal:55,fast:25,sticky:10,coin:10",
       "count=0, slotRate=0.4, speed=1.7, walls=zigzag, 140,340,540,000,240,440,000,340,540,440,340,240,140",
       "size=1, rate=0.14, speed=1.75, count=28, walls=zigzag",
-      "size=3, rate=0.45, speed=1.8, count=15, walls=zigzag",
+      "size=3, rate=0.45, speed=1.8, count=15, walls=zigzag, pct=normal:50,sticky:30,fast:10,big:5,coin:5",
       "size=1, rate=0.14, speed=1.85, count=30, walls=zigzag",
     ],
   },
@@ -358,9 +358,9 @@ export const CHALLENGES: ChallengeDef[] = [
       "size=3, rate=0.6, speed=1.55, count=12, walls=zigzag",
       "count=0, slotRate=0.4, speed=1.55, walls=narrow, 130,230,330,000,230,330,130,000,230,330",
       "size=1, rate=0.15, speed=1.6, count=24, walls=narrow",
-      "size=3, rate=0.55, speed=1.65, count=13, walls=narrow, pct=normal:60,fast:20,sticky:10,coin:10",
+      "size=3, rate=0.55, speed=1.65, count=13, walls=narrow, pct=normal:50,fast:20,sticky:20,coin:5,tiny:5",
       "size=1, rate=0.14, speed=1.7, count=28, walls=narrow",
-      "size=3, rate=0.5, speed=1.75, count=14, walls=narrow",
+      "size=3, rate=0.5, speed=1.75, count=14, walls=narrow, pct=normal:55,sticky:25,fast:15,coin:5",
       "size=1, rate=0.14, speed=1.8, count=30, walls=zigzag",
     ],
   },
@@ -373,14 +373,14 @@ export const CHALLENGES: ChallengeDef[] = [
       "size=3, rate=0.7, speed=1.45, count=10, walls=zigzag, pct=normal:55,fast:30,coin:15",
       "size=1, rate=0.16, speed=1.5, count=20, walls=zigzag",
       "count=0, slotRate=0.45, speed=1.5, walls=zigzag, 130,230,330,430,530,000,230,330,430",
-      "size=3-4, rate=0.6, speed=1.6, count=12, walls=narrow, pct=normal:50,fast:30,slow:10,sticky:10",
+      "size=3-4, rate=0.6, speed=1.6, count=12, walls=narrow, pct=normal:45,fast:25,slow:10,sticky:10,big:10",
       "size=1, rate=0.16, speed=1.65, count=22, walls=zigzag",
       "size=3, rate=0.55, speed=1.7, count=13, walls=zigzag",
       "count=0, slotRate=0.4, speed=1.65, walls=zigzag, 230,330,430,000,330,430,230,000,330",
       "size=1, rate=0.14, speed=1.75, count=24, walls=narrow",
-      "size=3, rate=0.5, speed=1.8, count=14, walls=zigzag, pct=normal:55,fast:25,slow:10,sticky:10",
+      "size=3, rate=0.5, speed=1.8, count=14, walls=zigzag, pct=normal:45,fast:25,slow:5,sticky:20,big:5",
       "size=1, rate=0.14, speed=1.85, count=28, walls=zigzag",
-      "size=3, rate=0.45, speed=1.95, count=15, walls=narrow",
+      "size=3, rate=0.45, speed=1.95, count=15, walls=narrow, pct=normal:50,sticky:25,fast:15,big:10",
       "size=1, rate=0.13, speed=2.0, count=32, walls=zigzag",
     ],
   },
@@ -398,9 +398,9 @@ export const CHALLENGES: ChallengeDef[] = [
       "size=3, rate=0.6, speed=1.65, count=12, walls=zigzag",
       "size=1, rate=0.15, speed=1.7, count=24, walls=narrow",
       "count=0, slotRate=0.4, speed=1.65, walls=narrow, 230,330,430,000,330,430,230,000,330,430",
-      "size=3, rate=0.55, speed=1.75, count=13, walls=narrow, pct=normal:55,fast:25,sticky:10,slow:10",
+      "size=3, rate=0.55, speed=1.75, count=13, walls=narrow, pct=normal:45,fast:20,sticky:25,slow:5,tiny:5",
       "size=1, rate=0.14, speed=1.8, count=26, walls=narrow",
-      "size=3, rate=0.5, speed=1.85, count=14, walls=narrow",
+      "size=3, rate=0.5, speed=1.85, count=14, walls=narrow, pct=normal:55,sticky:25,fast:15,coin:5",
       "size=1, rate=0.13, speed=1.95, count=30, walls=narrow",
       "size=3, rate=0.45, speed=2.0, count=15, walls=narrow",
     ],
@@ -414,16 +414,16 @@ export const CHALLENGES: ChallengeDef[] = [
       "size=3, rate=0.7, speed=1.55, count=10, walls=zigzag, pct=normal:50,fast:35,coin:15",
       "size=1, rate=0.16, speed=1.6, count=20, walls=zigzag",
       "count=0, slotRate=0.45, speed=1.55, walls=zigzag, 130,230,330,430,530,000,230,330,430,530",
-      "size=3, rate=0.6, speed=1.7, count=12, walls=narrow, pct=normal:50,fast:30,slow:10,sticky:10",
+      "size=3, rate=0.6, speed=1.7, count=12, walls=narrow, pct=normal:40,fast:30,slow:10,sticky:10,big:10",
       "size=1, rate=0.15, speed=1.75, count=22, walls=zigzag",
       "size=3, rate=0.55, speed=1.8, count=13, walls=zigzag",
       "size=1, rate=0.14, speed=1.85, count=24, walls=narrow",
       "count=0, slotRate=0.4, speed=1.85, walls=zigzag, 140,340,540,000,240,440,140,340,540,440,340,240",
-      "size=3, rate=0.5, speed=1.95, count=15, walls=zigzag, pct=normal:50,fast:30,slow:10,sticky:10",
+      "size=3, rate=0.5, speed=1.95, count=15, walls=zigzag, pct=normal:40,fast:25,slow:10,sticky:15,big:10",
       "size=1, rate=0.13, speed=2.0, count=28, walls=zigzag",
       "size=3, rate=0.45, speed=2.1, count=16, walls=narrow",
       "size=1, rate=0.13, speed=2.15, count=32, walls=zigzag",
-      "size=3, rate=0.4, speed=2.2, count=17, walls=zigzag",
+      "size=3, rate=0.4, speed=2.2, count=17, walls=zigzag, pct=normal:50,sticky:25,fast:15,big:10",
     ],
   },
   {
@@ -437,14 +437,14 @@ export const CHALLENGES: ChallengeDef[] = [
       "count=0, slotRate=0.45, speed=1.5, walls=narrow, 230,330,430,000,330,430,230,000,330,430",
       "size=3, rate=0.65, speed=1.6, count=11, walls=narrow",
       "size=1, rate=0.15, speed=1.65, count=22, walls=narrow",
-      "size=3, rate=0.6, speed=1.7, count=12, walls=narrow, pct=normal:50,fast:25,slow:15,sticky:10",
+      "size=3, rate=0.6, speed=1.7, count=12, walls=narrow, pct=normal:45,fast:25,slow:15,sticky:10,tiny:5",
       "count=0, slotRate=0.4, speed=1.7, walls=narrow, 230,330,430,000,330,230,430,000,330,430,230",
       "size=1, rate=0.14, speed=1.8, count=24, walls=narrow",
       "size=3, rate=0.55, speed=1.85, count=13, walls=narrow",
       "size=1, rate=0.13, speed=1.9, count=28, walls=narrow",
-      "size=3, rate=0.5, speed=2.0, count=14, walls=narrow, pct=normal:55,fast:20,sticky:15,slow:10",
+      "size=3, rate=0.5, speed=2.0, count=14, walls=narrow, pct=normal:45,fast:20,sticky:25,slow:5,tiny:5",
       "size=1, rate=0.13, speed=2.05, count=30, walls=narrow",
-      "size=3, rate=0.45, speed=2.15, count=15, walls=narrow",
+      "size=3, rate=0.45, speed=2.15, count=15, walls=narrow, pct=normal:50,sticky:30,fast:15,big:5",
     ],
   },
 
@@ -538,11 +538,22 @@ function makeLongHaul(n: number, startSpeed: number, endSpeed: number, startRate
       );
     } else if (phase === 3) {
       const count = 11 + Math.floor(i * 0.35);
-      out.push(`size=${sizeMin}-${sizeMax}, rate=${rate}, speed=${speed}, count=${count}${wallTok}, pct=normal:55,coin:10,sticky:15,fast:10,slow:5,shield:5`);
+      out.push(`size=${sizeMin}-${sizeMax}, rate=${rate}, speed=${speed}, count=${count}${wallTok}, pct=normal:48,coin:10,sticky:15,fast:10,slow:4,shield:5,tiny:4,big:4`);
     } else {
       const count = 10 + Math.floor(i * 0.4);
-      out.push(`size=${sizeMin}-${sizeMax}, rate=${rate}, speed=${speed}, count=${count}${wallTok}, pct=normal:75,coin:15,fast:5,slow:5`);
+      // Phase 4 is the recovery wave between dense rain and the next
+      // pickup-mix — ensure it carries some heals so a player low on
+      // HP after a long-haul rain burst has a chance to drop a hex.
+      out.push(`size=${sizeMin}-${sizeMax}, rate=${rate}, speed=${speed}, count=${count}${wallTok}, pct=normal:60,sticky:15,coin:15,fast:5,slow:5`);
     }
+  }
+  // Final-wave heal-relief: replace whatever pattern landed on the
+  // last slot with a deterministic sticky-heavy mix so endurance runs
+  // always end with at least one fair recovery shot.
+  if (out.length > 0) {
+    const finaleSpeed = endSpeed.toFixed(2);
+    const finaleRate = endRate.toFixed(2);
+    out[out.length - 1] = `size=2-3, rate=${finaleRate}, speed=${finaleSpeed}, count=12, pct=normal:45,sticky:30,fast:10,coin:10,big:5`;
   }
   return out;
 }
@@ -578,15 +589,23 @@ function makeFinalLadder(n: number, startSpeed: number, endSpeed: number): strin
       );
     } else if (phase === 3) {
       const count = 13 + Math.floor(i * 0.4);
-      out.push(`size=${sizeMin}-${sizeMax}, rate=${rate}, speed=${speed}, count=${count}${wallTok}, pct=normal:50,coin:10,sticky:10,fast:15,slow:5,shield:5,drone:5`);
+      out.push(`size=${sizeMin}-${sizeMax}, rate=${rate}, speed=${speed}, count=${count}${wallTok}, pct=normal:42,coin:10,sticky:10,fast:13,slow:4,shield:5,drone:5,tiny:5,big:6`);
     } else if (phase === 4) {
       const rainRate = Math.max(0.11, 0.18 - 0.07 * t).toFixed(2);
       const count = 18 + Math.floor(i * 0.3);
       out.push(`size=1, rate=${rainRate}, speed=${speed}${wallTok}, count=${count}`);
     } else {
       const count = 12 + Math.floor(i * 0.45);
-      out.push(`size=${sizeMin}-${sizeMax}, rate=${rate}, speed=${speed}, count=${count}${wallTok}, pct=normal:65,coin:15,fast:10,sticky:5,slow:5`);
+      // Phase 5 closes each loop iteration — bump sticky so the
+      // player has a steady recovery beat across the long run.
+      out.push(`size=${sizeMin}-${sizeMax}, rate=${rate}, speed=${speed}, count=${count}${wallTok}, pct=normal:55,coin:15,fast:10,sticky:15,slow:5`);
     }
+  }
+  // Final-wave heal-relief: same idea as makeLongHaul but with a
+  // little drone sprinkled in to keep block 6's flavour.
+  if (out.length > 0) {
+    const finaleSpeed = endSpeed.toFixed(2);
+    out[out.length - 1] = `size=2-3, rate=0.55, speed=${finaleSpeed}, count=12, pct=normal:40,sticky:30,fast:10,big:8,drone:7,coin:5`;
   }
   return out;
 }
