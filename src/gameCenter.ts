@@ -1,4 +1,6 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
+import { loadJson, saveJson } from "./storage";
+import { STORAGE_KEYS } from "./storageKeys";
 
 export type LeaderboardDifficulty = "easy" | "medium" | "hard" | "hardcore";
 
@@ -120,26 +122,16 @@ function isIOS(): boolean {
 
 // ---------- Persistent earned-set (localStorage) ----------
 
-const STORAGE_KEY = "hexrain.earnedAchievements";
+const STORAGE_KEY = STORAGE_KEYS.earnedAchievements;
 
 function loadEarned(): Set<AchievementId> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(parsed.filter((id): id is AchievementId => META_BY_ID.has(id as AchievementId)));
-  } catch {
-    return new Set();
-  }
+  const parsed = loadJson<unknown>(STORAGE_KEY, null);
+  if (!Array.isArray(parsed)) return new Set();
+  return new Set(parsed.filter((id): id is AchievementId => META_BY_ID.has(id as AchievementId)));
 }
 
 function saveEarned(set: Set<AchievementId>): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([...set]));
-  } catch {
-    // ignore storage failures (e.g. private mode quota)
-  }
+  saveJson(STORAGE_KEY, [...set]);
 }
 
 const earned = loadEarned();

@@ -8,8 +8,10 @@ import { parseWaveLine, type ChallengeDefLike } from "./waveDsl";
 import type { ChallengeDef } from "./challenges";
 import { syncProgressUp } from "./cloudSync";
 import { clamp, clampDifficulty, clampStars, numOr } from "./validation";
+import { loadJson, saveJson } from "./storage";
+import { STORAGE_KEYS } from "./storageKeys";
 
-const STORAGE_KEY = "hexrain.customChallenges.v1";
+const STORAGE_KEY = STORAGE_KEYS.customChallenges;
 
 export const MAX_WAVES_PER_CUSTOM = 100;
 export const MAX_CUSTOM_NAME_LEN = 36;
@@ -174,28 +176,18 @@ function fillDefaults(c: Partial<CustomChallenge>): CustomChallenge {
 // src/validation.ts and are shared with cloudSync's record marshalling.
 
 export function loadCustomChallenges(): CustomChallengeStore {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...EMPTY_STORE };
-    const parsed = JSON.parse(raw) as Partial<CustomChallengeStore> | null;
-    if (!parsed || parsed.v !== 1 || !Array.isArray(parsed.challenges)) {
-      return { ...EMPTY_STORE };
-    }
-    const challenges = parsed.challenges
-      .filter((c) => !!c && typeof c === "object")
-      .map((c) => fillDefaults(c as Partial<CustomChallenge>));
-    return { v: 1, challenges };
-  } catch {
+  const parsed = loadJson<Partial<CustomChallengeStore> | null>(STORAGE_KEY, null);
+  if (!parsed || parsed.v !== 1 || !Array.isArray(parsed.challenges)) {
     return { ...EMPTY_STORE };
   }
+  const challenges = parsed.challenges
+    .filter((c) => !!c && typeof c === "object")
+    .map((c) => fillDefaults(c as Partial<CustomChallenge>));
+  return { v: 1, challenges };
 }
 
 function saveStore(store: CustomChallengeStore): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
-  } catch {
-    // ignore quota / private mode
-  }
+  saveJson(STORAGE_KEY, store);
   // Push the updated custom-challenge set to the user's private CloudKit
   // DB (no-op on web / no iCloud). syncProgressUp is debounced internally.
   syncProgressUp();

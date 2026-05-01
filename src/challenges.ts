@@ -8,6 +8,8 @@
 import type { ClusterKind } from "./types";
 import { parseWaveLine, validateChallenge, type ChallengeDefLike } from "./waveDsl";
 import { syncProgressUp } from "./cloudSync";
+import { loadJson, saveJson } from "./storage";
+import { STORAGE_KEYS } from "./storageKeys";
 
 export interface ChallengeDef extends ChallengeDefLike {
   // ChallengeDefLike already includes id, name, difficulty, block, index, effects, waves.
@@ -35,7 +37,7 @@ export interface ChallengeStarThresholds {
   three: number;
 }
 
-const STORAGE_KEY = "hexrain.challenges.v1";
+const STORAGE_KEY = STORAGE_KEYS.challengeProgress;
 
 // `?debug=1` unlocks every block immediately and disables challenge-progress
 // persistence so test runs (including the 199 / 399 / 599 score buttons) don't
@@ -706,39 +708,31 @@ export function awardStars(score: number, t: ChallengeStarThresholds): 0 | 1 | 2
 // === Persistence ==========================================================
 
 export function loadChallengeProgress(): ChallengeProgress {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...EMPTY_PROGRESS };
-    const parsed = JSON.parse(raw) as Partial<ChallengeProgress> | null;
-    if (!parsed || parsed.v !== 1) return { ...EMPTY_PROGRESS };
-    const validIds = new Set(CHALLENGES.map((c) => c.id));
-    const bestEntries = Object.entries(parsed.best ?? {}).filter(([id]) => validIds.has(id));
-    const bestPctEntries = Object.entries(parsed.bestPct ?? {}).filter(([id]) => validIds.has(id));
-    const starsEntries = Object.entries(parsed.stars ?? {})
-      .filter(([id]) => validIds.has(id))
-      .map(([id, n]) => [id, Math.max(0, Math.min(3, Math.round(Number(n) || 0)))] as const);
-    const completed = (parsed.completed ?? []).filter((id) => validIds.has(id));
-    const unique = Array.from(new Set(completed)).sort();
-    const purchasedUnlock = parsed.purchasedUnlock === true;
-    return {
-      v: 1,
-      best: Object.fromEntries(bestEntries),
-      bestPct: Object.fromEntries(bestPctEntries),
-      stars: Object.fromEntries(starsEntries),
-      completed: unique,
-      unlockedBlocks: recomputeUnlocked(new Set(unique), purchasedUnlock),
-      purchasedUnlock,
-    };
-  } catch {
-    return { ...EMPTY_PROGRESS };
-  }
+  const parsed = loadJson<Partial<ChallengeProgress> | null>(STORAGE_KEY, null);
+  if (!parsed || parsed.v !== 1) return { ...EMPTY_PROGRESS };
+  const validIds = new Set(CHALLENGES.map((c) => c.id));
+  const bestEntries = Object.entries(parsed.best ?? {}).filter(([id]) => validIds.has(id));
+  const bestPctEntries = Object.entries(parsed.bestPct ?? {}).filter(([id]) => validIds.has(id));
+  const starsEntries = Object.entries(parsed.stars ?? {})
+    .filter(([id]) => validIds.has(id))
+    .map(([id, n]) => [id, Math.max(0, Math.min(3, Math.round(Number(n) || 0)))] as const);
+  const completed = (parsed.completed ?? []).filter((id) => validIds.has(id));
+  const unique = Array.from(new Set(completed)).sort();
+  const purchasedUnlock = parsed.purchasedUnlock === true;
+  return {
+    v: 1,
+    best: Object.fromEntries(bestEntries),
+    bestPct: Object.fromEntries(bestPctEntries),
+    stars: Object.fromEntries(starsEntries),
+    completed: unique,
+    unlockedBlocks: recomputeUnlocked(new Set(unique), purchasedUnlock),
+    purchasedUnlock,
+  };
 }
 
 function save(p: ChallengeProgress): void {
   if (DEBUG_MODE) return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
-  } catch { /* ignore quota / private mode */ }
+  saveJson(STORAGE_KEY, p);
   // Mirror to CloudKit private DB if available. Debounced inside
   // syncProgressUp so a flurry of saves only triggers one round-trip.
   syncProgressUp();

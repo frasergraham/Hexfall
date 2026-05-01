@@ -97,6 +97,8 @@ import {
 import { isCloudKitAvailable } from "./cloudKit";
 import { shareChallenge } from "./share";
 import { hashSeed, mulberry32, type Random } from "./rng";
+import { loadBool, loadJson, loadString, removeKey, saveBool, saveJson, saveString } from "./storage";
+import { STORAGE_KEYS } from "./storageKeys";
 
 // TEMP: until the IAP unlock flow is verified end-to-end on TestFlight,
 // the Challenge Editor is auto-unlocked on iOS so we can keep iterating
@@ -259,38 +261,28 @@ const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
   },
 };
 
-const DIFFICULTY_STORAGE_KEY = "hexrain.difficulty";
+const DIFFICULTY_STORAGE_KEY = STORAGE_KEYS.difficulty;
 const DIFFICULTY_DEFAULT: Difficulty = "medium";
-const HIGH_SCORE_KEY_PREFIX = "hexrain.highScore.";
+const HIGH_SCORE_KEY_PREFIX = STORAGE_KEYS.highScorePrefix;
 
 // Hardcore difficulty: locked by default. Unlocks organically when the
 // player scores HARDCORE_UNLOCK_SCORE on hard, or via the unlock-all IAP.
-const HARDCORE_UNLOCK_KEY = "hexrain.hardcoreUnlocked";
+const HARDCORE_UNLOCK_KEY = STORAGE_KEYS.hardcoreUnlocked;
 const HARDCORE_UNLOCK_SCORE = 1000;
-const LEGACY_HIGH_SCORE_KEY = "hexrain.highScore";
+const LEGACY_HIGH_SCORE_KEY = STORAGE_KEYS.legacyHighScore;
 // Per-kind first-appearance hint labels (AVOID/HEAL/etc.) and the
 // rotate tutorial fire once per player, not once per session.
-const SEEN_HINTS_STORAGE_KEY = "hexrain.seenHints";
-const ROTATE_TUTORIAL_STORAGE_KEY = "hexrain.rotateTutorialShown";
-const CONTROLS_HINT_STORAGE_KEY = "hexrain.controlsHintShown";
+const SEEN_HINTS_STORAGE_KEY = STORAGE_KEYS.seenHints;
+const ROTATE_TUTORIAL_STORAGE_KEY = STORAGE_KEYS.rotateTutorialShown;
+const CONTROLS_HINT_STORAGE_KEY = STORAGE_KEYS.controlsHintShown;
 
 function loadSeenHints(): Set<ClusterKind> {
-  try {
-    const raw = localStorage.getItem(SEEN_HINTS_STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? new Set(parsed as ClusterKind[]) : new Set();
-  } catch {
-    return new Set();
-  }
+  const parsed = loadJson<unknown>(SEEN_HINTS_STORAGE_KEY, null);
+  return Array.isArray(parsed) ? new Set(parsed as ClusterKind[]) : new Set();
 }
 
 function saveSeenHints(set: Set<ClusterKind>): void {
-  try {
-    localStorage.setItem(SEEN_HINTS_STORAGE_KEY, JSON.stringify([...set]));
-  } catch {
-    /* quota / private mode */
-  }
+  saveJson(SEEN_HINTS_STORAGE_KEY, [...set]);
 }
 
 // Persisted UI state: whether each collapsible section on the
@@ -299,26 +291,18 @@ function saveSeenHints(set: Set<ClusterKind>): void {
 // collapsed = false so new players see content on first visit.
 type CollapsibleKey = "official" | "myChallenges" | "installedChallenges" | "community";
 const COLLAPSED_KEYS: Record<CollapsibleKey, string> = {
-  official: "hexrain.challengeSelect.officialCollapsed.v1",
-  myChallenges: "hexrain.challengeSelect.myChallengesCollapsed.v1",
-  installedChallenges: "hexrain.challengeSelect.installedChallengesCollapsed.v1",
-  community: "hexrain.challengeSelect.communityCollapsed.v1",
+  official: STORAGE_KEYS.challengeSelectOfficialCollapsed,
+  myChallenges: STORAGE_KEYS.challengeSelectMyChallengesCollapsed,
+  installedChallenges: STORAGE_KEYS.challengeSelectInstalledChallengesCollapsed,
+  community: STORAGE_KEYS.challengeSelectCommunityCollapsed,
 };
 
 function loadCollapsed(key: CollapsibleKey): boolean {
-  try {
-    return localStorage.getItem(COLLAPSED_KEYS[key]) === "1";
-  } catch {
-    return false;
-  }
+  return loadBool(COLLAPSED_KEYS[key], false);
 }
 
 function saveCollapsed(key: CollapsibleKey, collapsed: boolean): void {
-  try {
-    localStorage.setItem(COLLAPSED_KEYS[key], collapsed ? "1" : "0");
-  } catch {
-    /* quota / private mode */
-  }
+  saveBool(COLLAPSED_KEYS[key], collapsed);
 }
 
 const BASE_FALL_SPEED = 1.6; // initial downward velocity for spawned clusters (px/ms)
@@ -768,13 +752,13 @@ export class Game {
   // player grows from 1 → 2 hexes. Slows the game to 0.25x and shows a
   // big "ROTATE" label + curved double-headed arrow around the player
   // until they rotate enough or the timer expires.
-  private rotateTutorialShown = localStorage.getItem(ROTATE_TUTORIAL_STORAGE_KEY) === "1";
+  private rotateTutorialShown = loadBool(ROTATE_TUTORIAL_STORAGE_KEY, false);
   private rotateTutorialActive = false;
   private rotateTutorialTimer = 0;
   private rotateTutorialStartAngle = 0;
   // Desktop one-shot controls hint shown on the menu the first time
   // the player ever launches. Cleared by Reset hints.
-  private controlsHintShown = localStorage.getItem(CONTROLS_HINT_STORAGE_KEY) === "1";
+  private controlsHintShown = loadBool(CONTROLS_HINT_STORAGE_KEY, false);
 
   // Fast power-up combo state. fastLevel counts how many fast pickups
   // happened this run (1 → 3x, 2 → 4x, 3 → 5x, …); each pickup also
@@ -856,13 +840,13 @@ export class Game {
 
     // Migrate the original single-best key into the medium per-difficulty
     // slot the first time we see it, then forget the legacy key.
-    const legacy = localStorage.getItem(LEGACY_HIGH_SCORE_KEY);
-    if (legacy != null) {
+    const legacy = loadString(LEGACY_HIGH_SCORE_KEY, "");
+    if (legacy !== "") {
       const mediumKey = HIGH_SCORE_KEY_PREFIX + "medium";
-      const existing = Number(localStorage.getItem(mediumKey) ?? 0) || 0;
+      const existing = Number(loadString(mediumKey, "0")) || 0;
       const legacyN = Number(legacy) || 0;
-      if (legacyN > existing) localStorage.setItem(mediumKey, String(legacyN));
-      localStorage.removeItem(LEGACY_HIGH_SCORE_KEY);
+      if (legacyN > existing) saveString(mediumKey, String(legacyN));
+      removeKey(LEGACY_HIGH_SCORE_KEY);
     }
 
     this.difficulty = this.loadDifficulty();
@@ -2290,7 +2274,7 @@ export class Game {
     // Mark as shown immediately so future runs don't replay it; also
     // schedules the fade-out so the player has time to read.
     this.controlsHintShown = true;
-    try { localStorage.setItem(CONTROLS_HINT_STORAGE_KEY, "1"); } catch { /* ignore */ }
+    saveBool(CONTROLS_HINT_STORAGE_KEY, true);
     setTimeout(() => hint.classList.add("fading"), 4500);
     setTimeout(() => { hint.hidden = true; hint.classList.remove("fading"); }, 5500);
   }
@@ -5690,11 +5674,9 @@ export class Game {
     this.seenKinds = new Set();
     this.rotateTutorialShown = false;
     this.controlsHintShown = false;
-    try {
-      localStorage.removeItem(SEEN_HINTS_STORAGE_KEY);
-      localStorage.removeItem(ROTATE_TUTORIAL_STORAGE_KEY);
-      localStorage.removeItem(CONTROLS_HINT_STORAGE_KEY);
-    } catch { /* ignore */ }
+    removeKey(SEEN_HINTS_STORAGE_KEY);
+    removeKey(ROTATE_TUTORIAL_STORAGE_KEY);
+    removeKey(CONTROLS_HINT_STORAGE_KEY);
     const original = btn.textContent ?? "Hints";
     btn.textContent = "Reset!";
     btn.disabled = true;
@@ -7395,7 +7377,7 @@ export class Game {
     // rotate gesture.
     if (sizeBefore === 1 && this.player.size() > 1 && !this.rotateTutorialShown) {
       this.rotateTutorialShown = true;
-      try { localStorage.setItem(ROTATE_TUTORIAL_STORAGE_KEY, "1"); } catch { /* ignore */ }
+      saveBool(ROTATE_TUTORIAL_STORAGE_KEY, true);
       this.rotateTutorialActive = true;
       this.rotateTutorialTimer = 0;
       this.rotateTutorialStartAngle = this.player.body.angle;
@@ -8339,7 +8321,7 @@ export class Game {
   }
 
   private loadDifficulty(): Difficulty {
-    const v = localStorage.getItem(DIFFICULTY_STORAGE_KEY);
+    const v = loadString(DIFFICULTY_STORAGE_KEY, "");
     if (v === "easy" || v === "medium" || v === "hard" || v === "hardcore") {
       // Defensive: drop hardcore back to medium if the player loaded it
       // last session and has since lost the unlock (e.g. a new install
@@ -8351,11 +8333,11 @@ export class Game {
   }
 
   private loadBestFor(d: Difficulty): number {
-    return Number(localStorage.getItem(HIGH_SCORE_KEY_PREFIX + d) ?? 0) || 0;
+    return Number(loadString(HIGH_SCORE_KEY_PREFIX + d, "0")) || 0;
   }
 
   private saveBestFor(d: Difficulty, best: number): void {
-    localStorage.setItem(HIGH_SCORE_KEY_PREFIX + d, String(best));
+    saveString(HIGH_SCORE_KEY_PREFIX + d, String(best));
   }
 
   // Hardcore mode is locked until the player either scores HARDCORE_THRESHOLD
@@ -8364,13 +8346,13 @@ export class Game {
   // ?debug=1 also opens it so test sessions can pick PAINFUL without grinding.
   private isHardcoreUnlocked(): boolean {
     if (this.debugEnabled) return true;
-    if (localStorage.getItem(HARDCORE_UNLOCK_KEY) === "1") return true;
+    if (loadBool(HARDCORE_UNLOCK_KEY, false)) return true;
     return loadChallengeProgress().purchasedUnlock;
   }
 
   private grantHardcoreUnlock(): void {
-    if (localStorage.getItem(HARDCORE_UNLOCK_KEY) === "1") return;
-    localStorage.setItem(HARDCORE_UNLOCK_KEY, "1");
+    if (loadBool(HARDCORE_UNLOCK_KEY, false)) return;
+    saveBool(HARDCORE_UNLOCK_KEY, true);
   }
 
   // Called from the score-update path during a hard run. Cheap — just a
@@ -8379,7 +8361,7 @@ export class Game {
     if (this.debugEnabled) return; // debug runs don't dirty real unlock state
     if (this.difficulty !== "hard") return;
     if (this.score < HARDCORE_UNLOCK_SCORE) return;
-    if (localStorage.getItem(HARDCORE_UNLOCK_KEY) === "1") return;
+    if (loadBool(HARDCORE_UNLOCK_KEY, false)) return;
     this.grantHardcoreUnlock();
     // Floater so the moment is visible mid-run.
     this.spawnFloater(
@@ -8409,7 +8391,7 @@ export class Game {
   private setDifficulty(d: Difficulty): void {
     if (d === this.difficulty) return;
     this.difficulty = d;
-    localStorage.setItem(DIFFICULTY_STORAGE_KEY, d);
+    saveString(DIFFICULTY_STORAGE_KEY, d);
     this.best = this.loadBestFor(d);
     this.bestEl.textContent = String(this.best);
     // The gameover overlay bakes "Best {n}" into its innerHTML; re-render

@@ -138,11 +138,34 @@ class StubAudio {
 }
 (globalThis as any).Audio = StubAudio;
 
+// ----- localStorage --------------------------------------------------------
+//
+// jsdom in vitest 4 ships a half-broken localStorage that needs a CLI
+// flag to be persistent (and warns about it on every run). Replace it
+// with a simple Map-backed shim so all tests get a fresh, predictable
+// storage between runs.
+
+class MemoryStorage implements Storage {
+  private map = new Map<string, string>();
+  get length(): number { return this.map.size; }
+  clear(): void { this.map.clear(); }
+  getItem(key: string): string | null { return this.map.get(key) ?? null; }
+  key(index: number): string | null { return [...this.map.keys()][index] ?? null; }
+  removeItem(key: string): void { this.map.delete(key); }
+  setItem(key: string, value: string): void { this.map.set(key, String(value)); }
+}
+
+const memoryStorage = new MemoryStorage();
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  get: () => memoryStorage,
+});
+
 // ----- Per-test cleanup ---------------------------------------------------
 
 beforeEach(() => {
   resetMockTime();
-  try { localStorage.clear(); } catch { /* ignore */ }
+  memoryStorage.clear();
 });
 
 afterEach(() => {

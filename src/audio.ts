@@ -31,8 +31,8 @@ import impact3Url from "./assets/audio/impact_3.mp3?url";
 import impact4Url from "./assets/audio/impact_4.mp3?url";
 import musicGameUrl from "./assets/audio/music_game.mp3?url";
 
-const SFX_KEY = "hexrain.sfx";
-const MUSIC_KEY = "hexrain.music";
+import { loadBool, saveBool } from "./storage";
+import { STORAGE_KEYS } from "./storageKeys";
 
 type SfxName =
   | "click"
@@ -65,23 +65,10 @@ const MUSIC_VOLUME = 0.18;
 // state transitions don't pop.
 const MUSIC_FADE = 0.4;
 
-function loadPref(key: string): boolean {
-  try {
-    const v = localStorage.getItem(key);
-    return v === null ? true : v === "1";
-  } catch {
-    return true;
-  }
-}
-
-function savePref(key: string, on: boolean): void {
-  try {
-    localStorage.setItem(key, on ? "1" : "0");
-  } catch { /* ignore */ }
-}
-
-let sfxOn = loadPref(SFX_KEY);
-let musicOn = loadPref(MUSIC_KEY);
+// Default to ON when the key is missing — the loadBool wrapper
+// returns the fallback both for "missing" and "storage broken".
+let sfxOn = loadBool(STORAGE_KEYS.sfx, true);
+let musicOn = loadBool(STORAGE_KEYS.music, true);
 
 let ctx: AudioContext | null = null;
 let sfxGain: GainNode | null = null;
@@ -240,12 +227,12 @@ export function isMusicOn(): boolean { return musicOn; }
 
 export function setSfxOn(on: boolean): void {
   sfxOn = on;
-  savePref(SFX_KEY, on);
+  saveBool(STORAGE_KEYS.sfx, on);
 }
 
 export function setMusicOn(on: boolean): void {
   musicOn = on;
-  savePref(MUSIC_KEY, on);
+  saveBool(STORAGE_KEYS.music, on);
   // Apply to a currently-running music phase: turning music off fades
   // out; turning back on while still in-game (musicWanted) fades back in.
   if (on && musicWanted) {

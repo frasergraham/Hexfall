@@ -54,6 +54,8 @@ import {
 import { checkName, type ModerationResult } from "./moderation";
 import { hashSeed } from "./rng";
 import { clampDifficulty, clampStars } from "./validation";
+import { loadString, saveJson, saveString } from "./storage";
+import { STORAGE_KEYS } from "./storageKeys";
 
 // ---------- Identity ------------------------------------------------------
 
@@ -176,26 +178,22 @@ export async function pullProgressDown(): Promise<void> {
 // repeated cold launches don't keep overwriting fresh local edits with
 // stale cloud copies just because the cloud record's modifiedAt happens
 // to be newer than the local file mtime (which we can't read).
-const PROGRESS_LOCAL_MODIFIED_KEY = "hexrain.cloudSync.progressModifiedAt";
+const PROGRESS_LOCAL_MODIFIED_KEY = STORAGE_KEYS.cloudProgressModifiedAt;
 
 function readLocalProgressModified(): number {
-  try {
-    const raw = localStorage.getItem(PROGRESS_LOCAL_MODIFIED_KEY);
-    return raw ? parseInt(raw, 10) || 0 : 0;
-  } catch {
-    return 0;
-  }
+  return parseInt(loadString(PROGRESS_LOCAL_MODIFIED_KEY, "0"), 10) || 0;
 }
 
 function writeLocalProgressFromCloud(payload: string, modifiedAt: number): void {
+  let parsed: ChallengeProgress | null;
   try {
-    const parsed = JSON.parse(payload) as ChallengeProgress;
-    if (!parsed || parsed.v !== 1) return;
-    localStorage.setItem("hexrain.challenges.v1", JSON.stringify(parsed));
-    localStorage.setItem(PROGRESS_LOCAL_MODIFIED_KEY, String(modifiedAt));
+    parsed = JSON.parse(payload) as ChallengeProgress;
   } catch {
-    /* ignore malformed cloud payload */
+    return; // malformed cloud payload
   }
+  if (!parsed || parsed.v !== 1) return;
+  saveJson(STORAGE_KEYS.challengeProgress, parsed);
+  saveString(PROGRESS_LOCAL_MODIFIED_KEY, String(modifiedAt));
 }
 
 // ---------- Public (community) -------------------------------------------
