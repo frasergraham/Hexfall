@@ -556,13 +556,27 @@ under every tested seed.
 
 ## Status — refactor branch progress
 
-End-of-session snapshot. **177 tests** total (started at 62).
-Bundle: 387.53 kB JS / 110.27 kB gzip (within budget; net change
-under 100 bytes raw, +200 bytes gzip from compression noise).
+End-of-session snapshot. **180 tests** total (started at 62).
+Coverage: **23.58% statements / 25.03% lines** across `src/`,
+up from 6.5% before the integration smoke test was added in
+session 2. Bundle: 387.53 kB JS / 110.27 kB gzip (within budget;
+net change under 100 bytes raw, +200 bytes gzip from
+compression noise).
+
+Integration smoke test boots `Game` in jsdom and drives three
+deterministic challenge runs (`1-1`, `2-1`, `3-3`) for ~9.6
+seconds each, capturing score / state-transitions / per-tick
+cluster count / per-tick player size / spawn order into golden
+fixtures at `tests/golden/integration-run-*.json`. Math.random
+is seeded per test so cosmetic uses (debris impulses, floater
+jitter) don't perturb the trace. Set `INTEGRATION_UPDATE=1` to
+regenerate the fixtures (with a written justification per the
+prime directive).
 
 | Phase | PR | Status | Notes |
 |---|---|---|---|
 | 0 | Harness + baselines | ✅ done | vitest, jsdom polyfills (incl. memory localStorage shim), 62 baseline tests, CI workflow, bundle baseline |
+| 0.5 | Integration smoke | ✅ done | Boots Game in jsdom, drives 3 deterministic challenge runs at 600 ticks each, golden fixtures locked. Coverage 6.5%→23.6%. |
 | 1.1 | Unify mulberry32 + FNV | ✅ done | Both `hex.ts` duplicates deleted; `cloudSync.shortHash` collapsed onto `hashSeed` |
 | 1.2 | `storage.ts` + `storageKeys.ts` | ✅ done | Every `localStorage` call routes through wrappers; 19 keys in registry |
 | 1.3 | Unify `ClusterKind` palettes | ✅ done | Three switches → `palettes.ts` data tables; snapshot-locked |
