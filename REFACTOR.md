@@ -594,9 +594,16 @@ prime directive).
 | 5 | Type tightening | ⛔ skipped | Optional per the plan |
 
 Anything marked ⛔ is explicitly **not started** — game.ts still
-contains the relevant code. Phases 2 and 3 are the multi-week pieces;
-they need a fresh branch each and per-PR review. Phase 4.5 is one
-commit and can land any time.
+contains the relevant code. Phase 3 is the remaining multi-week
+piece; it gets its own branch built from merged main. Phase 4.5 is
+one commit and can land any time.
+
+`game.ts` shrunk **9422 → 8215 LOC** across this branch (−1207 LOC,
+−13%). The reductions came from screen extraction (Phase 2),
+storage / palette / scoring / spawn / wave-DSL helper extraction
+(Phase 1), and validator flattening (Phase 4). Game still owns the
+state machine, the run loop, the editor's mutator paths, and all
+DOM event routing — those are Phase 3.
 
 ### What's safer to change after this branch
 
