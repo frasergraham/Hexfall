@@ -3516,11 +3516,20 @@ body:not(.in-play) #touchbar {
   border-color: rgba(255, 211, 110, 0.5);
   color: #ffe6a8;
 }
+.community-card-top-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  width: 100%;
+}
 .community-card-icon-row {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   gap: 6px;
   width: 100%;
+}
+.community-card-icon-row.community-card-icon-row-solo {
+  grid-template-columns: 1fr;
 }
 .community-card-icon-btn {
   font-family: inherit;

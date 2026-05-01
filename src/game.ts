@@ -79,6 +79,7 @@ import {
   hasUpvoted as cloudHasUpvoted,
   installCommunity,
   isCloudReady,
+  isCommunityReadable,
   publishChallenge as cloudPublish,
   queryCommunity,
   removeUpvote as cloudRemoveUpvote,
@@ -294,10 +295,11 @@ function saveSeenHints(set: Set<ClusterKind>): void {
 // challenge select screen is collapsed. Generic helper so adding a
 // new section (e.g. Community) only needs a key string. Default
 // collapsed = false so new players see content on first visit.
-type CollapsibleKey = "official" | "myChallenges" | "community";
+type CollapsibleKey = "official" | "myChallenges" | "installedChallenges" | "community";
 const COLLAPSED_KEYS: Record<CollapsibleKey, string> = {
   official: "hexrain.challengeSelect.officialCollapsed.v1",
   myChallenges: "hexrain.challengeSelect.myChallengesCollapsed.v1",
+  installedChallenges: "hexrain.challengeSelect.installedChallengesCollapsed.v1",
   community: "hexrain.challengeSelect.communityCollapsed.v1",
 };
 
@@ -1337,6 +1339,41 @@ export class Game {
         const id = editorUnpublishBtn.dataset.customId;
         const c = id ? getCustomChallenge(id) : undefined;
         if (c) void this.unpublishCustomChallenge(c);
+        return;
+      }
+      // PLAY button on an Installed Challenges row in challenge select.
+      // Routes through playCustomChallenge so the seed survives
+      // restarts and the existing custom-challenge endgame plumbing
+      // (including community leaderboard write) fires.
+      const installedPlayBtn = target?.closest('button[data-action="installed-play"]') as HTMLButtonElement | null;
+      if (installedPlayBtn) {
+        playSfx("click");
+        const id = installedPlayBtn.dataset.customId;
+        const c = id ? getCustomChallenge(id) : undefined;
+        if (c) this.playCustomChallenge(c, 0);
+        return;
+      }
+      // UNINSTALL on an Installed Challenges row (revealed by swipe).
+      // Different copy from DELETE because the user can re-install
+      // any time from the Community list — best/stars are lost on
+      // uninstall though, so the dialog warns about that.
+      const installedUninstallBtn = target?.closest('button[data-action="installed-uninstall"]') as HTMLButtonElement | null;
+      if (installedUninstallBtn) {
+        playSfx("click");
+        const id = installedUninstallBtn.dataset.customId;
+        if (!id) return;
+        const c = getCustomChallenge(id);
+        if (!c) return;
+        const confirmed = window.confirm(
+          `Uninstall "${c.name}"?\n\nIt'll be removed from your Installed list. Your local best score and stars on this challenge will be lost. The challenge stays in the Community list and you can reinstall any time.`,
+        );
+        if (confirmed) {
+          deleteCustomChallenge(id);
+          this.swipeOpenId = null;
+          if (this.state === "challengeSelect") this.renderChallengeSelect();
+        } else {
+          this.closeSwipeRow();
+        }
         return;
       }
       // Delete a custom challenge (revealed by swipe-left). Confirmation
@@ -2491,7 +2528,12 @@ export class Game {
   }
 
   private renderEditorHome(): void {
-    const list = listCustomChallenges();
+    // Installed community challenges live in their own Community →
+    // INSTALLED bucket — they aren't shown here because My Challenges
+    // is for content the player authored. The editor's Remix Existing
+    // section below still surfaces them as fork sources.
+    const allCustoms = listCustomChallenges();
+    const list = allCustoms.filter((c) => !c.installedFrom);
     const rows = list.length === 0
       ? `<p class="editor-home-empty">No custom challenges yet. Tap + to create your first.</p>`
       : list
@@ -2516,15 +2558,13 @@ export class Game {
             const pctText = c.bestPct > 0
               ? `<span class="challenge-card-pct${c.bestPct >= 100 ? " full" : ""}">${c.bestPct}%</span>`
               : `<span class="challenge-card-pct">—</span>`;
-            // Publish/Update button is enabled either in debug (legacy
-            // "copy roster JSON to clipboard" path) or whenever the
-            // CloudKit bridge is available (iOS). Web users see it
-            // disabled with the same chrome so the layout is stable.
-            const publishEnabled = this.debugEnabled || isCloudKitAvailable();
-            const publishCls = publishEnabled
-              ? "editor-row-btn editor-row-btn-publish"
-              : "editor-row-btn editor-row-btn-publish disabled";
-            const publishAttr = publishEnabled ? "" : "disabled";
+            // PUBLISH stays clickable on every platform so web users
+            // get a clear "iOS only" message instead of a mysteriously
+            // dead button. Debug mode keeps its legacy clipboard path;
+            // iOS uses the real CloudKit publish flow; web falls into
+            // the alert branch in publishCustomChallenge.
+            const publishCls = "editor-row-btn editor-row-btn-publish";
+            const publishAttr = "";
             const isPublished = !!c.publishedRecordName;
             const publishLabel = isPublished ? "UPDATE" : "PUBLISH";
             const unpublishHtml = isPublished
@@ -2581,7 +2621,7 @@ export class Game {
     const progress = loadChallengeProgress();
     const unlockedSet = new Set(progress.unlockedBlocks);
     const remixRoster = CHALLENGES.filter((def) => unlockedSet.has(def.block));
-    const remixCommunity = list.filter((c) => !!c.installedFrom);
+    const remixCommunity = allCustoms.filter((c) => !!c.installedFrom);
     const remixCount = remixRoster.length + remixCommunity.length;
     const rosterRows = remixRoster.map((def) => {
       const tint = difficultyTint(def.difficulty);
@@ -4814,7 +4854,10 @@ export class Game {
     // since the editor is gated behind that — no point showing an empty
     // section to players who can't author challenges yet.
     if (progress.purchasedUnlock || this.debugEnabled || this.isEditorTempUnlocked()) {
-      const customs = listCustomChallenges();
+      // Same filter as the editor home: My Challenges shows only the
+      // player's authored content, not community installs (those live
+      // in Community → INSTALLED).
+      const customs = listCustomChallenges().filter((c) => !c.installedFrom);
       if (customs.length > 0) {
         const customCards = customs.map((c) => {
           const tint = difficultyTint(c.difficulty);
@@ -4847,14 +4890,29 @@ export class Game {
         }));
       }
     }
-    // Community Challenges section. On web (no CloudKit) we keep the
-    // "coming soon" placeholder copy so players know what's planned;
-    // on iOS we render the live list backed by cloudSync.queryCommunity.
-    const communityBody = isCloudKitAvailable()
+    // Installed Challenges section: community challenges the player
+    // has installed. Lives in its own bucket (separate from
+    // self-authored My Challenges) so the install/uninstall lifecycle
+    // is obvious. Each row supports swipe-left to UNINSTALL.
+    const installedCustoms = listCustomChallenges().filter((c) => !!c.installedFrom);
+    if (installedCustoms.length > 0) {
+      sections.push(renderCollapsibleSection({
+        key: "installedChallenges",
+        title: "Installed Challenges",
+        progress: String(installedCustoms.length),
+        collapsed: loadCollapsed("installedChallenges"),
+        body: this.renderInstalledChallengesBody(installedCustoms),
+      }));
+    }
+    // Community Challenges section. Browseable everywhere the
+    // CloudKit corpus is reachable — iOS via the native plugin, web
+    // via a read-only API token (cloudWeb.ts). When neither is wired
+    // we show a placeholder explaining the situation.
+    const communityBody = isCommunityReadable()
       ? this.renderCommunityBody()
       : `<div class="challenge-community-placeholder">
-          <span class="challenge-community-tag">iOS ONLY</span>
-          <p>Player-shared challenges live in iCloud and require the iOS app to browse.</p>
+          <span class="challenge-community-tag">UNAVAILABLE</span>
+          <p>Community challenges aren't reachable from this build. iOS users browse via iCloud; web visitors need a CloudKit API token configured at build time.</p>
         </div>`;
     sections.push(renderCollapsibleSection({
       key: "community",
@@ -4867,7 +4925,7 @@ export class Game {
     // install/etc. invalidates the cache). The render call above
     // immediately shows a "Loading…" stub; refreshCommunity flips to
     // the populated list when the query resolves.
-    if (isCloudKitAvailable() && !this.communityLoaded && !this.communityLoading) {
+    if (isCommunityReadable() && !this.communityLoaded && !this.communityLoading) {
       void this.refreshCommunity();
     }
     this.overlay.innerHTML = `
@@ -4900,7 +4958,6 @@ export class Game {
       { id: "newest", label: "NEW" },
       { id: "topVoted", label: "TOP" },
       { id: "mostPlayed", label: "ACTIVE" },
-      { id: "installed", label: "INSTALLED" },
     ];
     const sortChips = sortOpts.map((o) => `
       <button type="button" class="community-sort-chip${o.id === this.communitySort ? " selected" : ""}"
@@ -4934,6 +4991,19 @@ export class Game {
       const playOrInstall = installed
         ? `<button type="button" class="community-card-btn community-card-btn-play" data-action="community-play" data-record-name="${escapeHtml(p.recordName)}">PLAY</button>`
         : `<button type="button" class="community-card-btn community-card-btn-install" data-action="community-install" data-record-name="${escapeHtml(p.recordName)}">INSTALL</button>`;
+      // LIKE and REPORT need user auth. On iOS that's CKContainer +
+      // iCloud login; on web it'd require CloudKit Web Auth which we
+      // haven't wired. Leaderboard is read-only and works everywhere.
+      const showAuthedActions = isCloudKitAvailable();
+      const likeBtn = showAuthedActions
+        ? `<button type="button" class="community-card-icon-btn${upvoted ? " filled-like" : ""}" data-action="community-upvote" data-record-name="${escapeHtml(p.recordName)}" aria-label="Like">${upvoted ? "♥" : "♡"}</button>`
+        : "";
+      const reportBtn = showAuthedActions
+        ? `<button type="button" class="community-card-icon-btn" data-action="community-report" data-record-name="${escapeHtml(p.recordName)}" aria-label="Report">⚑</button>`
+        : "";
+      const iconRowClass = showAuthedActions
+        ? "community-card-icon-row"
+        : "community-card-icon-row community-card-icon-row-solo";
       const waveCount = p.waves.length;
       const waveLabel = `${waveCount} ${waveCount === 1 ? "wave" : "waves"}`;
       return `
@@ -4952,12 +5022,14 @@ export class Game {
           </div>
           ${installedBadge}
           <div class="community-card-actions">
-            ${playOrInstall}
-            <button type="button" class="community-card-btn community-card-btn-remix" data-action="community-remix" data-record-name="${escapeHtml(p.recordName)}">REMIX</button>
-            <div class="community-card-icon-row">
-              <button type="button" class="community-card-icon-btn${upvoted ? " filled-like" : ""}" data-action="community-upvote" data-record-name="${escapeHtml(p.recordName)}" aria-label="Like">${upvoted ? "♥" : "♡"}</button>
+            <div class="community-card-top-row">
+              ${playOrInstall}
+              <button type="button" class="community-card-btn community-card-btn-remix" data-action="community-remix" data-record-name="${escapeHtml(p.recordName)}">REMIX</button>
+            </div>
+            <div class="${iconRowClass}">
+              ${likeBtn}
               <button type="button" class="community-card-icon-btn" data-action="community-leaderboard" data-record-name="${escapeHtml(p.recordName)}" aria-label="Leaderboard">🏆</button>
-              <button type="button" class="community-card-icon-btn" data-action="community-report" data-record-name="${escapeHtml(p.recordName)}" aria-label="Report">⚑</button>
+              ${reportBtn}
             </div>
           </div>
         </div>
@@ -4969,8 +5041,66 @@ export class Game {
     `;
   }
 
+  // Body markup for the Installed Challenges collapsible. Each row uses
+  // the editor-home-row chrome (full-width, big PLAY button) and is
+  // wrapped in the same swipe container used by My Challenges in the
+  // editor home — so the swipe handler picks it up automatically; only
+  // the revealed action button differs (UNINSTALL not DELETE).
+  private renderInstalledChallengesBody(installed: CustomChallenge[]): string {
+    const rows = installed.map((c) => {
+      const tint = difficultyTint(c.difficulty);
+      const hexes: string[] = [];
+      for (let i = 0; i < c.difficulty; i++) {
+        hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
+      }
+      const stars = [0, 1, 2]
+        .map((i) =>
+          `<span class="challenge-card-star${i < c.starsEarned ? " earned" : ""}">★</span>`,
+        )
+        .join("");
+      const attempted = c.best > 0 || c.bestPct > 0 || c.starsEarned > 0;
+      const starsHtml = attempted
+        ? `<div class="challenge-card-stars">${stars}</div>`
+        : "";
+      const bestScoreText = c.best > 0 ? `Best: ${c.best}` : "Best: —";
+      const pctText = c.bestPct > 0
+        ? `<span class="challenge-card-pct${c.bestPct >= 100 ? " full" : ""}">${c.bestPct}%</span>`
+        : `<span class="challenge-card-pct">—</span>`;
+      const author = c.installedAuthorName ?? "the community";
+      const versionStr = c.installedVersion ? ` · v${c.installedVersion}` : "";
+      const recordName = c.installedFrom ?? "";
+      // Leaderboard button is iOS-only for now (web has no auth path
+      // back to a player record yet) — but the read-only top-20 view
+      // works on web too, so wire it everywhere community is readable.
+      const leaderboardBtn = isCommunityReadable() && recordName
+        ? `<button type="button" class="editor-row-btn editor-row-btn-edit" data-action="community-leaderboard" data-record-name="${escapeHtml(recordName)}" aria-label="Leaderboard">🏆</button>`
+        : "";
+      return `
+        <div class="editor-home-row-swipe" data-swipe-id="${escapeHtml(c.id)}">
+          <button type="button" class="editor-home-row-delete" data-action="installed-uninstall" data-custom-id="${escapeHtml(c.id)}" tabindex="-1" aria-label="Uninstall">UNINSTALL</button>
+          <div class="editor-home-row" data-custom-id="${escapeHtml(c.id)}">
+            <div class="editor-home-row-meta">
+              <span class="challenge-card-id">COMMUNITY</span>
+              <span class="challenge-card-name">${escapeHtml(c.name)}</span>
+              <span class="editor-home-row-installed">by ${escapeHtml(author)}${versionStr}</span>
+              <div class="challenge-card-hexes">${hexes.join("")}</div>
+              ${starsHtml}
+              <span class="challenge-card-best">${bestScoreText} ${pctText}</span>
+            </div>
+            <div class="editor-home-row-actions">
+              <button type="button" class="editor-row-btn editor-row-btn-play" data-action="installed-play" data-custom-id="${escapeHtml(c.id)}">PLAY</button>
+              <button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-remix-custom" data-custom-id="${escapeHtml(c.id)}">REMIX</button>
+              ${leaderboardBtn}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+    return `<div class="editor-home-rows">${rows}</div>`;
+  }
+
   private async refreshCommunity(): Promise<void> {
-    if (!isCloudKitAvailable()) return;
+    if (!isCommunityReadable()) return;
     if (this.communityLoading) return;
     this.communityLoading = true;
     this.communityError = null;

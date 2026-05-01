@@ -15,19 +15,26 @@
 //      subscription on the published-challenge record names.
 
 import {
-  fetchRecord,
+  fetchRecord as nativeFetchRecord,
   getAccountStatus,
   getUserRecordName,
   isAccountReady,
   isCloudKitAvailable,
   onPublishedUpdated,
-  queryRecords,
+  queryRecords as nativeQueryRecords,
   subscribePublished,
   upsertRecord,
   deleteRecord,
   type CloudKitField,
+  type CloudKitQueryOpts,
+  type CloudKitQueryResult,
   type CloudKitRecord,
 } from "./cloudKit";
+import {
+  isWebReadConfigured,
+  webFetchRecord,
+  webQueryRecords,
+} from "./cloudWeb";
 import {
   loadChallengeProgress,
   type ChallengeProgress,
@@ -55,6 +62,34 @@ export async function isCloudReady(): Promise<boolean> {
 
 export async function cloudUserId(): Promise<string | null> {
   return getUserRecordName();
+}
+
+// True when the public corpus can be browsed/read — iOS always (via
+// CKContainer.publicCloudDatabase) and web when an API token is
+// configured. Used to gate the Community section visibility and the
+// queryCommunity early-return.
+export function isCommunityReadable(): boolean {
+  return isCloudKitAvailable() || isWebReadConfigured();
+}
+
+// Read dispatch: native plugin on iOS, REST on web. cloudKit.ts no-ops
+// on web (no plugin attached) so without dispatch the community list
+// would be empty for web visitors. Web only has read access to the
+// public DB; private-DB calls fall through to the native implementation
+// (which will no-op on web — the caller already gates writes on
+// isCloudReady).
+async function fetchRecord(db: "private" | "public", recordName: string): Promise<CloudKitRecord | null> {
+  if (db === "public" && !isCloudKitAvailable() && isWebReadConfigured()) {
+    return webFetchRecord(recordName);
+  }
+  return nativeFetchRecord(db, recordName);
+}
+
+async function queryRecords(opts: CloudKitQueryOpts): Promise<CloudKitQueryResult> {
+  if (opts.db === "public" && !isCloudKitAvailable() && isWebReadConfigured()) {
+    return webQueryRecords(opts);
+  }
+  return nativeQueryRecords(opts);
 }
 
 // ---------- Personal (private DB) ----------------------------------------
@@ -168,7 +203,7 @@ const SCORE_RECORD_TYPE = "Score";
 const UPVOTE_RECORD_TYPE = "Upvote";
 const REPORT_RECORD_TYPE = "Report";
 
-export type CommunitySort = "newest" | "topVoted" | "mostPlayed" | "installed";
+export type CommunitySort = "newest" | "topVoted" | "mostPlayed";
 
 export interface PublishedChallenge {
   recordName: string;
@@ -264,10 +299,7 @@ export interface CommunityQueryResult {
 }
 
 export async function queryCommunity(opts: CommunityQueryOpts): Promise<CommunityQueryResult> {
-  if (!isCloudKitAvailable()) return { challenges: [], cursor: null };
-  if (opts.sort === "installed") {
-    return queryInstalledCommunity();
-  }
+  if (!isCommunityReadable()) return { challenges: [], cursor: null };
   const sortField =
     opts.sort === "newest" ? "publishedAt"
     : opts.sort === "topVoted" ? "upvoteCount"
@@ -283,52 +315,6 @@ export async function queryCommunity(opts: CommunityQueryOpts): Promise<Communit
   return {
     challenges: result.records.map(recordToPublished).filter((p): p is PublishedChallenge => p !== null),
     cursor: result.cursor,
-  };
-}
-
-// "Installed" view doesn't query the corpus — it surfaces the
-// PublishedChallenge records the player has installed locally, in
-// install-recency order. Each record is fetched in parallel so the
-// upvote/install counts match what the regular Newest/Top/Active
-// views show; if a fetch fails (network, hidden, unpublished) we
-// fall back to a synthesized stub so the entry still appears and
-// the player can remix or trigger a re-install.
-async function queryInstalledCommunity(): Promise<CommunityQueryResult> {
-  const installed = listCustomChallenges()
-    .filter((c) => !!c.installedFrom)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
-  if (installed.length === 0) return { challenges: [], cursor: null };
-  const challenges = await Promise.all(installed.map(async (c) => {
-    const fresh = await fetchRecord("public", c.installedFrom!);
-    if (fresh) {
-      const parsed = recordToPublished(fresh);
-      if (parsed) return parsed;
-    }
-    return synthesizePublishedFromInstalled(c);
-  }));
-  return { challenges, cursor: null };
-}
-
-function synthesizePublishedFromInstalled(c: CustomChallenge): PublishedChallenge {
-  return {
-    recordName: c.installedFrom!,
-    name: c.name,
-    authorId: "",
-    authorName: c.installedAuthorName ?? "the community",
-    difficulty: c.difficulty,
-    seed: c.seed,
-    effects: { ...c.effects },
-    waves: [...c.waves],
-    stars: { ...c.stars },
-    version: c.installedVersion ?? 1,
-    publishedAt: c.createdAt,
-    updatedAt: c.updatedAt,
-    status: "approved",
-    reportCount: 0,
-    upvoteCount: 0,
-    installCount: 0,
-    playCount: 0,
-    sourceCustomId: "",
   };
 }
 
@@ -420,7 +406,7 @@ export async function topScores(
   challengeRecordName: string,
   limit = 20,
 ): Promise<CommunityScore[]> {
-  if (!isCloudKitAvailable()) return [];
+  if (!isCommunityReadable()) return [];
   const result = await queryRecords({
     db: "public",
     recordType: SCORE_RECORD_TYPE,

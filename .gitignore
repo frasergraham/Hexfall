@@ -8,3 +8,5 @@ dist
 # WAVs stay local for re-encoding but are not committed.
 *.wav
 ios/build
+.env.local
+.env.*.local
