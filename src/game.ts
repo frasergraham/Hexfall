@@ -102,7 +102,7 @@ import { STORAGE_KEYS } from "./storageKeys";
 import { computeWaveParams, lateGameSpeedMul } from "./spawn";
 import { highestTierCrossed, stepMilestones } from "./scoring";
 import { escapeHtml } from "./ui/escape";
-import { difficultyTint, drawBlockIcon } from "./ui/components/blockIcon";
+import { drawBlockIcon } from "./ui/components/blockIcon";
 import { BlocksGuide } from "./ui/screens/blocksGuide";
 import { UnlockShop } from "./ui/screens/unlockShop";
 import { ChallengeIntro } from "./ui/screens/challengeIntro";
@@ -111,7 +111,11 @@ import { GameOver } from "./ui/screens/gameOver";
 import { LeaderboardSheet } from "./ui/screens/leaderboardSheet";
 import { ReportSheet } from "./ui/screens/reportSheet";
 import { SingleChallenge } from "./ui/screens/singleChallenge";
-import { IOS_SHARE_GLYPH_SVG } from "./ui/components/icons";
+import { renderCommunityBody as renderCommunityBodyView } from "./ui/screens/communityBody";
+import { renderInstalledChallengesBody as renderInstalledChallengesBodyView } from "./ui/screens/installedChallengesBody";
+import { renderChallengeSelect as renderChallengeSelectView } from "./ui/screens/challengeSelect";
+import { renderEditorHome as renderEditorHomeView } from "./ui/screens/editorHome";
+import { renderSettingsDialog as renderSettingsDialogView } from "./ui/screens/settingsDialog";
 
 // Build-time feature flag: while the IAP unlock flow is being verified
 // on TestFlight, set VITE_EDITOR_UNLOCKED=1 in .env.local (or any vite
@@ -2512,174 +2516,17 @@ export class Game {
   }
 
   private renderEditorHome(): void {
-    // Installed community challenges live in their own Community →
-    // INSTALLED bucket — they aren't shown here because My Challenges
-    // is for content the player authored. The editor's Remix Existing
-    // section below still surfaces them as fork sources.
     const allCustoms = listCustomChallenges();
-    const list = allCustoms.filter((c) => !c.installedFrom);
-    const rows = list.length === 0
-      ? `<p class="editor-home-empty">No custom challenges yet. Tap + to create your first.</p>`
-      : list
-          .map((c) => {
-            const created = new Date(c.createdAt);
-            const dateStr = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}-${String(created.getDate()).padStart(2, "0")}`;
-            const tint = difficultyTint(c.difficulty);
-            const hexes: string[] = [];
-            for (let i = 0; i < c.difficulty; i++) {
-              hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
-            }
-            const stars = [0, 1, 2]
-              .map((i) =>
-                `<span class="challenge-card-star${i < c.starsEarned ? " earned" : ""}">★</span>`,
-              )
-              .join("");
-            const attempted = c.best > 0 || c.bestPct > 0 || c.starsEarned > 0;
-            const starsHtml = attempted
-              ? `<div class="challenge-card-stars">${stars}</div>`
-              : "";
-            const bestScoreText = c.best > 0 ? `Best: ${c.best}` : "Best: —";
-            const pctText = c.bestPct > 0
-              ? `<span class="challenge-card-pct${c.bestPct >= 100 ? " full" : ""}">${c.bestPct}%</span>`
-              : `<span class="challenge-card-pct">—</span>`;
-            // PUBLISH stays clickable on every platform so web users
-            // get a clear "iOS only" message instead of a mysteriously
-            // dead button. Debug mode keeps its legacy clipboard path;
-            // iOS uses the real CloudKit publish flow; web falls into
-            // the alert branch in publishCustomChallenge.
-            const publishCls = "editor-row-btn editor-row-btn-publish";
-            const publishAttr = "";
-            const isPublished = !!c.publishedRecordName;
-            const publishLabel = isPublished ? "UPDATE" : "PUBLISH";
-            const unpublishHtml = isPublished
-              ? `<button type="button" class="editor-row-btn editor-row-btn-unpublish" data-action="editor-unpublish" data-custom-id="${escapeHtml(c.id)}">UNPUBLISH</button>`
-              : "";
-            const publishedBadge = isPublished
-              ? `<span class="editor-home-row-published">PUBLISHED v${c.publishedVersion ?? 1}</span>`
-              : "";
-            const remixLine = c.remixedFrom
-              ? `<span class="editor-home-row-remix">Remixed from: ${escapeHtml(c.remixedFrom)}</span>`
-              : "";
-            const installedLine = c.installedFrom
-              ? `<span class="editor-home-row-installed">Installed from ${escapeHtml(c.installedAuthorName ?? "the community")}${c.installedVersion ? ` · v${c.installedVersion}` : ""}</span>`
-              : "";
-            // Each row sits inside a swipeable container that reveals
-            // a DELETE action on left-swipe. The actual <button> for
-            // delete lives at the right edge, full-height; the row on
-            // top translates to expose it. Tapping it confirms then
-            // deletes via deleteCustomChallenge.
-            return `
-              <div class="editor-home-row-swipe" data-swipe-id="${escapeHtml(c.id)}">
-                <button type="button" class="editor-home-row-delete" data-action="editor-delete" data-custom-id="${escapeHtml(c.id)}" tabindex="-1" aria-label="Delete challenge">DELETE</button>
-                <div class="editor-home-row" data-custom-id="${escapeHtml(c.id)}">
-                  <div class="editor-home-row-meta">
-                    <span class="challenge-card-id">CUSTOM</span>
-                    <span class="challenge-card-name">${escapeHtml(c.name)}</span>
-                    ${publishedBadge}
-                    ${remixLine}
-                    ${installedLine}
-                    <div class="challenge-card-hexes">${hexes.join("")}</div>
-                    ${starsHtml}
-                    <span class="challenge-card-best">${bestScoreText} ${pctText}</span>
-                    <span class="editor-home-row-date">Created ${dateStr}</span>
-                  </div>
-                  <div class="editor-home-row-actions">
-                    <button type="button" class="editor-row-btn editor-row-btn-play" data-action="editor-play" data-custom-id="${escapeHtml(c.id)}">PLAY</button>
-                    <button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-edit" data-custom-id="${escapeHtml(c.id)}">EDIT</button>
-                    <button type="button" class="${publishCls}" data-action="editor-publish" data-custom-id="${escapeHtml(c.id)}" ${publishAttr}>${publishLabel}</button>
-                    ${unpublishHtml}
-                  </div>
-                </div>
-              </div>
-            `;
-          })
-          .join("");
-
-    // Remix-existing section: every roster challenge in an unlocked block
-    // gets a row with a single REMIX button that clones it into My
-    // Challenges. Locked blocks are excluded — players shouldn't be able
-    // to remix content they haven't unlocked. After the roster, we
-    // append every installed community challenge as a remix source so
-    // the player can fork someone else's published level into their
-    // own editable copy.
+    const authoredCustoms = allCustoms.filter((c) => !c.installedFrom);
     const progress = loadChallengeProgress();
     const unlockedSet = new Set(progress.unlockedBlocks);
     const remixRoster = CHALLENGES.filter((def) => unlockedSet.has(def.block));
     const remixCommunity = allCustoms.filter((c) => !!c.installedFrom);
-    const remixCount = remixRoster.length + remixCommunity.length;
-    const rosterRows = remixRoster.map((def) => {
-      const tint = difficultyTint(def.difficulty);
-      const hexes: string[] = [];
-      for (let i = 0; i < def.difficulty; i++) {
-        hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
-      }
-      return `
-        <div class="editor-home-row editor-home-row-remix-source">
-          <div class="editor-home-row-meta">
-            <span class="challenge-card-id">${escapeHtml(def.id)}</span>
-            <span class="challenge-card-name">${escapeHtml(def.name)}</span>
-            <div class="challenge-card-hexes">${hexes.join("")}</div>
-          </div>
-          <div class="editor-home-row-actions">
-            <button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-remix" data-roster-id="${escapeHtml(def.id)}">REMIX</button>
-          </div>
-        </div>
-      `;
-    }).join("");
-    const communityRows = remixCommunity.map((c) => {
-      const tint = difficultyTint(c.difficulty);
-      const hexes: string[] = [];
-      for (let i = 0; i < c.difficulty; i++) {
-        hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
-      }
-      const author = c.installedAuthorName ?? "the community";
-      return `
-        <div class="editor-home-row editor-home-row-remix-source editor-home-row-remix-community">
-          <div class="editor-home-row-meta">
-            <span class="challenge-card-id">COMMUNITY</span>
-            <span class="challenge-card-name">${escapeHtml(c.name)}</span>
-            <span class="editor-home-row-installed">by ${escapeHtml(author)}</span>
-            <div class="challenge-card-hexes">${hexes.join("")}</div>
-          </div>
-          <div class="editor-home-row-actions">
-            <button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-remix-custom" data-custom-id="${escapeHtml(c.id)}">REMIX</button>
-          </div>
-        </div>
-      `;
-    }).join("");
-    const remixRows = rosterRows + communityRows;
-    const remixSection = remixCount > 0
-      ? `
-        <section class="challenge-block">
-          <header class="challenge-block-header">
-            <span>Remix Existing</span>
-            <span class="progress">${remixCount}</span>
-          </header>
-          <div class="editor-home-rows">${remixRows}</div>
-        </section>
-      `
-      : "";
-
-    this.overlay.innerHTML = `
-      <div class="editor-home">
-        <div class="challenge-select-top">
-          <button type="button" class="challenge-back" data-action="editor-home-back">← Back</button>
-          <span style="font-size:13px; letter-spacing:0.18em; text-transform:uppercase; color:#aab4dc;">Challenge Editor</span>
-          <span style="width:60px"></span>
-        </div>
-        <section class="challenge-block">
-          <header class="challenge-block-header">
-            <span>My Challenges</span>
-            <span class="progress">${list.length}</span>
-          </header>
-          <div class="editor-home-rows">
-            ${rows}
-            <button type="button" class="editor-home-add" data-action="editor-new" aria-label="Create new custom challenge">+</button>
-          </div>
-        </section>
-        ${remixSection}
-      </div>
-    `;
+    this.overlay.innerHTML = renderEditorHomeView({
+      authoredCustoms,
+      remixRoster,
+      remixCommunity,
+    });
   }
 
   private openEditorEdit(custom: CustomChallenge): void {
@@ -2753,7 +2600,7 @@ export class Game {
       : this.editorDialog === "customWave"
         ? this.renderCustomWaveDialogHtml()
         : this.editorDialog === "settings"
-          ? this.renderSettingsDialogHtml(c)
+          ? renderSettingsDialogView({ challenge: c, helpTip: helpTipHtml })
           : "";
 
     // Snapshot scroll positions of in-place re-rendered dialogs so the
@@ -4331,79 +4178,6 @@ export class Game {
 
   // ----- Settings dialog ----------------------------------------------
 
-  private renderSettingsDialogHtml(c: CustomChallenge): string {
-    const diffBtns = [1, 2, 3, 4, 5]
-      .map((d) => `<button type="button" class="editor-diff-btn${c.difficulty === d ? " selected" : ""}" data-dialog-difficulty="${d}">${d}</button>`)
-      .join("");
-    const fmtSec = (v: number) => v.toFixed(1);
-    const fmtInt = (v: number) => String(Math.round(v));
-    return `
-      <div class="editor-dialog-backdrop" data-action="editor-dialog-cancel"></div>
-      <div class="editor-dialog editor-dialog-settings" role="dialog" aria-label="Challenge settings">
-        <h2>Options</h2>
-        <div class="editor-dialog-body">
-          <div class="editor-quick-row">
-            <span class="editor-quick-label">Seed${helpTipHtml("seed")}</span>
-            <div class="editor-quick-controls">
-              <input class="editor-meta-input editor-meta-input-seed" data-editor-field="seed" type="text" inputmode="numeric" value="${c.seed}" />
-              <button type="button" class="editor-mix-step editor-mix-plus" data-action="editor-randomize-seed" aria-label="Random seed">⟳</button>
-            </div>
-          </div>
-          ${this.renderSettingsStepper("slowDuration", "Slow duration (s)", c.effects.slowDuration, { min: 0, max: 30, step: 0.5, format: fmtSec })}
-          ${this.renderSettingsStepper("fastDuration", "Fast duration (s)", c.effects.fastDuration, { min: 0, max: 30, step: 0.5, format: fmtSec })}
-          ${this.renderSettingsStepper("shieldDuration", "Shield duration (s)", c.effects.shieldDuration, { min: 0, max: 60, step: 0.5, format: fmtSec })}
-          ${this.renderSettingsStepper("droneDuration", "Drone duration (s)", c.effects.droneDuration, { min: 0, max: 60, step: 0.5, format: fmtSec })}
-          ${this.renderSettingsStepper("dangerSize", "Danger size", c.effects.dangerSize, { min: 2, max: 15, step: 1, format: fmtInt })}
-          <fieldset class="editor-radio-group">
-            <legend>Star thresholds${helpTipHtml("starsAuto")}</legend>
-            <div class="editor-stars-row">
-              ${this.renderSettingsStepper("starOne", "★", c.stars.one, { min: 0, max: 9999, step: 5, format: fmtInt })}
-              ${this.renderSettingsStepper("starTwo", "★★", c.stars.two, { min: 0, max: 9999, step: 5, format: fmtInt })}
-              ${this.renderSettingsStepper("starThree", "★★★", c.stars.three, { min: 0, max: 9999, step: 5, format: fmtInt })}
-            </div>
-            <button type="button" class="challenge-back editor-auto-btn" data-action="editor-settings-auto">Auto-suggest</button>
-          </fieldset>
-          <fieldset class="editor-radio-group">
-            <legend>Difficulty${helpTipHtml("difficulty")}</legend>
-            <div class="editor-diff-row">${diffBtns}</div>
-            <button type="button" class="challenge-back editor-auto-btn" data-action="editor-settings-auto-diff">Auto-suggest</button>
-          </fieldset>
-        </div>
-        <div class="editor-dialog-actions">
-          <button type="button" class="challenge-back" data-action="editor-dialog-cancel">Cancel</button>
-          <button type="button" class="play-btn" data-action="editor-dialog-ok">OK</button>
-        </div>
-      </div>
-    `;
-  }
-
-  // Settings dialog stepper — same visual as the basic / advanced
-  // steppers but mutates editingCustom.effects / .stars directly via
-  // bumpSettingsField. OK persists to localStorage; Cancel discards.
-  private renderSettingsStepper(
-    field: string,
-    label: string,
-    value: number,
-    opts: { min: number; max: number; step: number; format: (v: number) => string },
-  ): string {
-    const eps = opts.step * 0.001;
-    const atMin = value <= opts.min + eps;
-    const atMax = value >= opts.max - eps;
-    return `
-      <div class="editor-quick-row">
-        <span class="editor-quick-label">${escapeHtml(label)}${helpTipHtml(field)}</span>
-        <div class="editor-quick-controls">
-          <button type="button" class="editor-mix-step editor-mix-minus"
-            data-action="editor-settings-bump" data-field="${field}" data-delta="${-opts.step}"
-            ${atMin ? "disabled" : ""}>−</button>
-          <span class="editor-mix-value">${opts.format(value)}</span>
-          <button type="button" class="editor-mix-step editor-mix-plus"
-            data-action="editor-settings-bump" data-field="${field}" data-delta="${opts.step}"
-            ${atMax ? "disabled" : ""}>+</button>
-        </div>
-      </div>
-    `;
-  }
 
   private bumpSettingsField(field: string, delta: number): void {
     const c = this.editingCustom;
@@ -4676,327 +4450,58 @@ export class Game {
 
   private renderChallengeSelect(): void {
     const progress = loadChallengeProgress();
-    const blocks: ChallengeDef[][] = [[], [], [], [], [], []];
-    for (const c of CHALLENGES) blocks[c.block - 1]!.push(c);
-    for (const arr of blocks) arr.sort((a, b) => a.index - b.index);
-    const blockHtmlByIndex = blocks.map((arr, idx) => {
-      const blockNum = idx + 1;
-      const unlocked = progress.unlockedBlocks.includes(blockNum);
-      const completedInBlock = arr.filter((c) => progress.completed.includes(c.id)).length;
-      // A block is "fresh" once unlocked until the player attempts any
-      // challenge inside it. While fresh, every card in the block wears
-      // a NEW pill so the unlock celebration carries from the complete
-      // screen back into the menu.
-      const blockHasAttempt = arr.some(
-        (cc) =>
-          (progress.bestPct[cc.id] ?? 0) > 0 ||
-          (progress.best[cc.id] ?? 0) > 0 ||
-          progress.completed.includes(cc.id),
-      );
-      const blockIsFresh = unlocked && !blockHasAttempt;
-      const cards = arr.map((c) => {
-        const best = progress.best[c.id] ?? 0;
-        const bestPct = progress.bestPct[c.id] ?? 0;
-        const earnedStars = progress.stars[c.id] ?? 0;
-        const attempted = best > 0 || bestPct > 0 || earnedStars > 0;
-        const done = progress.completed.includes(c.id);
-        const cardCls = !unlocked
-          ? "challenge-card locked"
-          : done ? "challenge-card completed" : "challenge-card";
-        const bestScoreText = !unlocked ? "" : best > 0 ? `Best: ${best}` : "Best: —";
-        const pctText = !unlocked
-          ? ""
-          : bestPct > 0
-            ? `<span class="challenge-card-pct${bestPct >= 100 ? " full" : ""}">${bestPct}%</span>`
-            : `<span class="challenge-card-pct">—</span>`;
-        const name = unlocked ? escapeHtml(c.name) : "???";
-        const tint = difficultyTint(c.difficulty);
-        const hexes: string[] = [];
-        for (let i = 0; i < c.difficulty; i++) {
-          hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
-        }
-        const check = done ? '<span class="check">✓</span>' : "";
-        const newBadge = blockIsFresh ? '<span class="challenge-card-new">NEW</span>' : "";
-        const starsHtml = unlocked && attempted
-          ? `<div class="challenge-card-stars">${
-              [0, 1, 2].map((i) =>
-                `<span class="challenge-card-star${i < earnedStars ? " earned" : ""}">★</span>`,
-              ).join("")
-            }</div>`
-          : "";
-        return `
-          <button type="button" class="${cardCls}" data-challenge-id="${c.id}" ${unlocked ? "" : "disabled"}>
-            <span class="challenge-card-id">${c.id}</span>
-            <span class="challenge-card-name">${name}</span>
-            <div class="challenge-card-hexes">${hexes.join("")}</div>
-            ${starsHtml}
-            <span class="challenge-card-best">${bestScoreText} ${pctText}</span>
-            ${check}
-            ${newBadge}
-          </button>
-        `;
-      }).join("");
-      const blockCls = unlocked ? "challenge-block" : "challenge-block locked";
-      const headerProgress = unlocked
-        ? `<span class="progress">${completedInBlock}/5</span>`
-        : "";
-      const body = unlocked
-        ? `<div class="challenge-cards">${cards}</div>`
-        : `
-          <div class="challenge-block-lock">
-            <div class="challenge-block-lock-icon" aria-hidden="true">🔒</div>
-            <p>Complete 3 Block ${blockNum - 1} challenges to unlock</p>
-          </div>
-        `;
-      return `
-        <section class="${blockCls}">
-          <header class="challenge-block-header">
-            <span>Block ${blockNum}</span>
-            ${headerProgress}
-          </header>
-          ${body}
-        </section>
-      `;
+    const allCustoms = listCustomChallenges();
+    const authoredCustoms = allCustoms.filter((c) => !c.installedFrom);
+    const installedCustoms = allCustoms.filter((c) => !!c.installedFrom);
+    const showMyChallenges =
+      progress.purchasedUnlock || this.debugEnabled || this.isEditorTempUnlocked();
+    this.overlay.innerHTML = renderChallengeSelectView({
+      progress,
+      challenges: CHALLENGES,
+      authoredCustoms,
+      installedCustoms,
+      showMyChallenges,
+      iapPriceLabel: this.unlockProduct?.displayPrice ?? null,
+      communityReadable: isCommunityReadable(),
+      collapsed: {
+        official: loadCollapsed("official"),
+        myChallenges: loadCollapsed("myChallenges"),
+        installedChallenges: loadCollapsed("installedChallenges"),
+        community: loadCollapsed("community"),
+      },
+      installedBodyHtml:
+        installedCustoms.length > 0
+          ? this.renderInstalledChallengesBody(installedCustoms)
+          : "",
+      communityBodyHtml: isCommunityReadable() ? this.renderCommunityBody() : "",
+      leaderboardSheetHtml: this.renderLeaderboardSheetHtml(),
+      reportSheetHtml: this.renderReportSheetHtml(),
     });
-    // IAP banner: shown on every platform when not already purchased.
-    // The web build doesn't actually ship to users — keeping the banner
-    // visible there makes layout/copy review easier without round-
-    // tripping through a TestFlight build.
-    //
-    // Placement: directly after the highest-numbered unlocked block, so
-    // it sits adjacent to the wall the player is currently bumping into
-    // rather than floating at the top of the screen on every visit.
-    // Once every block is unlocked organically there's nothing the IAP
-    // can grant the player, so suppress the banner. (Custom-challenge
-    // editor access is still gated on purchasedUnlock — that's
-    // intentional and unaffected by this check.)
-    const totalBlocks = Math.max(...CHALLENGES.map((c) => c.block));
-    const allBlocksUnlocked = progress.unlockedBlocks.length >= totalBlocks;
-    const showIapBanner = !progress.purchasedUnlock && !allBlocksUnlocked;
-    const priceLabel = this.unlockProduct?.displayPrice;
-    const iapHtml = showIapBanner
-      ? `
-        <div class="iap-banner">
-          <button type="button" class="iap-buy" data-action="open-unlock-shop">
-            <span class="iap-title">Unlock All Challenges</span>
-            ${priceLabel ? `<span class="iap-price">${escapeHtml(priceLabel)}</span>` : ""}
-          </button>
-        </div>
-      `
-      : "";
-    const lastUnlockedIdx = Math.max(0, ...progress.unlockedBlocks.map((n) => n - 1));
-    const sections: string[] = [];
-    // Wrap the six official blocks (and the interleaved IAP banner) in
-    // a collapsible "Official Challenges" section so players returning
-    // to play their custom challenges or My Challenges can hide the
-    // (often very tall) roster grid. State persists across sessions
-    // via localStorage. When collapsed the inner body is hidden via
-    // CSS — the header still renders so the player can re-expand.
-    const officialCollapsed = loadCollapsed("official");
-    const completedRoster = CHALLENGES.filter((c) => progress.completed.includes(c.id)).length;
-    const officialBlocks: string[] = [];
-    blockHtmlByIndex.forEach((html, idx) => {
-      officialBlocks.push(html);
-      if (idx === lastUnlockedIdx && iapHtml) officialBlocks.push(iapHtml);
-    });
-    sections.push(renderCollapsibleSection({
-      key: "official",
-      title: "Official Challenges",
-      progress: `${completedRoster}/${CHALLENGES.length}`,
-      collapsed: officialCollapsed,
-      body: officialBlocks.join(""),
-    }));
-    // Player-authored "My Challenges" section appended after the roster
-    // and IAP banner. Shown once the IAP is owned (or in debug mode),
-    // since the editor is gated behind that — no point showing an empty
-    // section to players who can't author challenges yet.
-    if (progress.purchasedUnlock || this.debugEnabled || this.isEditorTempUnlocked()) {
-      // Same filter as the editor home: My Challenges shows only the
-      // player's authored content, not community installs (those live
-      // in Community → INSTALLED).
-      const customs = listCustomChallenges().filter((c) => !c.installedFrom);
-      if (customs.length > 0) {
-        const customCards = customs.map((c) => {
-          const tint = difficultyTint(c.difficulty);
-          const hexes: string[] = [];
-          for (let i = 0; i < c.difficulty; i++) {
-            hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
-          }
-          const starsHtml = `<div class="challenge-card-stars">${
-            [0, 1, 2].map((i) =>
-              `<span class="challenge-card-star${i < c.starsEarned ? " earned" : ""}">★</span>`,
-            ).join("")
-          }</div>`;
-          const bestText = c.best > 0 ? `Best: ${c.best}` : "Best: —";
-          return `
-            <button type="button" class="challenge-card challenge-card-custom" data-custom-challenge-id="${escapeHtml(c.id)}">
-              <span class="challenge-card-id">CUSTOM</span>
-              <span class="challenge-card-name">${escapeHtml(c.name)}</span>
-              <div class="challenge-card-hexes">${hexes.join("")}</div>
-              ${starsHtml}
-              <span class="challenge-card-best">${bestText}</span>
-            </button>
-          `;
-        }).join("");
-        sections.push(renderCollapsibleSection({
-          key: "myChallenges",
-          title: "My Challenges",
-          progress: String(customs.length),
-          collapsed: loadCollapsed("myChallenges"),
-          body: `<div class="challenge-cards challenge-cards-custom">${customCards}</div>`,
-        }));
-      }
-    }
-    // Installed Challenges section: community challenges the player
-    // has installed. Lives in its own bucket (separate from
-    // self-authored My Challenges) so the install/uninstall lifecycle
-    // is obvious. Each row supports swipe-left to UNINSTALL.
-    const installedCustoms = listCustomChallenges().filter((c) => !!c.installedFrom);
-    if (installedCustoms.length > 0) {
-      sections.push(renderCollapsibleSection({
-        key: "installedChallenges",
-        title: "Installed Challenges",
-        progress: String(installedCustoms.length),
-        collapsed: loadCollapsed("installedChallenges"),
-        body: this.renderInstalledChallengesBody(installedCustoms),
-      }));
-    }
-    // Community Challenges section. Browseable everywhere the
-    // CloudKit corpus is reachable — iOS via the native plugin, web
-    // via a read-only API token (cloudWeb.ts). When neither is wired
-    // we show a placeholder explaining the situation.
-    const communityBody = isCommunityReadable()
-      ? this.renderCommunityBody()
-      : `<div class="challenge-community-placeholder">
-          <span class="challenge-community-tag">UNAVAILABLE</span>
-          <p>Community challenges aren't reachable from this build. iOS users browse via iCloud; web visitors need a CloudKit API token configured at build time.</p>
-        </div>`;
-    sections.push(renderCollapsibleSection({
-      key: "community",
-      title: "Community Challenges",
-      collapsed: loadCollapsed("community"),
-      body: communityBody,
-    }));
-    // Lazy-load the community list the first time the section renders
-    // (and on every fresh open of challenge select after a publish/
-    // install/etc. invalidates the cache). The render call above
-    // immediately shows a "Loading…" stub; refreshCommunity flips to
-    // the populated list when the query resolves.
     if (isCommunityReadable() && !this.communityLoaded && !this.communityLoading) {
       void this.refreshCommunity();
     }
-    this.overlay.innerHTML = `
-      <div class="challenge-select">
-        <div class="challenge-select-top">
-          <button type="button" class="challenge-back" data-action="challenge-back">← Back</button>
-          <span style="font-size:13px; letter-spacing:0.18em; text-transform:uppercase; color:#aab4dc;">Challenges</span>
-          <span style="width:60px"></span>
-        </div>
-        ${sections.join("")}
-      </div>
-      ${this.renderLeaderboardSheetHtml()}
-      ${this.renderReportSheetHtml()}
-    `;
   }
 
   // ----- Community challenges -------------------------------------------
 
-  // Body markup for the Community collapsible. Uses cached state — the
-  // first render returns a "Loading…" stub and refreshCommunity()
-  // re-renders the whole challenge select once the query resolves.
+  // Body markup for the Community collapsible. Pure render delegated
+  // to ui/screens/communityBody.ts; this is just the deps gather.
   private renderCommunityBody(): string {
-    if (this.communityLoading && this.communityChallenges.length === 0) {
-      return `<div class="challenge-community-status">Loading community challenges…</div>`;
-    }
-    if (this.communityError) {
-      return `<div class="challenge-community-status">Couldn't load community challenges. Pull to retry.</div>`;
-    }
-    const sortOpts: Array<{ id: CommunitySort; label: string }> = [
-      { id: "newest", label: "NEW" },
-      { id: "topVoted", label: "TOP" },
-      { id: "mostPlayed", label: "ACTIVE" },
-    ];
-    const sortChips = sortOpts.map((o) => `
-      <button type="button" class="community-sort-chip${o.id === this.communitySort ? " selected" : ""}"
-        data-action="community-sort" data-sort="${o.id}">${o.label}</button>
-    `).join("");
-    if (this.communityChallenges.length === 0 && this.communityLoaded) {
-      return `
-        <div class="community-sort-row">${sortChips}</div>
-        <div class="challenge-community-placeholder">
-          <span class="challenge-community-tag">EMPTY</span>
-          <p>No community challenges yet. Publish one from the editor to seed the list!</p>
-        </div>
-      `;
-    }
     const installedSet = new Set(
       listCustomChallenges()
         .map((c) => c.installedFrom)
         .filter((rn): rn is string => typeof rn === "string"),
     );
-    const cards = this.communityChallenges.map((p) => {
-      const tint = difficultyTint(p.difficulty);
-      const hexes: string[] = [];
-      for (let i = 0; i < p.difficulty; i++) {
-        hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
-      }
-      const installed = installedSet.has(p.recordName);
-      const upvoted = this.upvoteCache.has(p.recordName);
-      const installedBadge = installed
-        ? `<span class="challenge-card-installed">INSTALLED</span>`
-        : "";
-      const playOrInstall = installed
-        ? `<button type="button" class="community-card-btn community-card-btn-play" data-action="community-play" data-record-name="${escapeHtml(p.recordName)}">PLAY</button>`
-        : `<button type="button" class="community-card-btn community-card-btn-install" data-action="community-install" data-record-name="${escapeHtml(p.recordName)}">INSTALL</button>`;
-      // LIKE and REPORT need user auth. On iOS that's CKContainer +
-      // iCloud login; on web it'd require CloudKit Web Auth which we
-      // haven't wired. Leaderboard is read-only and works everywhere.
-      const showAuthedActions = isCloudKitAvailable();
-      const likeBtn = showAuthedActions
-        ? `<button type="button" class="community-card-icon-btn${upvoted ? " filled-like" : ""}" data-action="community-upvote" data-record-name="${escapeHtml(p.recordName)}" aria-label="Like">${upvoted ? "♥" : "♡"}</button>`
-        : "";
-      const reportBtn = showAuthedActions
-        ? `<button type="button" class="community-card-icon-btn" data-action="community-report" data-record-name="${escapeHtml(p.recordName)}" aria-label="Report">⚑</button>`
-        : "";
-      // (Share moved to the Installed Challenges section — sharing
-      // an entry the player has installed reads as "I tried this,
-      // here, try it too" while sharing a random browse-list card
-      // would be more like a recommendation. Cleaner social loop.)
-      const waveCount = p.waves.length;
-      const waveLabel = `${waveCount} ${waveCount === 1 ? "wave" : "waves"}`;
-      return `
-        <div class="challenge-card challenge-card-community">
-          <span class="challenge-card-id">COMMUNITY</span>
-          <span class="challenge-card-name">${escapeHtml(p.name)}</span>
-          <span class="challenge-card-author">by ${escapeHtml(p.authorName)}</span>
-          <div class="challenge-card-hex-row">
-            <div class="challenge-card-hexes">${hexes.join("")}</div>
-            <span class="challenge-card-waves">${waveLabel}</span>
-          </div>
-          <div class="challenge-card-stats">
-            <span title="Installs">⬇ ${p.installCount}</span>
-            <span title="Plays">▶ ${p.playCount}</span>
-            <span title="Likes">♥ ${p.upvoteCount}</span>
-          </div>
-          ${installedBadge}
-          <div class="community-card-actions">
-            <div class="community-card-top-row">
-              ${playOrInstall}
-              <button type="button" class="community-card-btn community-card-btn-remix" data-action="community-remix" data-record-name="${escapeHtml(p.recordName)}">REMIX</button>
-            </div>
-            <div class="community-card-icon-row">
-              ${likeBtn}
-              <button type="button" class="community-card-icon-btn" data-action="community-leaderboard" data-record-name="${escapeHtml(p.recordName)}" aria-label="Leaderboard">🏆</button>
-              ${reportBtn}
-            </div>
-          </div>
-        </div>
-      `;
-    }).join("");
-    return `
-      <div class="community-sort-row">${sortChips}</div>
-      <div class="challenge-cards challenge-cards-community">${cards}</div>
-    `;
+    return renderCommunityBodyView({
+      loading: this.communityLoading,
+      loaded: this.communityLoaded,
+      error: this.communityError,
+      challenges: this.communityChallenges,
+      sort: this.communitySort,
+      installedSet,
+      upvotedSet: this.upvoteCache,
+      showAuthedActions: isCloudKitAvailable(),
+    });
   }
 
   // Body markup for the Installed Challenges collapsible. Each row uses
@@ -5005,62 +4510,10 @@ export class Game {
   // editor home — so the swipe handler picks it up automatically; only
   // the revealed action button differs (UNINSTALL not DELETE).
   private renderInstalledChallengesBody(installed: CustomChallenge[]): string {
-    const rows = installed.map((c) => {
-      const tint = difficultyTint(c.difficulty);
-      const hexes: string[] = [];
-      for (let i = 0; i < c.difficulty; i++) {
-        hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
-      }
-      const stars = [0, 1, 2]
-        .map((i) =>
-          `<span class="challenge-card-star${i < c.starsEarned ? " earned" : ""}">★</span>`,
-        )
-        .join("");
-      const attempted = c.best > 0 || c.bestPct > 0 || c.starsEarned > 0;
-      const starsHtml = attempted
-        ? `<div class="challenge-card-stars">${stars}</div>`
-        : "";
-      const bestScoreText = c.best > 0 ? `Best: ${c.best}` : "Best: —";
-      const pctText = c.bestPct > 0
-        ? `<span class="challenge-card-pct${c.bestPct >= 100 ? " full" : ""}">${c.bestPct}%</span>`
-        : `<span class="challenge-card-pct">—</span>`;
-      const author = c.installedAuthorName ?? "the community";
-      const versionStr = c.installedVersion ? ` · v${c.installedVersion}` : "";
-      const recordName = c.installedFrom ?? "";
-      // Leaderboard button is iOS-only for now (web has no auth path
-      // back to a player record yet) — but the read-only top-20 view
-      // works on web too, so wire it everywhere community is readable.
-      const leaderboardBtn = isCommunityReadable() && recordName
-        ? `<button type="button" class="editor-row-btn editor-row-btn-edit" data-action="community-leaderboard" data-record-name="${escapeHtml(recordName)}" aria-label="Leaderboard">🏆</button>`
-        : "";
-      const shareBtn = recordName
-        ? `<button type="button" class="editor-row-btn editor-row-btn-share" data-action="community-share" data-record-name="${escapeHtml(recordName)}" data-share-name="${escapeHtml(c.name)}" aria-label="Share">${IOS_SHARE_GLYPH_SVG}</button>`
-        : "";
-      return `
-        <div class="editor-home-row-swipe" data-swipe-id="${escapeHtml(c.id)}">
-          <button type="button" class="editor-home-row-delete" data-action="installed-uninstall" data-custom-id="${escapeHtml(c.id)}" tabindex="-1" aria-label="Uninstall">UNINSTALL</button>
-          <div class="editor-home-row" data-custom-id="${escapeHtml(c.id)}">
-            <div class="editor-home-row-meta">
-              <span class="challenge-card-id">COMMUNITY</span>
-              <span class="challenge-card-name">${escapeHtml(c.name)}</span>
-              <span class="editor-home-row-installed">by ${escapeHtml(author)}${versionStr}</span>
-              <div class="challenge-card-hexes">${hexes.join("")}</div>
-              ${starsHtml}
-              <span class="challenge-card-best">${bestScoreText} ${pctText}</span>
-            </div>
-            <div class="editor-home-row-actions">
-              <button type="button" class="editor-row-btn editor-row-btn-play" data-action="installed-play" data-custom-id="${escapeHtml(c.id)}">PLAY</button>
-              <button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-remix-custom" data-custom-id="${escapeHtml(c.id)}">REMIX</button>
-              <div class="editor-home-row-actions-pair">
-                ${leaderboardBtn}
-                ${shareBtn}
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-    }).join("");
-    return `<div class="editor-home-rows">${rows}</div>`;
+    return renderInstalledChallengesBodyView({
+      installed,
+      showLeaderboard: isCommunityReadable(),
+    });
   }
 
   // Open the single-challenge view for a deep-link record name. Used
@@ -8989,34 +8442,6 @@ const FIELD_HELP: Record<string, string> = {
 
 // Render a small (i) info button + hidden popup for a field. Click
 // toggles the popup. Empty string when the key has no help entry.
-// Render a collapsible section on the challenge select screen
-// (Official Challenges, My Challenges, Community). Header is a
-// button with chevron + title + optional progress label. Body is
-// the inner HTML, hidden via CSS when `.collapsed`.
-function renderCollapsibleSection(opts: {
-  key: CollapsibleKey;
-  title: string;
-  progress?: string;
-  collapsed: boolean;
-  body: string;
-}): string {
-  const progressHtml = opts.progress
-    ? `<span class="progress">${escapeHtml(opts.progress)}</span>`
-    : "";
-  return `
-    <section class="challenge-official${opts.collapsed ? " collapsed" : ""}">
-      <button type="button" class="challenge-official-header"
-        data-action="toggle-collapse" data-section="${opts.key}"
-        aria-expanded="${opts.collapsed ? "false" : "true"}">
-        <span class="challenge-official-chevron" aria-hidden="true">${opts.collapsed ? "▶" : "▼"}</span>
-        <span class="challenge-official-title">${escapeHtml(opts.title)}</span>
-        ${progressHtml}
-      </button>
-      <div class="challenge-official-body">${opts.body}</div>
-    </section>
-  `;
-}
-
 function helpTipHtml(key: string, override?: string): string {
   const text = override ?? FIELD_HELP[key];
   if (!text) return "";

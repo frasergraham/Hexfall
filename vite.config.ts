@@ -12,4 +12,11 @@ export default defineConfig({
     outDir: "docs",
     emptyOutDir: true,
   },
+  server: {
+    host: "0.0.0.0",
+    allowedHosts: [
+      "100.86.120.53",
+      "frasers-macbook-air.taile0f0ae.ts.net",
+    ],
+  },
 });
