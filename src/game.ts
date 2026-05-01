@@ -100,6 +100,7 @@ import { hashSeed, mulberry32, type Random } from "./rng";
 import { loadBool, loadJson, loadString, removeKey, saveBool, saveJson, saveString } from "./storage";
 import { STORAGE_KEYS } from "./storageKeys";
 import { computeWaveParams, lateGameSpeedMul } from "./spawn";
+import { highestTierCrossed, stepMilestones } from "./scoring";
 
 // Build-time feature flag: while the IAP unlock flow is being verified
 // on TestFlight, set VITE_EDITOR_UNLOCKED=1 in .env.local (or any vite
@@ -6311,12 +6312,8 @@ export class Game {
       // Threshold achievements for the size of the banked payout. Award the
       // highest tier that the pool clears so a single big payout doesn't
       // pop four banners back-to-back.
-      for (let i = BONUS_POOL_TIERS.length - 1; i >= 0; i--) {
-        if (banked >= BONUS_POOL_TIERS[i]!.threshold) {
-          this.awardAchievement(BONUS_POOL_TIERS[i]!.id);
-          break;
-        }
-      }
+      const tierId = highestTierCrossed(banked, BONUS_POOL_TIERS);
+      if (tierId) this.awardAchievement(tierId as AchievementId);
       // Multiplier achievements based on the peak the player held when the
       // bonus actually banked. Same single-tier rule as the pool tiers.
       if (mul >= 6) this.awardAchievement(ACHIEVEMENTS.bonus6x);
@@ -8905,12 +8902,9 @@ export class Game {
     // against the endless leaderboard.
     if (this.gameMode === "challenge") return;
     const milestones = SCORE_MILESTONES_BY_DIFFICULTY[this.difficulty];
-    while (this.nextMilestoneIdx < milestones.length) {
-      const m = milestones[this.nextMilestoneIdx]!;
-      if (this.score < m.threshold) break;
-      this.awardAchievement(m.id);
-      this.nextMilestoneIdx += 1;
-    }
+    const { nextIdx, awarded } = stepMilestones(this.score, milestones, this.nextMilestoneIdx);
+    for (const id of awarded) this.awardAchievement(id as AchievementId);
+    this.nextMilestoneIdx = nextIdx;
     // Hardcore organic unlock: scoring HARDCORE_UNLOCK_SCORE on hard
     // grants the difficulty for future runs.
     this.maybeUnlockHardcore();
