@@ -116,6 +116,9 @@ import { renderInstalledChallengesBody as renderInstalledChallengesBodyView } fr
 import { renderChallengeSelect as renderChallengeSelectView } from "./ui/screens/challengeSelect";
 import { renderEditorHome as renderEditorHomeView } from "./ui/screens/editorHome";
 import { renderSettingsDialog as renderSettingsDialogView } from "./ui/screens/settingsDialog";
+import { renderWaveDialog as renderWaveDialogView } from "./ui/screens/waveDialog";
+import { renderCustomWaveDialog as renderCustomWaveDialogView } from "./ui/screens/customWaveDialog";
+import { renderEditorEdit as renderEditorEditView } from "./ui/screens/editorEdit";
 
 // Build-time feature flag: while the IAP unlock flow is being verified
 // on TestFlight, set VITE_EDITOR_UNLOCKED=1 in .env.local (or any vite
@@ -2548,57 +2551,34 @@ export class Game {
     const c = this.editingCustom;
     if (!c) return;
 
-    const wavesAtMax = c.waves.length >= MAX_WAVES_PER_CUSTOM;
-    const rows = c.waves.map((line, idx) => {
-      const check = checkWaveLine(line);
-      let parsed: ParsedWave | null = null;
-      try { parsed = parseWaveLine(line); } catch { parsed = null; }
-      const selectedCls = idx === this.editorSelectedWaveIdx ? " selected" : "";
-      const warnCls = check.ok ? "" : " invalid";
-      const warnBadge = check.ok
-        ? ""
-        : `<span class="editor-wave-warn" title="${escapeHtml(check.reason!)}" aria-label="Wave invalid">!</span>`;
-
-      let infoHtml: string;
-      if (parsed) {
-        const isCustom = this.isCustomShapedWave(line);
-        const blocksPer10s = Math.round(10 / parsed.spawnInterval);
-        const countLabel = parsed.countCap !== null && parsed.countCap > 0
-          ? `<span class="editor-wave-info-item"><span class="editor-wave-info-label">×</span>${parsed.countCap}</span>`
-          : "";
-        const customBadge = isCustom
-          ? `<span class="editor-wave-info-item editor-wave-info-custom">CUSTOM</span>`
-          : "";
-        infoHtml = `
-          <div class="editor-wave-info">
-            ${customBadge}
-            <span class="editor-wave-info-item"><span class="editor-wave-info-label">Speed</span>${parsed.baseSpeedMul.toFixed(2)}</span>
-            <span class="editor-wave-info-item"><span class="editor-wave-info-label">Rate</span>${blocksPer10s}/10s</span>
-            ${countLabel}
-          </div>
-        `;
-      } else {
-        infoHtml = `<div class="editor-wave-info editor-wave-info-error">${escapeHtml(check.ok ? "" : check.reason!)}</div>`;
-      }
-
-      return `
-        <div class="editor-wave-row${selectedCls}${warnCls}" data-wave-idx="${idx}">
-          <button type="button" class="editor-drag-handle" data-action="editor-drag" data-wave-idx="${idx}" aria-label="Drag to reorder">⋮⋮</button>
-          <div class="editor-wave-canvas-wrap">
-            ${infoHtml}
-            <canvas class="editor-wave-thumb" data-wave-thumb="${idx}"></canvas>
-            ${warnBadge}
-          </div>
-          <button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-open-wave" data-wave-idx="${idx}">EDIT</button>
-          <button type="button" class="editor-row-btn editor-row-btn-delete" data-action="editor-delete-wave" data-wave-idx="${idx}" aria-label="Delete wave">×</button>
-        </div>
-      `;
-    }).join("");
-
     const dialogHtml = this.editorDialog === "wave"
-      ? this.renderWaveDialogHtml()
+      ? renderWaveDialogView({
+          workingLine: this.editorDialogWaveLine,
+          isNewWave: this.editorDialogIsNewWave,
+          waveIdx: this.editorDialogWaveIdx,
+          presetId: this.editorDialogPresetId,
+          presetsOpen: this.editorDialogPresetsOpen,
+          advancedOpen: this.editorDialogAdvancedOpen,
+          pctValues: this.editorDialogPctValues,
+          helpTip: helpTipHtml,
+        })
       : this.editorDialog === "customWave"
-        ? this.renderCustomWaveDialogHtml()
+        ? renderCustomWaveDialogView({
+            isNewWave: this.editorDialogIsNewWave,
+            waveIdx: this.editorDialogWaveIdx,
+            paletteKinds: CUSTOM_WAVE_KINDS,
+            selectedKind: this.editorCustomWaveKind,
+            rate: this.editorCustomWaveRate,
+            speed: this.editorCustomWaveSpeed,
+            walls: this.editorCustomWaveWalls,
+            optionsOpen: this.editorCustomWaveOptionsOpen,
+            slots: this.editorCustomWaveSlots,
+            visibleRows: this.editorCustomWaveVisibleRows,
+            maxRows: CUSTOM_WAVE_LEN,
+            picker: this.editorCustomCellPicker,
+            helpTip: helpTipHtml,
+            angleToCssRotation,
+          })
         : this.editorDialog === "settings"
           ? renderSettingsDialogView({ challenge: c, helpTip: helpTipHtml })
           : "";
@@ -2609,36 +2589,16 @@ export class Game {
     const waveDialogScroll = this.overlay.querySelector<HTMLElement>(".editor-dialog-wave")?.scrollTop ?? 0;
     const customPaletteScroll = this.overlay.querySelector<HTMLElement>(".editor-custom-palette-row")?.scrollLeft ?? 0;
 
-    this.overlay.innerHTML = `
-      <div class="editor-edit">
-        <div class="challenge-select-top">
-          <button type="button" class="challenge-back" data-action="editor-edit-back">← Save</button>
-          <span style="font-size:13px; letter-spacing:0.18em; text-transform:uppercase; color:#aab4dc;">Edit Challenge</span>
-          <span style="width:60px"></span>
-        </div>
-        <button type="button" class="play-btn editor-edit-play-big" data-action="editor-edit-play">PLAY</button>
-        <div class="editor-edit-meta">
-          <div class="editor-quick-row">
-            <span class="editor-quick-label">Name${helpTipHtml("name")}</span>
-            <div class="editor-quick-controls">
-              <input class="editor-meta-input" data-editor-field="name" type="text" maxlength="${MAX_CUSTOM_NAME_LEN}" value="${escapeHtml(c.name)}" />
-            </div>
-          </div>
-          <button type="button" class="editor-options-btn" data-action="editor-open-settings">
-            <span class="editor-options-icon" aria-hidden="true">⚙</span>
-            <span>Options</span>
-          </button>
-        </div>
-        <div class="editor-wave-list">
-          ${rows}
-          <div class="editor-add-wave-row">
-            <button type="button" class="editor-add-wave" data-action="editor-add-wave" ${wavesAtMax ? "disabled" : ""}>${wavesAtMax ? "Maximum 100 waves" : "+ Add Regular Wave"}</button>
-            <button type="button" class="editor-add-wave editor-add-wave-custom" data-action="editor-add-custom-wave" ${wavesAtMax ? "disabled" : ""}>${wavesAtMax ? "" : "+ Add Custom Wave"}</button>
-          </div>
-        </div>
-        ${dialogHtml}
-      </div>
-    `;
+    this.overlay.innerHTML = renderEditorEditView({
+      challenge: c,
+      maxWaves: MAX_WAVES_PER_CUSTOM,
+      maxNameLen: MAX_CUSTOM_NAME_LEN,
+      selectedWaveIdx: this.editorSelectedWaveIdx,
+      dialogHtml,
+      checkWaveLine,
+      isCustomShapedWave: (line) => this.isCustomShapedWave(line),
+      helpTip: helpTipHtml,
+    });
 
     // Paint thumbnails after the DOM is in place.
     this.overlay.querySelectorAll<HTMLCanvasElement>("canvas[data-wave-thumb]").forEach((cv) => {
@@ -2916,268 +2876,7 @@ export class Game {
     this.startWavePreview();
   }
 
-  // Compose a wave-dialog HTML using the current transient state. Reads
-  // editorDialog* fields for preset selection, advanced-open, and the
-  // composed line. The advanced form's input values come from parsing
-  // the line so they always reflect the latest preset/build output.
-  private renderWaveDialogHtml(): string {
-    const line = this.editorDialogWaveLine || "size=2-3, rate=0.7, speed=1.2, count=10";
-    let parsed: ParsedWave | null = null;
-    let parseErr = "";
-    try {
-      parsed = parseWaveLine(line);
-    } catch (e) {
-      parseErr = (e as Error).message;
-      try { parsed = parseWaveLine("size=2-3, rate=0.7, speed=1.2, count=10"); } catch { /* impossible */ }
-    }
-    if (!parsed) return "";
-    const w = parsed;
-    const hasSlots = w.slots.length > 0;
 
-    // Preset chips. Each preset's full recipe (size / speed / rate /
-    // walls / mix) is loaded into the working line on click — Advanced
-    // shows everything; the always-visible bar exposes the three knobs
-    // a player almost always wants to tweak.
-    const presetChips = WAVE_PRESETS.map((p) => `
-      <button type="button" class="editor-preset-chip${this.editorDialogPresetId === p.id ? " selected" : ""}"
-        data-action="editor-preset-pick" data-preset-id="${escapeHtml(p.id)}"
-        title="${escapeHtml(p.blurb)}">
-        ${escapeHtml(p.name)}
-      </button>
-    `).join("");
-
-    // Always-visible Count / Duration / Rate / Walls steppers — the
-    // four knobs that come up most often. Other tunables (size, speed,
-    // slot rate, wall amp/period, etc.) live in Advanced.
-    const countLabel = w.countCap === null ? "—" : String(w.countCap);
-    const durLabel = w.durOverride === null ? "—" : `${w.durOverride.toFixed(1)}s`;
-    // Rate is stored as seconds-between-spawns but displayed as
-    // blocks-per-10s (higher = denser) since players think in flow not
-    // gap. The DSL gets the seconds value back at save time.
-    const rateBlocks = Math.round(10 / w.spawnInterval);
-    const rateLabel = `${rateBlocks}/10s`;
-    const wallsName = WALL_LABEL[w.walls] ?? "No walls";
-    const quickHtml = `
-      <section class="editor-quick">
-        <div class="editor-quick-row">
-          <span class="editor-quick-label">Count${helpTipHtml("count")}</span>
-          <div class="editor-quick-controls">
-            <button type="button" class="editor-mix-step editor-mix-minus"
-              data-action="editor-bump-count" data-delta="-1"
-              ${w.countCap === null ? "disabled" : ""}>−</button>
-            <span class="editor-mix-value">${countLabel}</span>
-            <button type="button" class="editor-mix-step editor-mix-plus"
-              data-action="editor-bump-count" data-delta="1"
-              ${(w.countCap ?? 0) >= 200 ? "disabled" : ""}>+</button>
-          </div>
-        </div>
-        <div class="editor-quick-row">
-          <span class="editor-quick-label">Duration${helpTipHtml("dur")}</span>
-          <div class="editor-quick-controls">
-            <button type="button" class="editor-mix-step editor-mix-minus"
-              data-action="editor-bump-dur" data-delta="-0.5"
-              ${w.durOverride === null ? "disabled" : ""}>−</button>
-            <span class="editor-mix-value">${durLabel}</span>
-            <button type="button" class="editor-mix-step editor-mix-plus"
-              data-action="editor-bump-dur" data-delta="0.5"
-              ${(w.durOverride ?? 0) >= 120 ? "disabled" : ""}>+</button>
-          </div>
-        </div>
-        <div class="editor-quick-row">
-          <span class="editor-quick-label">Rate${helpTipHtml("rate")}</span>
-          <div class="editor-quick-controls">
-            <button type="button" class="editor-mix-step editor-mix-minus"
-              data-action="editor-bump-rate" data-delta="-5"
-              ${w.spawnInterval >= 1.95 ? "disabled" : ""}>−</button>
-            <span class="editor-mix-value">${rateLabel}</span>
-            <button type="button" class="editor-mix-step editor-mix-plus"
-              data-action="editor-bump-rate" data-delta="5"
-              ${w.spawnInterval <= 0.0501 ? "disabled" : ""}>+</button>
-          </div>
-        </div>
-        <div class="editor-quick-row">
-          <span class="editor-quick-label">Walls${helpTipHtml("walls")}</span>
-          <div class="editor-quick-walls-controls">
-            <button type="button" class="editor-walls-arrow"
-              data-action="editor-cycle-walls" data-dir="-1" aria-label="Previous wall">‹</button>
-            <span class="editor-walls-name">${escapeHtml(wallsName)}</span>
-            <button type="button" class="editor-walls-arrow"
-              data-action="editor-cycle-walls" data-dir="1" aria-label="Next wall">›</button>
-          </div>
-        </div>
-      </section>
-    `;
-
-    const mixHtml = this.renderClusterMixHtml();
-
-    // Advanced fields (always rendered, hidden via CSS when collapsed).
-    const advancedHtml = this.renderWaveAdvancedHtml(w);
-
-    const titleText = this.editorDialogIsNewWave
-      ? "New wave"
-      : `Wave ${(this.editorDialogWaveIdx ?? 0) + 1}`;
-    const errBanner = parseErr
-      ? `<div class="editor-dialog-err">Parse error: ${escapeHtml(parseErr)}</div>`
-      : "";
-    const slotsBanner = hasSlots
-      ? `<div class="editor-dialog-note">Custom slot pattern (${w.slots.length} slots) — locked, coming in phase 2.</div>`
-      : "";
-    const advCls = this.editorDialogAdvancedOpen ? "editor-advanced open" : "editor-advanced";
-    const advChevron = this.editorDialogAdvancedOpen ? "−" : "+";
-
-    return `
-      <div class="editor-dialog-backdrop" data-action="editor-dialog-cancel"></div>
-      <div class="editor-dialog editor-dialog-wave" role="dialog" aria-label="${titleText}">
-        <div class="editor-dialog-top">
-          <button type="button" class="challenge-back" data-action="editor-dialog-ok">← Save</button>
-          <h2>${escapeHtml(titleText)}</h2>
-          <span style="width:60px"></span>
-        </div>
-        ${errBanner}
-        ${slotsBanner}
-        <button type="button" class="editor-section-toggle" data-action="editor-toggle-presets">
-          <span class="editor-advanced-chevron">${this.editorDialogPresetsOpen ? "−" : "+"}</span> Preset Waves
-        </button>
-        <section class="editor-presets${this.editorDialogPresetsOpen ? " open" : ""}">
-          <div class="editor-preset-chips">${presetChips}</div>
-        </section>
-        ${quickHtml}
-        ${mixHtml}
-        <button type="button" class="editor-advanced-toggle" data-action="editor-toggle-advanced">
-          <span class="editor-advanced-chevron">${advChevron}</span> Advanced
-        </button>
-        <div class="${advCls}">
-          ${advancedHtml}
-        </div>
-        <div class="editor-dialog-actions">
-          <button type="button" class="challenge-back" data-action="editor-dialog-cancel">Cancel</button>
-          <button type="button" class="play-btn" data-action="editor-dialog-ok">${this.editorDialogIsNewWave ? "ADD" : "OK"}</button>
-        </div>
-      </div>
-    `;
-  }
-
-  // Advanced wave-form fields. Count / Duration / Rate / Walls live in
-  // the always-visible bar, so they're omitted here. Each row uses the
-  // same row layout as the basic-view quick controls so the two
-  // sections feel consistent.
-  private renderWaveAdvancedHtml(w: ParsedWave): string {
-    const isZigzag = w.walls === "zigzag";
-    const fmtInt = (v: number) => String(Math.round(v));
-    const fmt2 = (v: number) => v.toFixed(2);
-    const fmt1 = (v: number) => v.toFixed(1);
-    const safeColLabel =
-      w.safeCol === null ? "Random" : w.safeCol === "none" ? "None" : String(w.safeCol);
-    const originLabel =
-      w.origin === "top" ? "Top" : w.origin === "topAngled" ? "Top angled" : "Side";
-    return `
-      <div class="editor-dialog-body">
-        ${this.renderAdvStepper("sizeMin", "Size min", w.sizeMin, { min: 1, max: 5, step: 1, format: fmtInt })}
-        ${this.renderAdvStepper("sizeMax", "Size max", w.sizeMax, { min: 1, max: 5, step: 1, format: fmtInt })}
-        ${this.renderAdvStepper("speed", "Speed", w.baseSpeedMul, { min: 0.5, max: 3.0, step: 0.05, format: fmt2 })}
-        ${this.renderAdvStepper("wallAmp", "Wall amp", w.wallAmp, { min: 0, max: 0.5, step: 0.02, format: fmt2, disabled: !isZigzag })}
-        ${this.renderAdvStepper("wallPeriod", "Wall period", w.wallPeriod, { min: 0.05, max: 5, step: 0.1, format: fmt1, disabled: !isZigzag })}
-        ${this.renderAdvCycler("safeCol", "Safe column", safeColLabel)}
-        ${this.renderAdvCycler("origin", "Origin", originLabel)}
-        ${this.renderAdvStepper("dir", "Tilt", w.defaultDir, { min: -0.35, max: 0.35, step: 0.05, format: fmt2 })}
-        ${this.renderAdvToggle("dirRandom", "Random tilt", w.defaultDirRandom)}
-      </div>
-    `;
-  }
-
-  // Themed on/off toggle for Advanced fields. Renders as `[ OFF | ON ]`
-  // matching the look of the cycler control. Source of truth lives on
-  // the working line, so flipping it round-trips through composeWaveLine.
-  private renderAdvToggle(field: string, label: string, on: boolean): string {
-    return `
-      <div class="editor-quick-row">
-        <span class="editor-quick-label">${escapeHtml(label)}${helpTipHtml(field)}</span>
-        <div class="editor-quick-controls">
-          <button type="button" class="editor-walls-arrow"
-            data-action="editor-adv-toggle" data-field="${field}"
-            aria-pressed="${on ? "true" : "false"}">${on ? "ON" : "OFF"}</button>
-        </div>
-      </div>
-    `;
-  }
-
-  // Themed `‹ LABEL ›` cycler matching the basic Walls control. Used
-  // for Advanced fields whose values are a small fixed list (Origin,
-  // Safe column).
-  private renderAdvCycler(field: string, label: string, displayValue: string): string {
-    return `
-      <div class="editor-quick-row">
-        <span class="editor-quick-label">${escapeHtml(label)}${helpTipHtml(field)}</span>
-        <div class="editor-quick-walls-controls">
-          <button type="button" class="editor-walls-arrow"
-            data-action="editor-adv-cycle" data-field="${field}" data-dir="-1" aria-label="Previous">‹</button>
-          <span class="editor-walls-name">${escapeHtml(displayValue)}</span>
-          <button type="button" class="editor-walls-arrow"
-            data-action="editor-adv-cycle" data-field="${field}" data-dir="1" aria-label="Next">›</button>
-        </div>
-      </div>
-    `;
-  }
-
-  private toggleAdvancedField(field: string): void {
-    this.mutateDialogWave((w) => {
-      if (field === "dirRandom") w.defaultDirRandom = !w.defaultDirRandom;
-    });
-  }
-
-  private cycleAdvancedField(field: string, dir: number): void {
-    this.mutateDialogWave((w) => {
-      if (field === "origin") {
-        const opts: Array<"top" | "topAngled" | "side"> = ["top", "topAngled", "side"];
-        const idx = Math.max(0, opts.indexOf(w.origin));
-        w.origin = opts[(idx + dir + opts.length) % opts.length]!;
-      } else if (field === "safeCol") {
-        // null = random, "none" = no enforcement, 0..8 explicit columns.
-        const opts: Array<number | "none" | null> = [null, "none", 0, 1, 2, 3, 4, 5, 6, 7, 8];
-        const cur = w.safeCol;
-        let curIdx = opts.findIndex((o) => o === cur);
-        if (curIdx < 0) curIdx = 0;
-        w.safeCol = opts[(curIdx + dir + opts.length) % opts.length]!;
-      }
-    });
-  }
-
-  // Themed stepper row matching the basic-view +/- controls. Used by
-  // every numeric field in Advanced so it visually matches Count /
-  // Duration / Rate / mix on the basic bar.
-  private renderAdvStepper(
-    field: string,
-    label: string,
-    value: number,
-    opts: {
-      min: number;
-      max: number;
-      step: number;
-      format: (v: number) => string;
-      disabled?: boolean;
-      helpKey?: string;
-    },
-  ): string {
-    const disabled = !!opts.disabled;
-    const eps = opts.step * 0.001;
-    const atMin = value <= opts.min + eps;
-    const atMax = value >= opts.max - eps;
-    const helpKey = opts.helpKey ?? field;
-    return `
-      <div class="editor-quick-row${disabled ? " editor-quick-row-disabled" : ""}">
-        <span class="editor-quick-label">${escapeHtml(label)}${helpTipHtml(helpKey)}</span>
-        <div class="editor-quick-controls">
-          <button type="button" class="editor-mix-step editor-mix-minus"
-            data-action="editor-adv-bump" data-field="${field}" data-delta="${-opts.step}"
-            ${disabled || atMin ? "disabled" : ""}>−</button>
-          <span class="editor-mix-value">${opts.format(value)}</span>
-          <button type="button" class="editor-mix-step editor-mix-plus"
-            data-action="editor-adv-bump" data-field="${field}" data-delta="${opts.step}"
-            ${disabled || atMax ? "disabled" : ""}>+</button>
-        </div>
-      </div>
-    `;
-  }
 
   private bumpAdvancedField(field: string, delta: number): void {
     this.mutateDialogWave((w) => {
@@ -3208,6 +2907,28 @@ export class Game {
           w.defaultDir = clampRound(w.defaultDir + delta, -0.35, 0.35, 0.05);
           break;
         }
+      }
+    });
+  }
+
+  private toggleAdvancedField(field: string): void {
+    this.mutateDialogWave((w) => {
+      if (field === "dirRandom") w.defaultDirRandom = !w.defaultDirRandom;
+    });
+  }
+
+  private cycleAdvancedField(field: string, dir: number): void {
+    this.mutateDialogWave((w) => {
+      if (field === "origin") {
+        const opts: Array<"top" | "topAngled" | "side"> = ["top", "topAngled", "side"];
+        const idx = Math.max(0, opts.indexOf(w.origin));
+        w.origin = opts[(idx + dir + opts.length) % opts.length]!;
+      } else if (field === "safeCol") {
+        const opts: Array<number | "none" | null> = [null, "none", 0, 1, 2, 3, 4, 5, 6, 7, 8];
+        const cur = w.safeCol;
+        let curIdx = opts.findIndex((o) => o === cur);
+        if (curIdx < 0) curIdx = 0;
+        w.safeCol = opts[(curIdx + dir + opts.length) % opts.length]!;
       }
     });
   }
@@ -3357,214 +3078,6 @@ export class Game {
       }
     });
   }
-
-  // ----- Custom Wave dialog --------------------------------------------
-
-  private renderCustomWaveDialogHtml(): string {
-    const titleText = this.editorDialogIsNewWave
-      ? "New custom wave"
-      : `Custom wave ${(this.editorDialogWaveIdx ?? 0) + 1}`;
-
-    // Palette: one row of kind buttons. Currently scrolls horizontally
-    // when the dialog is too narrow to fit all 9 kinds inline.
-    const paletteHtml = CUSTOM_WAVE_KINDS.map((k) => {
-      const sel = k === this.editorCustomWaveKind ? " selected" : "";
-      return `
-        <button type="button" class="editor-custom-kind${sel}"
-          data-action="editor-custom-kind" data-kind="${k}"
-          aria-label="${escapeHtml(k)}">
-          <canvas class="editor-custom-kind-icon" data-block-icon="${k}" width="36" height="36"></canvas>
-          <span class="editor-custom-kind-label">${escapeHtml(k.toUpperCase())}</span>
-        </button>
-      `;
-    }).join("");
-
-    // OPTIONS section (collapsible): Rate, Speed, Walls.
-    const rateBlocks = Math.round(10 / this.editorCustomWaveRate);
-    const wallsName = WALL_LABEL[this.editorCustomWaveWalls] ?? "No walls";
-    const optionsOpen = this.editorCustomWaveOptionsOpen;
-    const optionsChevron = optionsOpen ? "−" : "+";
-    const optionsHtml = `
-      <button type="button" class="editor-section-toggle" data-action="editor-custom-options-toggle">
-        <span class="editor-advanced-chevron">${optionsChevron}</span> Options
-      </button>
-      <section class="editor-quick editor-custom-options${optionsOpen ? " open" : ""}">
-        <div class="editor-quick-row">
-          <span class="editor-quick-label">Rate${helpTipHtml("rate")}</span>
-          <div class="editor-quick-controls">
-            <button type="button" class="editor-mix-step editor-mix-minus"
-              data-action="editor-custom-rate" data-delta="-5"
-              ${this.editorCustomWaveRate >= 1.95 ? "disabled" : ""}>−</button>
-            <span class="editor-mix-value">${rateBlocks}/10s</span>
-            <button type="button" class="editor-mix-step editor-mix-plus"
-              data-action="editor-custom-rate" data-delta="5"
-              ${this.editorCustomWaveRate <= 0.0501 ? "disabled" : ""}>+</button>
-          </div>
-        </div>
-        <div class="editor-quick-row">
-          <span class="editor-quick-label">Speed${helpTipHtml("speed")}</span>
-          <div class="editor-quick-controls">
-            <button type="button" class="editor-mix-step editor-mix-minus"
-              data-action="editor-custom-speed" data-delta="-0.05"
-              ${this.editorCustomWaveSpeed <= 0.55 ? "disabled" : ""}>−</button>
-            <span class="editor-mix-value">${this.editorCustomWaveSpeed.toFixed(2)}</span>
-            <button type="button" class="editor-mix-step editor-mix-plus"
-              data-action="editor-custom-speed" data-delta="0.05"
-              ${this.editorCustomWaveSpeed >= 2.95 ? "disabled" : ""}>+</button>
-          </div>
-        </div>
-        <div class="editor-quick-row">
-          <span class="editor-quick-label">Walls${helpTipHtml("walls")}</span>
-          <div class="editor-quick-walls-controls">
-            <button type="button" class="editor-walls-arrow" data-action="editor-custom-walls" data-dir="-1" aria-label="Previous wall">‹</button>
-            <span class="editor-walls-name">${escapeHtml(wallsName)}</span>
-            <button type="button" class="editor-walls-arrow" data-action="editor-custom-walls" data-dir="1" aria-label="Next wall">›</button>
-          </div>
-        </div>
-      </section>
-    `;
-
-    // Dynamic-length grid. Show only `visibleRows` rows top-down (highest
-    // index first) so the bottom row is the start of the wave (slot 0).
-    // The "Add row" button at the top inserts another empty row up to the
-    // CUSTOM_WAVE_LEN cap.
-    const visible = Math.min(this.editorCustomWaveVisibleRows, CUSTOM_WAVE_LEN);
-    const rowsHtml: string[] = [];
-    const atCap = visible >= CUSTOM_WAVE_LEN;
-    rowsHtml.push(`
-      <button type="button" class="editor-custom-addrow" data-action="editor-custom-addrow" ${atCap ? "disabled" : ""}>
-        ${atCap ? "Maximum 30 rows" : "+ Add row"}
-      </button>
-    `);
-    for (let i = visible - 1; i >= 0; i--) {
-      rowsHtml.push(this.renderCustomWaveRowHtml(i));
-    }
-    const gridHtml = `
-      <section class="editor-custom-grid" aria-label="Wave timeline">
-        ${rowsHtml.join("")}
-      </section>
-    `;
-
-    return `
-      <div class="editor-dialog-backdrop" data-action="editor-dialog-cancel"></div>
-      <div class="editor-dialog editor-dialog-custom-wave" role="dialog" aria-label="${titleText}">
-        <div class="editor-dialog-top">
-          <button type="button" class="challenge-back" data-action="editor-dialog-ok">← Save</button>
-          <h2>${escapeHtml(titleText)}</h2>
-          <span style="width:60px"></span>
-        </div>
-        ${optionsHtml}
-        <section class="editor-custom-palette">
-          <div class="editor-custom-palette-row">${paletteHtml}</div>
-        </section>
-        ${gridHtml}
-        <div class="editor-dialog-actions">
-          <button type="button" class="challenge-back" data-action="editor-dialog-cancel">Cancel</button>
-          <button type="button" class="play-btn" data-action="editor-dialog-ok">${this.editorDialogIsNewWave ? "ADD" : "OK"}</button>
-        </div>
-      </div>
-      ${this.renderCustomCellPickerHtml()}
-    `;
-  }
-
-  // Picker popup shown when the user taps a placed cell. Lets them
-  // pick a size (1-5) with a real polyhex preview and an angle (0..6
-  // for main cells; sides are fixed at 7/8). Tapping outside closes.
-  private renderCustomCellPickerHtml(): string {
-    const picker = this.editorCustomCellPicker;
-    if (!picker) return "";
-    const slot = this.editorCustomWaveSlots[picker.rowIdx];
-    if (!slot) return "";
-    const isSide = slot.side !== "main";
-    // Pickup kinds (coin / shield / drone) are always single-hex
-    // in-game — the picker greys out sizes 2-5 so the user can't author
-    // a multi-cell pickup.
-    const isPickup = slot.kind === "coin" || slot.kind === "shield" || slot.kind === "drone";
-    const sizeButtons = [1, 2, 3, 4, 5].map((s) => {
-      const disabled = isPickup && s > 1;
-      return `
-        <button type="button" class="editor-custom-pick-size${slot.size === s ? " selected" : ""}"
-          data-action="editor-custom-pick-size" data-size="${s}"
-          ${disabled ? "disabled" : ""}>
-          <canvas class="editor-custom-pick-canvas" data-shape-icon="${slot.kind}:${s}" width="44" height="44"></canvas>
-          <span class="editor-custom-pick-label">${s}</span>
-        </button>
-      `;
-    }).join("");
-    // Order angles left → straight → right for an intuitive layout.
-    const angleOrder = [5, 3, 1, 0, 2, 4, 6];
-    const angleButtons = angleOrder.map((a) => `
-      <button type="button" class="editor-custom-pick-angle${slot.angleIdx === a ? " selected" : ""}"
-        data-action="editor-custom-pick-angle" data-angle="${a}"
-        aria-label="Angle ${a}">
-        <span class="editor-custom-pick-arrow" style="transform: rotate(${angleToCssRotation(a)}deg)">↓</span>
-      </button>
-    `).join("");
-    return `
-      <div class="editor-custom-picker-backdrop" data-action="editor-custom-picker-close"></div>
-      <div class="editor-custom-picker" role="dialog" aria-label="Edit block">
-        <div class="editor-custom-picker-section">
-          <span class="editor-custom-picker-label">Size</span>
-          <div class="editor-custom-picker-sizes">${sizeButtons}</div>
-        </div>
-        ${isSide ? "" : `
-          <div class="editor-custom-picker-section">
-            <span class="editor-custom-picker-label">Direction</span>
-            <div class="editor-custom-picker-angles">${angleButtons}</div>
-          </div>
-        `}
-      </div>
-    `;
-  }
-
-  private renderCustomWaveRowHtml(rowIdx: number): string {
-    const slot = this.editorCustomWaveSlots[rowIdx];
-    const cellHtml = (
-      side: "main" | "left" | "right",
-      col: number,
-    ): string => {
-      const filled =
-        !!slot &&
-        slot.side === side &&
-        (side !== "main" || slot.col === col);
-      const sideAttr = side === "main" ? "" : ` data-side="${side}"`;
-      const colAttr = side === "main" ? ` data-col="${col}"` : "";
-      const sideCls = side === "main" ? "" : ` editor-custom-cell-side editor-custom-cell-${side}`;
-      const filledCls = filled ? " has-hex" : "";
-      const angle = filled && slot ? slot.angleIdx : 0;
-      const rot = filled ? angleToCssRotation(angle) : 0;
-      const kindAttr = filled && slot ? ` data-kind="${slot.kind}"` : "";
-      const sizeText = filled && slot ? `<span class="editor-custom-size">${slot.size}</span>` : "";
-      const arrow = filled && slot && slot.side === "main" && slot.angleIdx !== 0
-        ? `<span class="editor-custom-arrow" style="transform: rotate(${rot}deg)">↓</span>`
-        : "";
-      const iconCanvas = filled
-        ? `<canvas class="editor-custom-cell-icon" data-cell-icon="${rowIdx}-${side}-${col}" data-block-icon="${slot!.kind}" width="22" height="22"></canvas>`
-        : "";
-      return `
-        <button type="button" class="editor-custom-cell${sideCls}${filledCls}"
-          data-action="editor-custom-cell" data-row="${rowIdx}"${sideAttr}${colAttr}
-          data-has-hex="${filled ? 1 : 0}"${kindAttr}>
-          ${iconCanvas}${sizeText}${arrow}
-        </button>
-      `;
-    };
-
-    const mainCells: string[] = [];
-    for (let col = 0; col < 10; col++) mainCells.push(cellHtml("main", col));
-
-    return `
-      <div class="editor-custom-row" data-row="${rowIdx}">
-        ${cellHtml("left", 0)}
-        <div class="editor-custom-row-main">${mainCells.join("")}</div>
-        ${cellHtml("right", 0)}
-        <button type="button" class="editor-custom-clear"
-          data-action="editor-custom-clear" data-row="${rowIdx}"
-          aria-label="Clear row">×</button>
-      </div>
-    `;
-  }
-
 
 
   // True for slot-only waves (count=0 + slots) — those open in the
@@ -4024,48 +3537,6 @@ export class Game {
     }
   }
 
-  // Cluster-mix block: 7 rows (one per kind). Each row shows the cluster
-  // icon, kind name, and a -/+ stepper around the current %. `normal`
-  // is the auto-balancer — it has no buttons, just shows the residual
-  // so the total always equals 100%.
-  private renderClusterMixHtml(): string {
-    const order: ClusterKind[] = ["normal", "sticky", "slow", "fast", "coin", "shield", "drone", "tiny", "big"];
-    const rows = order.map((kind) => {
-      const isNormal = kind === "normal";
-      const value = this.editorDialogPctValues[kind] ?? 0;
-      const buttons = isNormal
-        ? `<span class="editor-mix-residual">auto</span>`
-        : `
-          <button type="button" class="editor-mix-step editor-mix-minus"
-            data-action="editor-mix-bump" data-kind="${kind}" data-delta="-5"
-            ${value <= 0 ? "disabled" : ""}>−</button>
-          <span class="editor-mix-value">${value}<span class="editor-mix-pct">%</span></span>
-          <button type="button" class="editor-mix-step editor-mix-plus"
-            data-action="editor-mix-bump" data-kind="${kind}" data-delta="5"
-            ${(this.editorDialogPctValues.normal ?? 0) <= 0 ? "disabled" : ""}>+</button>
-        `;
-      const label = kind === "normal" ? "Normal" : kind.charAt(0).toUpperCase() + kind.slice(1);
-      return `
-        <div class="editor-mix-row${isNormal ? " editor-mix-row-normal" : ""}" data-mix-kind="${kind}">
-          <canvas class="editor-mix-icon" data-mix-icon="${kind}" width="36" height="36"></canvas>
-          <span class="editor-mix-name">${label}</span>
-          <div class="editor-mix-controls">
-            ${isNormal ? `<span class="editor-mix-value">${value}<span class="editor-mix-pct">%</span></span>` : ""}
-            ${buttons}
-          </div>
-        </div>
-      `;
-    }).join("");
-    return `
-      <section class="editor-mix">
-        <div class="editor-mix-header">
-          <span>Cluster mix${helpTipHtml("pct")}</span>
-          <span class="editor-mix-total">100%</span>
-        </div>
-        <div class="editor-mix-rows">${rows}</div>
-      </section>
-    `;
-  }
 
   // Adjust a non-normal kind by delta, debiting/crediting `normal` so
   // the total stays at exactly 100%. Clamps when normal would cross
@@ -8465,12 +7936,6 @@ const CUSTOM_WAVE_KINDS: ClusterKind[] = [
 ];
 
 const WALL_CYCLE: WallKind[] = ["none", "pinch", "zigzag", "narrow"];
-const WALL_LABEL: Record<WallKind, string> = {
-  none: "No walls",
-  pinch: "Pinch",
-  zigzag: "Zigzag",
-  narrow: "Narrow",
-};
 
 // Validate a single wave line. Catches parse errors and the "does
 // nothing" case (no count, no slots, no dur+rate) — same rule as

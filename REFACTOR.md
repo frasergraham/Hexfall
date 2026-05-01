@@ -556,12 +556,12 @@ under every tested seed.
 
 ## Status — refactor branch progress
 
-End-of-session snapshot. **180 tests** total (started at 62).
+End-of-session snapshot. **225 tests** total (started at 62).
 Coverage: **23.58% statements / 25.03% lines** across `src/`,
 up from 6.5% before the integration smoke test was added in
-session 2. Bundle: 387.53 kB JS / 110.27 kB gzip (within budget;
-net change under 100 bytes raw, +200 bytes gzip from
-compression noise).
+session 2. Bundle: 388.81 kB JS / 110.71 kB gzip (within budget;
++1.3 kB raw / +0.4 kB gzip from prop-gather call-sites in `Game`,
+amortised by 16 fewer template strings inside the class).
 
 Integration smoke test boots `Game` in jsdom and drives three
 deterministic challenge runs (`1-1`, `2-1`, `3-3`) for ~9.6
@@ -584,7 +584,7 @@ prime directive).
 | 1.5 | Pure spawn helpers | ⚠️ partial | `lateGameSpeedMul` + `computeWaveParams` extracted; remaining spawn helpers (`pickSpawnColumn`, `chooseWallForEndlessWave`, etc.) are tied to many `this.*` fields and move with Spawner / WaveDirector in Phase 3 |
 | 1.6 | Move `composeWaveLine` | ✅ done | Now lives next to `parseWaveLine`; round-trip property test added |
 | 1.7 | Promote `clamp*` helpers | ✅ done | `validation.ts` shared by `customChallenges` + `cloudSync` |
-| 2 | Screen extraction | ⚠️ mostly done | 13 screens extracted to `src/ui/screens/*` (BlocksGuide, UnlockShop, ChallengeIntro, ChallengeComplete, GameOver, LeaderboardSheet, ReportSheet, SingleChallenge, communityBody, installedChallengesBody, challengeSelect, editorHome, settingsDialog). Each `Game.render*()` is now a thin wrapper that gathers props and delegates. Click handlers stay in the central listener. Wave dialog + custom-wave dialog + editorEdit shell deferred — they share a deeply-coupled mutable editor-state object that needs a state-shape redesign before extraction is safe. |
+| 2 | Screen extraction | ✅ done | 16 screens extracted to `src/ui/screens/*` (BlocksGuide, UnlockShop, ChallengeIntro, ChallengeComplete, GameOver, LeaderboardSheet, ReportSheet, SingleChallenge, communityBody, installedChallengesBody, challengeSelect, editorHome, settingsDialog, waveDialog, customWaveDialog, editorEdit). Each `Game.render*()` is a thin prop-gathering wrapper. Click handlers + post-render binding (canvas painting, drag handles, scroll restore, picker positioning) stay on Game. The editor wave/custom-wave dialogs are pinned by 6 round-trip tests in `tests/integration/editorDialogs.test.ts` so future state changes can't quietly regress the DSL composition. |
 | 3 | Collaborator split | ⛔ skipped | Renderer / EffectsManager / Spawner / CollisionRouter / WaveDirector / ChallengeRunner; high-risk, deferred |
 | 4.1 | Roster validator → tests | ✅ done | Dev-only `if (import.meta.env?.DEV)` block in `challenges.ts` is now `tests/challenges-defs.test.ts`; CI catches roster regressions |
 | 4.2 | `EDITOR_TEMP_UNLOCKED_ON_IOS` → env | ✅ done | Now `VITE_EDITOR_UNLOCKED` (default "1"); flip to "0" for ship build |
