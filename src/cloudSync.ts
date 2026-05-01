@@ -583,93 +583,79 @@ function customChallengeToFields(c: CustomChallenge): Record<string, CloudKitFie
   };
 }
 
-function fieldsToCustomChallenge(rec: CloudKitRecord): CustomChallenge | null {
-  try {
-    const id = rec.recordName;
-    const effects = JSON.parse(stringField(rec.fields["effects"]) ?? "{}") as CustomChallengeEffects;
-    const stars = JSON.parse(stringField(rec.fields["stars"]) ?? "{}") as CustomChallengeStars;
-    const wavesRaw = rec.fields["waves"];
-    const waves: string[] = Array.isArray(wavesRaw)
-      ? (wavesRaw as unknown[]).filter((w): w is string => typeof w === "string")
-      : [];
-    return {
-      id,
-      name: stringField(rec.fields["name"]) ?? "Untitled",
-      seed: numberField(rec.fields["seed"]) ?? 0,
-      difficulty: clampDifficulty(numberField(rec.fields["difficulty"]) ?? 3),
-      effects: {
-        slowDuration: effects.slowDuration ?? 5,
-        fastDuration: effects.fastDuration ?? 5,
-        shieldDuration: effects.shieldDuration ?? 10,
-        droneDuration: effects.droneDuration ?? 10,
-        dangerSize: effects.dangerSize ?? 7,
-      },
-      stars: {
-        one: stars.one ?? 1,
-        two: stars.two ?? 2,
-        three: stars.three ?? 3,
-      },
-      waves,
-      createdAt: numberField(rec.fields["createdAt"]) ?? Date.now(),
-      updatedAt: numberField(rec.fields["updatedAt"]) ?? Date.now(),
-      best: numberField(rec.fields["best"]) ?? 0,
-      bestPct: numberField(rec.fields["bestPct"]) ?? 0,
-      starsEarned: clampStars(numberField(rec.fields["starsEarned"]) ?? 0),
-      remixedFrom: stringField(rec.fields["remixedFrom"]) || undefined,
-      publishedRecordName: stringField(rec.fields["publishedRecordName"]) || undefined,
-      publishedVersion: numberField(rec.fields["publishedVersion"]) || undefined,
-      installedFrom: stringField(rec.fields["installedFrom"]) || undefined,
-      installedVersion: numberField(rec.fields["installedVersion"]) || undefined,
-      installedAuthorName: stringField(rec.fields["installedAuthorName"]) || undefined,
-    };
-  } catch {
-    return null;
+// Shared decoders for the JSON-encoded sub-objects on both record
+// types (effects + stars). Tolerates missing / malformed JSON by
+// returning the per-field defaults.
+function decodeEffects(raw: string | null): CustomChallengeEffects {
+  let parsed: Partial<CustomChallengeEffects> = {};
+  if (raw) {
+    try { parsed = JSON.parse(raw) as Partial<CustomChallengeEffects>; } catch { /* fall back */ }
   }
+  return {
+    slowDuration: parsed.slowDuration ?? 5,
+    fastDuration: parsed.fastDuration ?? 5,
+    shieldDuration: parsed.shieldDuration ?? 10,
+    droneDuration: parsed.droneDuration ?? 10,
+    dangerSize: parsed.dangerSize ?? 7,
+  };
+}
+
+function decodeStars(raw: string | null): CustomChallengeStars {
+  let parsed: Partial<CustomChallengeStars> = {};
+  if (raw) {
+    try { parsed = JSON.parse(raw) as Partial<CustomChallengeStars>; } catch { /* fall back */ }
+  }
+  return { one: parsed.one ?? 1, two: parsed.two ?? 2, three: parsed.three ?? 3 };
+}
+
+function decodeWaves(raw: CloudKitField | undefined): string[] {
+  return Array.isArray(raw) ? (raw as unknown[]).filter((w): w is string => typeof w === "string") : [];
+}
+
+function fieldsToCustomChallenge(rec: CloudKitRecord): CustomChallenge | null {
+  return {
+    id: rec.recordName,
+    name: stringField(rec.fields["name"]) ?? "Untitled",
+    seed: numberField(rec.fields["seed"]) ?? 0,
+    difficulty: clampDifficulty(numberField(rec.fields["difficulty"]) ?? 3),
+    effects: decodeEffects(stringField(rec.fields["effects"])),
+    stars: decodeStars(stringField(rec.fields["stars"])),
+    waves: decodeWaves(rec.fields["waves"]),
+    createdAt: numberField(rec.fields["createdAt"]) ?? Date.now(),
+    updatedAt: numberField(rec.fields["updatedAt"]) ?? Date.now(),
+    best: numberField(rec.fields["best"]) ?? 0,
+    bestPct: numberField(rec.fields["bestPct"]) ?? 0,
+    starsEarned: clampStars(numberField(rec.fields["starsEarned"]) ?? 0),
+    remixedFrom: stringField(rec.fields["remixedFrom"]) || undefined,
+    publishedRecordName: stringField(rec.fields["publishedRecordName"]) || undefined,
+    publishedVersion: numberField(rec.fields["publishedVersion"]) || undefined,
+    installedFrom: stringField(rec.fields["installedFrom"]) || undefined,
+    installedVersion: numberField(rec.fields["installedVersion"]) || undefined,
+    installedAuthorName: stringField(rec.fields["installedAuthorName"]) || undefined,
+  };
 }
 
 function recordToPublished(rec: CloudKitRecord): PublishedChallenge | null {
-  try {
-    const wavesRaw = rec.fields["waves"];
-    const waves: string[] = Array.isArray(wavesRaw)
-      ? (wavesRaw as unknown[]).filter((w): w is string => typeof w === "string")
-      : [];
-    const effectsJson = stringField(rec.fields["effects"]) ?? "{}";
-    const starsJson = stringField(rec.fields["stars"]) ?? '{"one":1,"two":2,"three":3}';
-    const effects = JSON.parse(effectsJson) as CustomChallengeEffects;
-    const stars = JSON.parse(starsJson) as CustomChallengeStars;
-    return {
-      recordName: rec.recordName,
-      name: stringField(rec.fields["name"]) ?? "Untitled",
-      authorId: stringField(rec.fields["authorId"]) ?? "",
-      authorName: stringField(rec.fields["authorName"]) ?? "Anonymous",
-      difficulty: clampDifficulty(numberField(rec.fields["difficulty"]) ?? 3),
-      seed: numberField(rec.fields["seed"]) ?? 0,
-      effects: {
-        slowDuration: effects.slowDuration ?? 5,
-        fastDuration: effects.fastDuration ?? 5,
-        shieldDuration: effects.shieldDuration ?? 10,
-        droneDuration: effects.droneDuration ?? 10,
-        dangerSize: effects.dangerSize ?? 7,
-      },
-      waves,
-      stars: {
-        one: stars.one ?? 1,
-        two: stars.two ?? 2,
-        three: stars.three ?? 3,
-      },
-      version: numberField(rec.fields["version"]) ?? 1,
-      publishedAt: numberField(rec.fields["publishedAt"]) ?? rec.createdAt ?? Date.now(),
-      updatedAt: numberField(rec.fields["updatedAt"]) ?? rec.modifiedAt ?? Date.now(),
-      status: (stringField(rec.fields["status"]) as PublishedChallenge["status"]) ?? "approved",
-      reportCount: numberField(rec.fields["reportCount"]) ?? 0,
-      upvoteCount: numberField(rec.fields["upvoteCount"]) ?? 0,
-      installCount: numberField(rec.fields["installCount"]) ?? 0,
-      playCount: numberField(rec.fields["playCount"]) ?? 0,
-      sourceCustomId: stringField(rec.fields["sourceCustomId"]) ?? "",
-    };
-  } catch {
-    return null;
-  }
+  return {
+    recordName: rec.recordName,
+    name: stringField(rec.fields["name"]) ?? "Untitled",
+    authorId: stringField(rec.fields["authorId"]) ?? "",
+    authorName: stringField(rec.fields["authorName"]) ?? "Anonymous",
+    difficulty: clampDifficulty(numberField(rec.fields["difficulty"]) ?? 3),
+    seed: numberField(rec.fields["seed"]) ?? 0,
+    effects: decodeEffects(stringField(rec.fields["effects"])),
+    waves: decodeWaves(rec.fields["waves"]),
+    stars: decodeStars(stringField(rec.fields["stars"])),
+    version: numberField(rec.fields["version"]) ?? 1,
+    publishedAt: numberField(rec.fields["publishedAt"]) ?? rec.createdAt ?? Date.now(),
+    updatedAt: numberField(rec.fields["updatedAt"]) ?? rec.modifiedAt ?? Date.now(),
+    status: (stringField(rec.fields["status"]) as PublishedChallenge["status"]) ?? "approved",
+    reportCount: numberField(rec.fields["reportCount"]) ?? 0,
+    upvoteCount: numberField(rec.fields["upvoteCount"]) ?? 0,
+    installCount: numberField(rec.fields["installCount"]) ?? 0,
+    playCount: numberField(rec.fields["playCount"]) ?? 0,
+    sourceCustomId: stringField(rec.fields["sourceCustomId"]) ?? "",
+  };
 }
 
 function recordToScore(rec: CloudKitRecord): CommunityScore | null {
