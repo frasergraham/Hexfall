@@ -10,10 +10,9 @@
 // scroll positions, position the cell picker).
 
 import { escapeHtml } from "../escape";
-import { parseWaveLine, type ParsedWave } from "../../waveDsl";
+import { checkWaveLine, isCustomShapedWave, parseWaveLine, type ParsedWave } from "../../waveDsl";
+import { helpTipHtml } from "../components/helpTip";
 import type { CustomChallenge } from "../../customChallenges";
-
-export type CheckResult = { ok: true } | { ok: false; reason: string };
 
 export interface EditorEditProps {
   challenge: CustomChallenge;
@@ -25,18 +24,12 @@ export interface EditorEditProps {
   selectedWaveIdx: number;
   /** Pre-rendered dialog markup (or empty string when no dialog open). */
   dialogHtml: string;
-  /** Per-line validation report. */
-  checkWaveLine: (line: string) => CheckResult;
-  /** Whether the line is a slot-only "scripted" wave. */
-  isCustomShapedWave: (line: string) => boolean;
-  /** Help-tip rendering (depends on FIELD_HELP map owned by Game). */
-  helpTip: (key: string) => string;
 }
 
 export function renderEditorEdit(props: EditorEditProps): string {
   const c = props.challenge;
   const wavesAtMax = c.waves.length >= props.maxWaves;
-  const rows = c.waves.map((line, idx) => renderWaveRow(line, idx, props)).join("");
+  const rows = c.waves.map((line, idx) => renderWaveRow(line, idx, props.selectedWaveIdx)).join("");
 
   return `
     <div class="editor-edit">
@@ -48,7 +41,7 @@ export function renderEditorEdit(props: EditorEditProps): string {
       <button type="button" class="play-btn editor-edit-play-big" data-action="editor-edit-play">PLAY</button>
       <div class="editor-edit-meta">
         <div class="editor-quick-row">
-          <span class="editor-quick-label">Name${props.helpTip("name")}</span>
+          <span class="editor-quick-label">Name${helpTipHtml("name")}</span>
           <div class="editor-quick-controls">
             <input class="editor-meta-input" data-editor-field="name" type="text" maxlength="${props.maxNameLen}" value="${escapeHtml(c.name)}" />
           </div>
@@ -70,11 +63,11 @@ export function renderEditorEdit(props: EditorEditProps): string {
   `;
 }
 
-function renderWaveRow(line: string, idx: number, props: EditorEditProps): string {
-  const check = props.checkWaveLine(line);
+function renderWaveRow(line: string, idx: number, selectedWaveIdx: number): string {
+  const check = checkWaveLine(line);
   let parsed: ParsedWave | null = null;
   try { parsed = parseWaveLine(line); } catch { parsed = null; }
-  const selectedCls = idx === props.selectedWaveIdx ? " selected" : "";
+  const selectedCls = idx === selectedWaveIdx ? " selected" : "";
   const warnCls = check.ok ? "" : " invalid";
   const warnBadge = check.ok
     ? ""
@@ -82,7 +75,7 @@ function renderWaveRow(line: string, idx: number, props: EditorEditProps): strin
 
   let infoHtml: string;
   if (parsed) {
-    const isCustom = props.isCustomShapedWave(line);
+    const isCustom = isCustomShapedWave(line);
     const blocksPer10s = Math.round(10 / parsed.spawnInterval);
     const countLabel = parsed.countCap !== null && parsed.countCap > 0
       ? `<span class="editor-wave-info-item"><span class="editor-wave-info-label">×</span>${parsed.countCap}</span>`

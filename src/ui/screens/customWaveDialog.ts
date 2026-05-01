@@ -5,9 +5,9 @@
 // re-renders by calling renderEditorEdit which threads new props back.
 
 import { escapeHtml } from "../escape";
+import { helpTipHtml } from "../components/helpTip";
+import { angleToCssRotation } from "../components/angles";
 import type { ClusterKind, WallKind } from "../../types";
-
-export type HelpTipFn = (key: string) => string;
 
 export interface CustomWaveSlot {
   kind: ClusterKind;
@@ -38,9 +38,6 @@ export interface CustomWaveDialogProps {
   maxRows: number;
   /** Currently-open per-cell picker, or null when no cell is selected. */
   picker: CustomCellPicker | null;
-  helpTip: HelpTipFn;
-  /** Mapping from angleIdx → CSS rotation degrees for the slot arrow. */
-  angleToCssRotation: (angleIdx: number) => number;
 }
 
 const WALL_LABEL: Record<WallKind, string> = {
@@ -54,8 +51,6 @@ export function renderCustomWaveDialog(props: CustomWaveDialogProps): string {
   const titleText = props.isNewWave
     ? "New custom wave"
     : `Custom wave ${(props.waveIdx ?? 0) + 1}`;
-  const helpTip = props.helpTip;
-
   const paletteHtml = props.paletteKinds.map((k) => {
     const sel = k === props.selectedKind ? " selected" : "";
     return `
@@ -77,7 +72,7 @@ export function renderCustomWaveDialog(props: CustomWaveDialogProps): string {
     </button>
     <section class="editor-quick editor-custom-options${props.optionsOpen ? " open" : ""}">
       <div class="editor-quick-row">
-        <span class="editor-quick-label">Rate${helpTip("rate")}</span>
+        <span class="editor-quick-label">Rate${helpTipHtml("rate")}</span>
         <div class="editor-quick-controls">
           <button type="button" class="editor-mix-step editor-mix-minus"
             data-action="editor-custom-rate" data-delta="-5"
@@ -89,7 +84,7 @@ export function renderCustomWaveDialog(props: CustomWaveDialogProps): string {
         </div>
       </div>
       <div class="editor-quick-row">
-        <span class="editor-quick-label">Speed${helpTip("speed")}</span>
+        <span class="editor-quick-label">Speed${helpTipHtml("speed")}</span>
         <div class="editor-quick-controls">
           <button type="button" class="editor-mix-step editor-mix-minus"
             data-action="editor-custom-speed" data-delta="-0.05"
@@ -101,7 +96,7 @@ export function renderCustomWaveDialog(props: CustomWaveDialogProps): string {
         </div>
       </div>
       <div class="editor-quick-row">
-        <span class="editor-quick-label">Walls${helpTip("walls")}</span>
+        <span class="editor-quick-label">Walls${helpTipHtml("walls")}</span>
         <div class="editor-quick-walls-controls">
           <button type="button" class="editor-walls-arrow" data-action="editor-custom-walls" data-dir="-1" aria-label="Previous wall">‹</button>
           <span class="editor-walls-name">${escapeHtml(wallsName)}</span>
@@ -120,7 +115,7 @@ export function renderCustomWaveDialog(props: CustomWaveDialogProps): string {
     </button>
   `);
   for (let i = visible - 1; i >= 0; i--) {
-    rowsHtml.push(renderCustomWaveRow(i, props.slots[i] ?? null, props.angleToCssRotation));
+    rowsHtml.push(renderCustomWaveRow(i, props.slots[i] ?? null));
   }
   const gridHtml = `
     <section class="editor-custom-grid" aria-label="Wave timeline">
@@ -173,7 +168,7 @@ function renderCellPicker(props: CustomWaveDialogProps): string {
     <button type="button" class="editor-custom-pick-angle${slot.angleIdx === a ? " selected" : ""}"
       data-action="editor-custom-pick-angle" data-angle="${a}"
       aria-label="Angle ${a}">
-      <span class="editor-custom-pick-arrow" style="transform: rotate(${props.angleToCssRotation(a)}deg)">↓</span>
+      <span class="editor-custom-pick-arrow" style="transform: rotate(${angleToCssRotation(a)}deg)">↓</span>
     </button>
   `).join("");
   return `
@@ -196,7 +191,6 @@ function renderCellPicker(props: CustomWaveDialogProps): string {
 function renderCustomWaveRow(
   rowIdx: number,
   slot: CustomWaveSlot | null,
-  angleToCssRotation: (angleIdx: number) => number,
 ): string {
   const cellHtml = (
     side: "main" | "left" | "right",

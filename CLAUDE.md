@@ -245,9 +245,10 @@ of the current wave so the author can see what they're authoring before
 playing it.
 
 The editor is gated behind `purchasedUnlock || debugEnabled` plus
-`EDITOR_TEMP_UNLOCKED_ON_IOS` (set in `game.ts`) which currently
-auto-unlocks the editor on iOS while the IAP flow stabilises in
-TestFlight. Revert that constant before shipping the editor publicly.
+the `VITE_EDITOR_UNLOCKED` env flag (default `"1"` in `.env.example`)
+which currently auto-unlocks the editor on iOS while the IAP flow
+stabilises in TestFlight. Set it to `"0"` for a ship build that
+re-locks the editor behind the IAP.
 
 ### Community challenges (CloudKit)
 
@@ -418,5 +419,5 @@ SHIELD_/DRONE_*                                 shield + drone
 LATE_RAMP_FLOOR_SCORE, LATE_RAMP_PER_100        endless ramp
 HARDCORE_UNLOCK_SCORE                           PAINFUL difficulty unlock
 ROTATE_SLIDE_SENS                               touch rotation feel
-EDITOR_TEMP_UNLOCKED_ON_IOS                     editor temp-unlock toggle
+VITE_EDITOR_UNLOCKED (env)                      editor temp-unlock toggle
 ```

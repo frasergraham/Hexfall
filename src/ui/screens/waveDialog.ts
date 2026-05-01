@@ -8,9 +8,8 @@
 import { escapeHtml } from "../escape";
 import { parseWaveLine, type ParsedWave } from "../../waveDsl";
 import { WAVE_PRESETS } from "../../wavePresets";
+import { helpTipHtml } from "../components/helpTip";
 import type { ClusterKind, WallKind } from "../../types";
-
-export type HelpTipFn = (key: string) => string;
 
 const WALL_LABEL: Record<WallKind, string> = {
   none: "No walls",
@@ -40,7 +39,6 @@ export interface WaveDialogProps {
   advancedOpen: boolean;
   /** Cluster mix percentages — one row per kind, totals 100. */
   pctValues: Partial<Record<ClusterKind, number>>;
-  helpTip: HelpTipFn;
 }
 
 export function renderWaveDialog(props: WaveDialogProps): string {
@@ -57,7 +55,6 @@ export function renderWaveDialog(props: WaveDialogProps): string {
   if (!parsed) return "";
   const w = parsed;
   const hasSlots = w.slots.length > 0;
-  const helpTip = props.helpTip;
 
   const presetChips = WAVE_PRESETS.map((p) => `
     <button type="button" class="editor-preset-chip${props.presetId === p.id ? " selected" : ""}"
@@ -76,7 +73,7 @@ export function renderWaveDialog(props: WaveDialogProps): string {
   const quickHtml = `
     <section class="editor-quick">
       <div class="editor-quick-row">
-        <span class="editor-quick-label">Count${helpTip("count")}</span>
+        <span class="editor-quick-label">Count${helpTipHtml("count")}</span>
         <div class="editor-quick-controls">
           <button type="button" class="editor-mix-step editor-mix-minus"
             data-action="editor-bump-count" data-delta="-1"
@@ -88,7 +85,7 @@ export function renderWaveDialog(props: WaveDialogProps): string {
         </div>
       </div>
       <div class="editor-quick-row">
-        <span class="editor-quick-label">Duration${helpTip("dur")}</span>
+        <span class="editor-quick-label">Duration${helpTipHtml("dur")}</span>
         <div class="editor-quick-controls">
           <button type="button" class="editor-mix-step editor-mix-minus"
             data-action="editor-bump-dur" data-delta="-0.5"
@@ -100,7 +97,7 @@ export function renderWaveDialog(props: WaveDialogProps): string {
         </div>
       </div>
       <div class="editor-quick-row">
-        <span class="editor-quick-label">Rate${helpTip("rate")}</span>
+        <span class="editor-quick-label">Rate${helpTipHtml("rate")}</span>
         <div class="editor-quick-controls">
           <button type="button" class="editor-mix-step editor-mix-minus"
             data-action="editor-bump-rate" data-delta="-5"
@@ -112,7 +109,7 @@ export function renderWaveDialog(props: WaveDialogProps): string {
         </div>
       </div>
       <div class="editor-quick-row">
-        <span class="editor-quick-label">Walls${helpTip("walls")}</span>
+        <span class="editor-quick-label">Walls${helpTipHtml("walls")}</span>
         <div class="editor-quick-walls-controls">
           <button type="button" class="editor-walls-arrow"
             data-action="editor-cycle-walls" data-dir="-1" aria-label="Previous wall">‹</button>
@@ -124,8 +121,8 @@ export function renderWaveDialog(props: WaveDialogProps): string {
     </section>
   `;
 
-  const mixHtml = renderClusterMix(props.pctValues, helpTip);
-  const advancedHtml = renderWaveAdvanced(w, helpTip);
+  const mixHtml = renderClusterMix(props.pctValues);
+  const advancedHtml = renderWaveAdvanced(w);
 
   const titleText = props.isNewWave
     ? "New wave"
@@ -173,7 +170,6 @@ export function renderWaveDialog(props: WaveDialogProps): string {
 
 function renderClusterMix(
   pctValues: Partial<Record<ClusterKind, number>>,
-  helpTip: HelpTipFn,
 ): string {
   const rows = MIX_KIND_ORDER.map((kind) => {
     const isNormal = kind === "normal";
@@ -204,7 +200,7 @@ function renderClusterMix(
   return `
     <section class="editor-mix">
       <div class="editor-mix-header">
-        <span>Cluster mix${helpTip("pct")}</span>
+        <span>Cluster mix${helpTipHtml("pct")}</span>
         <span class="editor-mix-total">100%</span>
       </div>
       <div class="editor-mix-rows">${rows}</div>
@@ -212,7 +208,7 @@ function renderClusterMix(
   `;
 }
 
-function renderWaveAdvanced(w: ParsedWave, helpTip: HelpTipFn): string {
+function renderWaveAdvanced(w: ParsedWave): string {
   const isZigzag = w.walls === "zigzag";
   const fmtInt = (v: number) => String(Math.round(v));
   const fmt2 = (v: number) => v.toFixed(2);
@@ -223,15 +219,15 @@ function renderWaveAdvanced(w: ParsedWave, helpTip: HelpTipFn): string {
     w.origin === "top" ? "Top" : w.origin === "topAngled" ? "Top angled" : "Side";
   return `
     <div class="editor-dialog-body">
-      ${stepper("sizeMin", "Size min", w.sizeMin, { min: 1, max: 5, step: 1, format: fmtInt }, helpTip)}
-      ${stepper("sizeMax", "Size max", w.sizeMax, { min: 1, max: 5, step: 1, format: fmtInt }, helpTip)}
-      ${stepper("speed", "Speed", w.baseSpeedMul, { min: 0.5, max: 3.0, step: 0.05, format: fmt2 }, helpTip)}
-      ${stepper("wallAmp", "Wall amp", w.wallAmp, { min: 0, max: 0.5, step: 0.02, format: fmt2, disabled: !isZigzag }, helpTip)}
-      ${stepper("wallPeriod", "Wall period", w.wallPeriod, { min: 0.05, max: 5, step: 0.1, format: fmt1, disabled: !isZigzag }, helpTip)}
-      ${cycler("safeCol", "Safe column", safeColLabel, helpTip)}
-      ${cycler("origin", "Origin", originLabel, helpTip)}
-      ${stepper("dir", "Tilt", w.defaultDir, { min: -0.35, max: 0.35, step: 0.05, format: fmt2 }, helpTip)}
-      ${toggle("dirRandom", "Random tilt", w.defaultDirRandom, helpTip)}
+      ${stepper("sizeMin", "Size min", w.sizeMin, { min: 1, max: 5, step: 1, format: fmtInt })}
+      ${stepper("sizeMax", "Size max", w.sizeMax, { min: 1, max: 5, step: 1, format: fmtInt })}
+      ${stepper("speed", "Speed", w.baseSpeedMul, { min: 0.5, max: 3.0, step: 0.05, format: fmt2 })}
+      ${stepper("wallAmp", "Wall amp", w.wallAmp, { min: 0, max: 0.5, step: 0.02, format: fmt2, disabled: !isZigzag })}
+      ${stepper("wallPeriod", "Wall period", w.wallPeriod, { min: 0.05, max: 5, step: 0.1, format: fmt1, disabled: !isZigzag })}
+      ${cycler("safeCol", "Safe column", safeColLabel)}
+      ${cycler("origin", "Origin", originLabel)}
+      ${stepper("dir", "Tilt", w.defaultDir, { min: -0.35, max: 0.35, step: 0.05, format: fmt2 })}
+      ${toggle("dirRandom", "Random tilt", w.defaultDirRandom)}
     </div>
   `;
 }
@@ -248,7 +244,6 @@ function stepper(
     disabled?: boolean;
     helpKey?: string;
   },
-  helpTip: HelpTipFn,
 ): string {
   const disabled = !!opts.disabled;
   const eps = opts.step * 0.001;
@@ -257,7 +252,7 @@ function stepper(
   const helpKey = opts.helpKey ?? field;
   return `
     <div class="editor-quick-row${disabled ? " editor-quick-row-disabled" : ""}">
-      <span class="editor-quick-label">${escapeHtml(label)}${helpTip(helpKey)}</span>
+      <span class="editor-quick-label">${escapeHtml(label)}${helpTipHtml(helpKey)}</span>
       <div class="editor-quick-controls">
         <button type="button" class="editor-mix-step editor-mix-minus"
           data-action="editor-adv-bump" data-field="${field}" data-delta="${-opts.step}"
@@ -271,10 +266,10 @@ function stepper(
   `;
 }
 
-function cycler(field: string, label: string, displayValue: string, helpTip: HelpTipFn): string {
+function cycler(field: string, label: string, displayValue: string): string {
   return `
     <div class="editor-quick-row">
-      <span class="editor-quick-label">${escapeHtml(label)}${helpTip(field)}</span>
+      <span class="editor-quick-label">${escapeHtml(label)}${helpTipHtml(field)}</span>
       <div class="editor-quick-walls-controls">
         <button type="button" class="editor-walls-arrow"
           data-action="editor-adv-cycle" data-field="${field}" data-dir="-1" aria-label="Previous">‹</button>
@@ -286,10 +281,10 @@ function cycler(field: string, label: string, displayValue: string, helpTip: Hel
   `;
 }
 
-function toggle(field: string, label: string, on: boolean, helpTip: HelpTipFn): string {
+function toggle(field: string, label: string, on: boolean): string {
   return `
     <div class="editor-quick-row">
-      <span class="editor-quick-label">${escapeHtml(label)}${helpTip(field)}</span>
+      <span class="editor-quick-label">${escapeHtml(label)}${helpTipHtml(field)}</span>
       <div class="editor-quick-controls">
         <button type="button" class="editor-walls-arrow"
           data-action="editor-adv-toggle" data-field="${field}"

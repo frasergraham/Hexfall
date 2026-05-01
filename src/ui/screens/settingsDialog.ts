@@ -5,19 +5,15 @@
 // `editor-dialog-cancel`, etc. handlers in the central listener.
 
 import { escapeHtml } from "../escape";
+import { helpTipHtml } from "../components/helpTip";
 import type { CustomChallenge } from "../../customChallenges";
-
-// Help-tip HTML stays in game.ts (depends on a shared FIELD_HELP map).
-// Caller passes a renderer so this module doesn't need to know about it.
-export type HelpTipFn = (key: string) => string;
 
 export interface SettingsDialogProps {
   challenge: CustomChallenge;
-  helpTip: HelpTipFn;
 }
 
 export function renderSettingsDialog(props: SettingsDialogProps): string {
-  const { challenge: c, helpTip } = props;
+  const c = props.challenge;
   const diffBtns = [1, 2, 3, 4, 5]
     .map((d) => `<button type="button" class="editor-diff-btn${c.difficulty === d ? " selected" : ""}" data-dialog-difficulty="${d}">${d}</button>`)
     .join("");
@@ -29,28 +25,28 @@ export function renderSettingsDialog(props: SettingsDialogProps): string {
       <h2>Options</h2>
       <div class="editor-dialog-body">
         <div class="editor-quick-row">
-          <span class="editor-quick-label">Seed${helpTip("seed")}</span>
+          <span class="editor-quick-label">Seed${helpTipHtml("seed")}</span>
           <div class="editor-quick-controls">
             <input class="editor-meta-input editor-meta-input-seed" data-editor-field="seed" type="text" inputmode="numeric" value="${c.seed}" />
             <button type="button" class="editor-mix-step editor-mix-plus" data-action="editor-randomize-seed" aria-label="Random seed">⟳</button>
           </div>
         </div>
-        ${stepper("slowDuration", "Slow duration (s)", c.effects.slowDuration, { min: 0, max: 30, step: 0.5, format: fmtSec }, helpTip)}
-        ${stepper("fastDuration", "Fast duration (s)", c.effects.fastDuration, { min: 0, max: 30, step: 0.5, format: fmtSec }, helpTip)}
-        ${stepper("shieldDuration", "Shield duration (s)", c.effects.shieldDuration, { min: 0, max: 60, step: 0.5, format: fmtSec }, helpTip)}
-        ${stepper("droneDuration", "Drone duration (s)", c.effects.droneDuration, { min: 0, max: 60, step: 0.5, format: fmtSec }, helpTip)}
-        ${stepper("dangerSize", "Danger size", c.effects.dangerSize, { min: 2, max: 15, step: 1, format: fmtInt }, helpTip)}
+        ${stepper("slowDuration", "Slow duration (s)", c.effects.slowDuration, { min: 0, max: 30, step: 0.5, format: fmtSec })}
+        ${stepper("fastDuration", "Fast duration (s)", c.effects.fastDuration, { min: 0, max: 30, step: 0.5, format: fmtSec })}
+        ${stepper("shieldDuration", "Shield duration (s)", c.effects.shieldDuration, { min: 0, max: 60, step: 0.5, format: fmtSec })}
+        ${stepper("droneDuration", "Drone duration (s)", c.effects.droneDuration, { min: 0, max: 60, step: 0.5, format: fmtSec })}
+        ${stepper("dangerSize", "Danger size", c.effects.dangerSize, { min: 2, max: 15, step: 1, format: fmtInt })}
         <fieldset class="editor-radio-group">
-          <legend>Star thresholds${helpTip("starsAuto")}</legend>
+          <legend>Star thresholds${helpTipHtml("starsAuto")}</legend>
           <div class="editor-stars-row">
-            ${stepper("starOne", "★", c.stars.one, { min: 0, max: 9999, step: 5, format: fmtInt }, helpTip)}
-            ${stepper("starTwo", "★★", c.stars.two, { min: 0, max: 9999, step: 5, format: fmtInt }, helpTip)}
-            ${stepper("starThree", "★★★", c.stars.three, { min: 0, max: 9999, step: 5, format: fmtInt }, helpTip)}
+            ${stepper("starOne", "★", c.stars.one, { min: 0, max: 9999, step: 5, format: fmtInt })}
+            ${stepper("starTwo", "★★", c.stars.two, { min: 0, max: 9999, step: 5, format: fmtInt })}
+            ${stepper("starThree", "★★★", c.stars.three, { min: 0, max: 9999, step: 5, format: fmtInt })}
           </div>
           <button type="button" class="challenge-back editor-auto-btn" data-action="editor-settings-auto">Auto-suggest</button>
         </fieldset>
         <fieldset class="editor-radio-group">
-          <legend>Difficulty${helpTip("difficulty")}</legend>
+          <legend>Difficulty${helpTipHtml("difficulty")}</legend>
           <div class="editor-diff-row">${diffBtns}</div>
           <button type="button" class="challenge-back editor-auto-btn" data-action="editor-settings-auto-diff">Auto-suggest</button>
         </fieldset>
@@ -68,14 +64,13 @@ function stepper(
   label: string,
   value: number,
   opts: { min: number; max: number; step: number; format: (v: number) => string },
-  helpTip: HelpTipFn,
 ): string {
   const eps = opts.step * 0.001;
   const atMin = value <= opts.min + eps;
   const atMax = value >= opts.max - eps;
   return `
     <div class="editor-quick-row">
-      <span class="editor-quick-label">${escapeHtml(label)}${helpTip(field)}</span>
+      <span class="editor-quick-label">${escapeHtml(label)}${helpTipHtml(field)}</span>
       <div class="editor-quick-controls">
         <button type="button" class="editor-mix-step editor-mix-minus"
           data-action="editor-settings-bump" data-field="${field}" data-delta="${-opts.step}"

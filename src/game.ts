@@ -36,7 +36,7 @@ import {
 } from "./audio";
 import { Player } from "./player";
 import type { Axial, ClusterKind, Difficulty, GameMode, GameState, InputAction, Shape, WallKind } from "./types";
-import { ANGLE_TABLE, composeWaveLine, parseWaveLine, type ParsedWave } from "./waveDsl";
+import { ANGLE_TABLE, composeWaveLine, isCustomShapedWave, parseWaveLine, type ParsedWave } from "./waveDsl";
 import {
   CHALLENGES,
   awardStars,
@@ -1523,7 +1523,7 @@ export class Game {
         const idx = parseInt(editorOpenWaveBtn.dataset.waveIdx ?? "-1", 10);
         if (Number.isFinite(idx) && idx >= 0 && this.editingCustom) {
           const line = this.editingCustom.waves[idx] ?? "";
-          if (this.isCustomShapedWave(line)) this.openExistingCustomWaveDialog(idx);
+          if (isCustomShapedWave(line)) this.openExistingCustomWaveDialog(idx);
           else this.openExistingWaveDialog(idx);
         }
         return;
@@ -2560,7 +2560,6 @@ export class Game {
           presetsOpen: this.editorDialogPresetsOpen,
           advancedOpen: this.editorDialogAdvancedOpen,
           pctValues: this.editorDialogPctValues,
-          helpTip: helpTipHtml,
         })
       : this.editorDialog === "customWave"
         ? renderCustomWaveDialogView({
@@ -2576,11 +2575,9 @@ export class Game {
             visibleRows: this.editorCustomWaveVisibleRows,
             maxRows: CUSTOM_WAVE_LEN,
             picker: this.editorCustomCellPicker,
-            helpTip: helpTipHtml,
-            angleToCssRotation,
           })
         : this.editorDialog === "settings"
-          ? renderSettingsDialogView({ challenge: c, helpTip: helpTipHtml })
+          ? renderSettingsDialogView({ challenge: c })
           : "";
 
     // Snapshot scroll positions of in-place re-rendered dialogs so the
@@ -2595,9 +2592,6 @@ export class Game {
       maxNameLen: MAX_CUSTOM_NAME_LEN,
       selectedWaveIdx: this.editorSelectedWaveIdx,
       dialogHtml,
-      checkWaveLine,
-      isCustomShapedWave: (line) => this.isCustomShapedWave(line),
-      helpTip: helpTipHtml,
     });
 
     // Paint thumbnails after the DOM is in place.
@@ -3081,16 +3075,8 @@ export class Game {
 
 
   // True for slot-only waves (count=0 + slots) — those open in the
-  // tile-grid editor; everything else opens in the regular preset
-  // dialog so the existing cluster mix / preset machinery handles it.
-  private isCustomShapedWave(line: string): boolean {
-    try {
-      const w = parseWaveLine(line);
-      return (w.countCap === 0 || w.countCap === null) && w.slots.length > 0;
-    } catch {
-      return false;
-    }
-  }
+  // isCustomShapedWave moved to waveDsl.ts so screen modules can call
+  // it directly without going through Game.
 
   private openNewCustomWaveDialog(): void {
     if (!this.editingCustom) return;
@@ -7875,55 +7861,9 @@ export class Game {
 }
 
 // Help-text strings for editor form fields. Surfaced via small (i)
-// info buttons rendered next to each label by `helpTipHtml`. Keep
-// each line short — the popup is narrow.
-const FIELD_HELP: Record<string, string> = {
-  // Wave dialog (advanced + presets share keys where applicable).
-  sizeMin: "Smallest cluster size that can spawn (1 = single hex, 5 = giant blob).",
-  sizeMax: "Largest cluster size that can spawn.",
-  speed: "Cluster fall-speed multiplier. 1.0 = base, 2.0 = double speed.",
-  rate: "How many blocks fall per 10 seconds. Higher = denser wave.",
-  slotRate: "Seconds between slot-stream spawns (only for slot-pattern waves).",
-  count: "Maximum probabilistic spawns. Wave ends after this many. Blank = no cap.",
-  dur: "Hard time limit in seconds. Wave ends when timer expires. Blank = none.",
-  walls: "Wall configuration: pinch (red panels), zigzag (sinusoidal), narrow (tight corridor).",
-  wallAmp: "Amplitude of zigzag walls (0 = flat, 0.5 = max curve).",
-  wallPeriod: "Period of zigzag walls (higher = wider waves).",
-  safeCol: "Column kept clear of normal spawns. random = picks one each play, none = no enforcement.",
-  origin: "Where clusters enter from. top = above, topAngled = above with tilt, side = horizontal entry.",
-  dir: "Tilt angle applied to every spawn. Negative leans left, positive leans right.",
-  dirRandom: "Randomise tilt per spawn within ±Tilt instead of using a fixed bias.",
-  pct: "Probability weight per cluster kind. Numbers are relative to each other.",
-  amp: "Amplitude of the zigzag walls (0 = flat, 0.5 = max curve).",
-  // Settings dialog.
-  difficulty: "Visual difficulty rating shown on the challenge card. 1 = easy, 5 = hardest.",
-  slowDuration: "Seconds of 0.5x time after picking up a SLOW block.",
-  fastDuration: "Seconds of 1.25x time + bonus pool after picking up a FAST block.",
-  shieldDuration: "Seconds of bubble protection after picking up a SHIELD block.",
-  droneDuration: "Seconds the drone sentinel stays active after pickup.",
-  dangerSize: "How big your blob can grow before the danger glow appears and the next blue hit ends the run. Lower = harder.",
-  starOne: "Score required for 1 star.",
-  starTwo: "Score required for 2 stars.",
-  starThree: "Score required for 3 stars.",
-  starsAuto: "Auto-suggest computes stars from your wave content. Adjust afterwards if you like.",
-  // Edit screen.
-  name: `Display name for your challenge (max ${MAX_CUSTOM_NAME_LEN} characters).`,
-  seed: "RNG seed. The same seed produces the same cluster sequence on every replay.",
-};
-
-// Render a small (i) info button + hidden popup for a field. Click
-// toggles the popup. Empty string when the key has no help entry.
-function helpTipHtml(key: string, override?: string): string {
-  const text = override ?? FIELD_HELP[key];
-  if (!text) return "";
-  return `<span class="editor-help-wrap">
-    <button type="button" class="editor-help-btn" data-action="editor-toggle-help" aria-label="Help">i</button>
-    <span class="editor-help-text" hidden>${escapeHtml(text)}</span>
-  </span>`;
-}
-
-// composeWaveLine moved to waveDsl.ts (Phase 1.6) so it lives next to
-// its inverse parseWaveLine.
+// FIELD_HELP + helpTipHtml moved to src/ui/components/helpTip.ts so
+// screen modules can import directly. composeWaveLine moved to
+// waveDsl.ts (Phase 1.6) so it lives next to its inverse parseWaveLine.
 
 // Hard cap on rows in the Custom Wave editor. Each row maps to one slot
 // token in the DSL output (skipped rows emit "000").
@@ -7937,30 +7877,7 @@ const CUSTOM_WAVE_KINDS: ClusterKind[] = [
 
 const WALL_CYCLE: WallKind[] = ["none", "pinch", "zigzag", "narrow"];
 
-// Validate a single wave line. Catches parse errors and the "does
-// nothing" case (no count, no slots, no dur+rate) — same rule as
-// validateChallenge in waveDsl.ts but per-line for the editor's
-// row-level warning badge.
-function checkWaveLine(line: string): { ok: true } | { ok: false; reason: string } {
-  let parsed: ParsedWave;
-  try {
-    parsed = parseWaveLine(line);
-  } catch (e) {
-    return { ok: false, reason: `Parse error: ${(e as Error).message}` };
-  }
-  const hasCount = parsed.countCap !== null && parsed.countCap > 0;
-  const hasSlots = parsed.slots.length > 0;
-  const probDisabledByZeroCount = parsed.countCap === 0;
-  const hasDur =
-    parsed.durOverride !== null &&
-    parsed.durOverride > 0 &&
-    parsed.spawnInterval > 0 &&
-    !probDisabledByZeroCount;
-  if (!hasCount && !hasSlots && !hasDur) {
-    return { ok: false, reason: "Wave does nothing — set a count, a duration, or a slot pattern." };
-  }
-  return { ok: true };
-}
+// checkWaveLine moved to waveDsl.ts so it lives next to parseWaveLine.
 
 // Parse a wave DSL line and project its weights into a 7-key %-summing
 // map. Used when opening the wave dialog on an existing wave so the
@@ -7994,16 +7911,8 @@ function parseLineToMix(line: string): Partial<Record<ClusterKind, number>> {
 }
 
 
-// CSS rotation to apply to the small `↓` arrow that visualises a slot's
-// angle in the custom-wave grid. ANGLE_TABLE tilts are radians; CSS
-// rotate is clockwise, so for `↓` (head pointing down) a positive
-// rotation pushes the head left. Right-motion (positive tilt) needs a
-// negative CSS rotation; left-motion needs positive. Negate to map.
-function angleToCssRotation(angleIdx: number): number {
-  const tilts = [0, -0.15, 0.15, -0.35, 0.35, -0.6, 0.6, -0.4, 0.4, 0];
-  const tilt = tilts[Math.max(0, Math.min(9, angleIdx))] ?? 0;
-  return -tilt * (180 / Math.PI);
-}
+// angleToCssRotation moved to src/ui/components/angles.ts so screen
+// modules can import directly.
 
 // Clamp a numeric value into [min, max] and round to the nearest
 // `step`. Used by the Advanced steppers so each bump lands on a clean

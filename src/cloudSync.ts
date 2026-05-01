@@ -184,7 +184,8 @@ function readLocalProgressModified(): number {
   return parseInt(loadString(PROGRESS_LOCAL_MODIFIED_KEY, "0"), 10) || 0;
 }
 
-function writeLocalProgressFromCloud(payload: string, modifiedAt: number): void {
+// Exported only for tests — production callers go through pullProgressDown.
+export function writeLocalProgressFromCloud(payload: string, modifiedAt: number): void {
   let parsed: ChallengeProgress | null;
   try {
     parsed = JSON.parse(payload) as ChallengeProgress;

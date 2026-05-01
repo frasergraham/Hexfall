@@ -513,3 +513,39 @@ export function composeWaveLine(w: ParsedWave): string {
   }
   return tokens.join(", ");
 }
+
+// Per-line health check used by the editor's row-level warning badge.
+// Catches parse errors and the "wave does nothing" case (no count, no
+// slots, no dur+rate). Same rule as `validateChallenge` but per-line.
+export function checkWaveLine(line: string): { ok: true } | { ok: false; reason: string } {
+  let parsed: ParsedWave;
+  try {
+    parsed = parseWaveLine(line);
+  } catch (e) {
+    return { ok: false, reason: `Parse error: ${(e as Error).message}` };
+  }
+  const hasCount = parsed.countCap !== null && parsed.countCap > 0;
+  const hasSlots = parsed.slots.length > 0;
+  const probDisabledByZeroCount = parsed.countCap === 0;
+  const hasDur =
+    parsed.durOverride !== null &&
+    parsed.durOverride > 0 &&
+    parsed.spawnInterval > 0 &&
+    !probDisabledByZeroCount;
+  if (!hasCount && !hasSlots && !hasDur) {
+    return { ok: false, reason: "Wave does nothing — set a count, a duration, or a slot pattern." };
+  }
+  return { ok: true };
+}
+
+// True for slot-only waves (count=0 or null, plus at least one slot
+// token). Used by the editor to decide which dialog to open: tile-grid
+// for slot-only, regular preset dialog for everything else.
+export function isCustomShapedWave(line: string): boolean {
+  try {
+    const w = parseWaveLine(line);
+    return (w.countCap === 0 || w.countCap === null) && w.slots.length > 0;
+  } catch {
+    return false;
+  }
+}
