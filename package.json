@@ -11,16 +11,22 @@
     "ios:add": "cap add ios --packagemanager SPM",
     "ios:sync": "npm run build:ios && cap sync ios && node scripts/patch-cap-plugins.mjs",
     "ios:copy": "npm run build:ios && cap copy ios && node scripts/patch-cap-plugins.mjs",
-    "ios:open": "cap open ios"
+    "ios:open": "cap open ios",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.3.1",
     "@resvg/resvg-js": "^2.6.2",
     "@types/matter-js": "^0.20.2",
+    "@vitest/coverage-v8": "^4.1.5",
     "jose": "^6.2.3",
+    "jsdom": "^29.1.1",
     "tsx": "^4.21.0",
     "typescript": "^5.6.3",
-    "vite": "^5.4.10"
+    "vite": "^5.4.10",
+    "vitest": "^4.1.5"
   },
   "dependencies": {
     "@capacitor/app": "^8.1.0",

@@ -537,11 +537,17 @@ game on screen is **identical to the day this branch started**.
 
 ## Appendix — baselines
 
-Captured in Phase 0 PR. To be filled in:
+Captured 2026-05-01 on `refactor/game-decomposition`.
 
-- Pre-refactor `docs/` bundle size: _TBD_
-- Pre-refactor `docs/` gzipped size: _TBD_
-- Phase 0 integration fixture seed: _TBD_
-- Phase 0 integration fixture final score: _TBD_
-- Phase 0 integration fixture state transitions: see
-  `tests/golden/integration-run.json`
+| Asset | Raw | Gzip |
+|---|---|---|
+| `index-*.js` | 387.86 kB | 110.07 kB |
+| `web-*.js` | 0.84 kB | 0.40 kB |
+| `index-*.css` | 57.73 kB | 10.75 kB |
+
+Headroom: 5% bundle-size budget per Phase ⇒ JS ≤ 407 kB, CSS ≤ 60.6 kB.
+
+Test suite at end of Phase 0: **62 tests** (target: 30+). Determinism
+fingerprints pinned via `toMatchInlineSnapshot` in
+`tests/determinism.test.ts`; both `mulberry32` implementations agree
+under every tested seed.
