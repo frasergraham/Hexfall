@@ -1708,6 +1708,19 @@ export class Game {
         if (field) this.toggleAdvancedField(field);
         return;
       }
+      // Wave dialog Advanced: per-wave seed reroll / clear-to-AUTO.
+      const advSeedRerollBtn = target?.closest('button[data-action="editor-adv-seed-reroll"]') as HTMLButtonElement | null;
+      if (advSeedRerollBtn && !advSeedRerollBtn.disabled) {
+        playSfx("click");
+        this.mutateDialogWave((w) => { w.seed = makeRandomSeed(); });
+        return;
+      }
+      const advSeedClearBtn = target?.closest('button[data-action="editor-adv-seed-clear"]') as HTMLButtonElement | null;
+      if (advSeedClearBtn && !advSeedClearBtn.disabled) {
+        playSfx("click");
+        this.mutateDialogWave((w) => { w.seed = null; });
+        return;
+      }
       // Wave dialog: cluster mix +/- bump.
       const mixBump = target?.closest('button[data-action="editor-mix-bump"]') as HTMLButtonElement | null;
       if (mixBump && !mixBump.disabled) {
@@ -2255,9 +2268,15 @@ export class Game {
   } | null = null;
 
   // Spawn-side RNG. Defaults to Math.random for endless mode; swapped
-  // to a seeded mulberry32 keyed on the challenge id at startChallenge,
-  // so a given challenge plays back the same wave sequence every time.
+  // to a seeded mulberry32 keyed per-wave on (challengeSeedKey, waveIdx)
+  // at beginChallengeWave, so editing one wave's DSL doesn't ripple
+  // through the rng stream of later waves.
   private rng: Random = Math.random;
+
+  // Stable seed key for the active challenge run. Roster uses the
+  // challenge id; custom challenges stringify their numeric seed.
+  // Combined with waveIdx in hashSeed() to derive each wave's seed.
+  private challengeSeedKey = "";
 
   // Achievement gate: in ?debug=1 mode no achievements get reported, so
   // experimenting with high-score test runs doesn't dirty Game Center
@@ -6452,11 +6471,13 @@ export class Game {
     this.challengeFinishingHold = 0;
     this.progress = 0;
     this.progressDisplayed = 0;
-    // Seed the spawn-side RNG. Roster challenges hash their ID; custom
-    // challenges pass an explicit numeric seed in opts so the editor's
-    // seed input fully controls determinism. Endless mode keeps Math.random.
-    const seed = typeof opts?.seed === "number" ? (opts.seed >>> 0) : hashSeed(def.id);
-    this.rng = mulberry32(seed);
+    // Stash the seed key; beginChallengeWave reseeds per-wave from
+    // (key, waveIdx). Roster keys off the challenge id; custom challenges
+    // stringify their numeric seed so the editor's seed input still
+    // fully controls determinism.
+    this.challengeSeedKey = typeof opts?.seed === "number"
+      ? String(opts.seed >>> 0)
+      : def.id;
     this.beginChallengeWave();
     trackChallengeStart(def.block);
   }
@@ -6476,6 +6497,21 @@ export class Game {
       this.beginChallengeWave();
       return;
     }
+    // Per-wave reseed: an explicit seed= in the wave DSL pins this
+    // wave's spawn layout; otherwise we derive from the challenge key
+    // and wave index so each wave still has its own stream.
+    //
+    // Note: forward-isolation only. Reseeding makes the rng draws
+    // deterministic per wave, but `pickSpawnColumn` reads the wall
+    // lerp's current `wall.amount`, which depends on time elapsed since
+    // the previous wave set its target. Editing an earlier wave's
+    // duration can therefore shift later waves' column placements even
+    // though their seeded streams are unchanged. Reverse-direction
+    // edits (mutating wave N) leave wave N+1's *seed* alone but its
+    // *column footprint* is environment-coupled by design.
+    const waveSeed =
+      parsed.seed ?? hashSeed(`${this.challengeSeedKey}:${this.challengeWaveIdx}`);
+    this.rng = mulberry32(waveSeed);
     this.currentParsedWave = parsed;
     this.challengeSlotIdx = 0;
     this.challengeProbCount = 0;
@@ -6495,13 +6531,14 @@ export class Game {
     }
 
     // Pick a safe column (or skip enforcement) for the prob stream.
-    if (parsed.safeCol === "none") {
-      this.safeColumn = 99; // out-of-range so filter never bans a column
-    } else if (typeof parsed.safeCol === "number") {
+    // Challenge mode treats unset (`null`) as "no enforced safe column"
+    // so legacy waves that omit `safeCol=` keep their existing behaviour.
+    // Authors who pin `safeCol=N` get a forbidden column in the prob
+    // path; `safeCol=none` is identical to leaving it unset.
+    if (typeof parsed.safeCol === "number") {
       this.safeColumn = parsed.safeCol - 4;
     } else {
-      const halfFull = Math.floor(BOARD_COLS / 2);
-      this.safeColumn = Math.floor(Math.random() * (halfFull * 2 + 1)) - halfFull;
+      this.safeColumn = 99; // out-of-range sentinel — filter is a no-op
     }
 
     // Pulse the progress bar on every wave boundary except the first.
@@ -7435,14 +7472,19 @@ export class Game {
     const all: number[] = [];
     for (let c = -halfActive; c <= halfActive; c++) all.push(c);
 
-    const valid =
-      this.wavePhase === "wave"
-        ? all.filter((colStep) => {
-            const lo = colStep + fp.min;
-            const hi = colStep + fp.max;
-            return this.safeColumn < lo || this.safeColumn > hi;
-          })
-        : all;
+    // Endless mode only enforces the safe column during a "wave" phase
+    // (calm spawns are unrestricted). Challenge mode never advances the
+    // wave/calm machine, so we enforce whenever a safeCol= was pinned;
+    // unset waves leave `safeColumn` at the out-of-range sentinel (99)
+    // and the predicate becomes a no-op.
+    const enforce = this.gameMode === "challenge" || this.wavePhase === "wave";
+    const valid = enforce
+      ? all.filter((colStep) => {
+          const lo = colStep + fp.min;
+          const hi = colStep + fp.max;
+          return this.safeColumn < lo || this.safeColumn > hi;
+        })
+      : all;
 
     if (valid.length === 0) return null;
     return valid[Math.floor(this.rng() * valid.length)]!;

@@ -228,6 +228,27 @@ function renderWaveAdvanced(w: ParsedWave): string {
       ${cycler("origin", "Origin", originLabel)}
       ${stepper("dir", "Tilt", w.defaultDir, { min: -0.35, max: 0.35, step: 0.05, format: fmt2 })}
       ${toggle("dirRandom", "Random tilt", w.defaultDirRandom)}
+      ${seedRow(w.seed)}
+    </div>
+  `;
+}
+
+function seedRow(seed: number | null): string {
+  const display = seed === null
+    ? "AUTO"
+    : `0x${(seed >>> 0).toString(16).padStart(8, "0")}`;
+  const clearDisabled = seed === null;
+  return `
+    <div class="editor-quick-row">
+      <span class="editor-quick-label">${escapeHtml("Seed")}${helpTipHtml("seed")}</span>
+      <div class="editor-quick-walls-controls">
+        <button type="button" class="editor-walls-arrow"
+          data-action="editor-adv-seed-reroll" aria-label="Reroll seed">⟳</button>
+        <span class="editor-walls-name">${display}</span>
+        <button type="button" class="editor-walls-arrow"
+          data-action="editor-adv-seed-clear" aria-label="Clear seed"
+          ${clearDisabled ? "disabled" : ""}>×</button>
+      </div>
     </div>
   `;
 }
