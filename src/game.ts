@@ -6836,6 +6836,12 @@ export class Game {
       this.timeEffect = null;
       this.timeEffectTimer = 0;
     }
+    // Same for the BIG power-up: bank its bonus pool and end the effect
+    // instead of waiting for the timer to drain.
+    if (this.bigTimer > 0) {
+      this.awardBigBonus();
+      this.bigTimer = 0;
+    }
     this.challengeFinishingHold -= dt;
     if (this.challengeFinishingHold <= 0) {
       this.completeChallenge();
