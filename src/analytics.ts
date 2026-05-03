@@ -2,8 +2,14 @@
 // because it dedupes repeat calls with the same path inside a single
 // browser session (via sessionStorage), which means a player who plays
 // several runs in a row only registers one `play-start-*` event. Sending
-// directly to the `/count` endpoint with a fresh `rand` on every call
+// directly to the `/count` endpoint with a fresh `rnd` on every call
 // makes each play count as a distinct event server-side.
+//
+// Transport is `navigator.sendBeacon` (with a `fetch({ keepalive: true })`
+// fallback) rather than an image-tag GET. Image beacons issued during
+// busy state transitions — e.g. a challenge start or game-over handler
+// — get cancelled by the browser before the request leaves; sendBeacon
+// is queued by the user agent and survives the transition.
 
 const ENDPOINT = "https://twistedweasel.goatcounter.com/count";
 
@@ -43,10 +49,17 @@ function send(path: string, title: string): void {
     url.searchParams.set("p", path);
     url.searchParams.set("t", title);
     url.searchParams.set("e", "true");
-    url.searchParams.set("rand", String(Math.random()));
-    // Image beacon — fire-and-forget GET, no CORS preflight, no
-    // sessionStorage dedup.
-    new Image().src = url.toString();
+    url.searchParams.set("rnd", String(Math.random()));
+
+    const u = url.toString();
+    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+      if (navigator.sendBeacon(u)) return;
+    }
+    if (typeof fetch === "function") {
+      void fetch(u, { method: "GET", mode: "no-cors", keepalive: true, credentials: "omit" });
+      return;
+    }
+    new Image().src = u;
   } catch {
     // Analytics must never break the game.
   }
