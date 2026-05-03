@@ -50,6 +50,12 @@ export interface ParsedWave {
   weights: Partial<Record<ClusterKind, number>>;
   countCap: number | null;
   slots: Array<ParsedSlot | null>;
+  /** Per-wave RNG seed override. `null` means the engine derives a
+   *  seed from `(challengeSeedKey, waveIdx)` so each wave still has
+   *  its own stream by default. A finite unsigned 32-bit value pins
+   *  this wave's spawn layout, letting authors reroll one wave's
+   *  feel without touching its DSL or the rest of the challenge. */
+  seed: number | null;
 }
 
 export interface ChallengeDefLike {
@@ -273,6 +279,7 @@ export function parseWaveLine(line: string): ParsedWave {
     weights: { normal: 1 },
     countCap: null,
     slots: [],
+    seed: null,
   };
 
   // Track whether slotRate was set explicitly so we can default it to
@@ -392,6 +399,12 @@ export function parseWaveLine(line: string): ParsedWave {
         wave.countCap = n;
         break;
       }
+      case "seed": {
+        const n = parseIntStrict(value, token);
+        if (n < 0) fail("seed must be a non-negative integer", token);
+        wave.seed = n >>> 0;
+        break;
+      }
       default:
         fail(`unknown key "${key}"`, token);
     }
@@ -507,6 +520,7 @@ export function composeWaveLine(w: ParsedWave): string {
   if (w.origin !== "top") tokens.push(`origin=${w.origin}`);
   if (w.defaultDir !== 0) tokens.push(`dir=${w.defaultDir}`);
   if (w.defaultDirRandom) tokens.push(`dirRandom=1`);
+  if (w.seed !== null) tokens.push(`seed=${w.seed >>> 0}`);
   for (const s of w.slots) {
     if (s === null) tokens.push("000");
     else tokens.push(`${slotKindToPrefix(s.kind)}${s.size}${s.col}${s.angleIdx}`);
