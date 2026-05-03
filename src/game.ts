@@ -6828,7 +6828,14 @@ export class Game {
     if (this.challengeWaveIdx < this.activeChallenge.waves.length) return;
     // Wait for clusters to clear before fully completing.
     if (this.clusters.length > 0) return;
-    if (this.timeEffect === "fast") return;
+    // If a time effect is still running, don't make the player watch the
+    // countdown — bank any pending fast bonus now and clear the effect so
+    // completion can fire on this same tick.
+    if (this.timeEffect !== null) {
+      if (this.timeEffect === "fast") this.awardFastBonus();
+      this.timeEffect = null;
+      this.timeEffectTimer = 0;
+    }
     this.challengeFinishingHold -= dt;
     if (this.challengeFinishingHold <= 0) {
       this.completeChallenge();
