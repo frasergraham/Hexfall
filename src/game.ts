@@ -380,8 +380,8 @@ const TINY_REHIT_BONUS = 2; // points awarded if a second tiny is hit while stil
 const BIG_SPAWN_CHANCE = 0.04;
 const BIG_MIN_SCORE = 5;
 const BIG_DURATION = 5; // seconds
-const BIG_SIZE_BASE = 1.15; // first big pickup grows the player by 15%
-const BIG_SIZE_STEP = 0.10; // each subsequent big pickup adds 10% more
+const BIG_SIZE_BASE = 1.5; // first big pickup grows the player by 50%
+const BIG_SIZE_STEP = 0.15; // each subsequent big pickup adds 15% more
 const BIG_MULTIPLIER_BASE = 3; // first big pickup multiplies passes 3x
 const BIG_MULTIPLIER_STEP = 1; // each stack bumps the multiplier by 1
 // Per-second exponential approach rate for the smooth shrink/grow animation
@@ -5462,6 +5462,14 @@ export class Game {
   private handleTinyContact(cluster: FallingCluster): void {
     playSfx("shield");
     const center = cluster.body.position;
+    // BIG during TINY pickup = clean exit: bank the accumulated big bonus
+    // and reset the multiplier, then fall through to activate TINY.
+    if (this.bigTimer > 0) {
+      this.awardBigBonus();
+      this.bigLevel = 0;
+      this.bigTimer = 0;
+      this.bigMax = 1;
+    }
     if (this.tinyTimer > 0) {
       // Re-hit while still tiny: bank the small bonus and refresh the
       // duration. No further size change (stays at TINY_PLAYER_SCALE).
@@ -5495,6 +5503,11 @@ export class Game {
 
   private handleBigContact(cluster: FallingCluster): void {
     playSfx("fast_up");
+    // TINY during BIG pickup: end TINY (no bonus to bank) and grow into BIG.
+    if (this.tinyTimer > 0) {
+      this.tinyTimer = 0;
+      this.tinyMax = 1;
+    }
     this.bigLevel += 1;
     const dur = this.bigDuration();
     this.bigTimer = dur;
@@ -5747,6 +5760,38 @@ export class Game {
     ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.arc(com.x, com.y, radius, -Math.PI / 2, -Math.PI / 2 + t * Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private drawBigAura(): void {
+    if (this.bigTimer <= 0) return;
+    const ctx = this.ctx;
+    const pos = this.player.body.position;
+    const bounds = this.player.body.bounds;
+    const dx = (bounds.max.x - bounds.min.x) / 2;
+    const dy = (bounds.max.y - bounds.min.y) / 2;
+    const pulse = (Math.sin(performance.now() * 0.005) + 1) * 0.5;
+    const baseR = Math.hypot(dx, dy) + this.hexSize * 0.6;
+    const r = baseR * (1 + 0.12 * pulse);
+
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const grad = ctx.createRadialGradient(pos.x, pos.y, baseR * 0.5, pos.x, pos.y, r);
+    grad.addColorStop(0, "rgba(180, 100, 255, 0)");
+    grad.addColorStop(0.55, `rgba(180, 100, 255, ${0.18 + pulse * 0.10})`);
+    grad.addColorStop(1, "rgba(100, 30, 180, 0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = `rgba(218, 184, 255, ${0.35 + pulse * 0.30})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, r * 0.95, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
@@ -7796,6 +7841,7 @@ export class Game {
     // that simulation, just clusters falling).
     if (this.state !== "gameover" && !this.editorDialogPreview) {
       this.drawShield();
+      this.drawBigAura();
       this.player.draw(ctx);
       this.drawSticksInFlight();
     }
