@@ -6669,10 +6669,11 @@ export class Game {
       randomTilt?: number;
     };
     const halfFull = Math.floor(BOARD_COLS / 2);
-    // Map slot col 0..9 onto the active rail's column range.
-    const insetTop = this.wallInsetAt(this.boardOriginY);
+    // Map slot col 0..9 onto the active rail's column range. Use the
+    // projected inset so slots stay inside the corridor while the wall
+    // is still animating in.
     const colWidth = SQRT3 * this.hexSize;
-    const insetCols = Math.max(insetTop.left, insetTop.right) / Math.max(1, colWidth);
+    const insetCols = this.projectedWallInsetPx() / Math.max(1, colWidth);
     const halfActive = Math.max(1, Math.floor(halfFull - insetCols));
     const colStep = -halfActive + Math.round((slot.col / 9) * (halfActive * 2));
     const railLeft = this.currentRailLeft();
@@ -7460,34 +7461,74 @@ export class Game {
     }
   }
 
-  private wallInsetAt(yWorld?: number): { left: number; right: number } {
-    if (this.wall.amount < 0.01) return { left: 0, right: 0 };
+  // Single source of truth for wall inset geometry. Pinch (0.36) and
+  // narrow (0.42) are y-independent; zigzag oscillates around a 0.18
+  // base by ±amp so corridor width stays roughly constant.
+  private computeWallInset(
+    kind: WallKind,
+    amount: number,
+    amp: number,
+    period: number,
+    phase: number,
+    yWorld?: number,
+  ): { left: number; right: number } {
+    if (kind === "none" || amount < 0.01) return { left: 0, right: 0 };
     const halfBoard = this.boardWidth * 0.5;
-    if (this.wall.kind === "pinch") {
-      // Effective inset = 0.6 * halfBoard at amount=1, matching the
-      // legacy 0.35 inset that the original pinch used at its 0.35
-      // scalar. Wall amount is now uniformly 0..1 across kinds.
-      const inset = this.wall.amount * halfBoard * 0.36;
+    if (kind === "pinch") {
+      const inset = amount * halfBoard * 0.36;
       return { left: inset, right: inset };
     }
-    if (this.wall.kind === "narrow") {
-      // 0.42 leaves ~5 columns of corridor (out of 9). Tight enough
-      // to feel restrictive vs pinch (0.36) without locking the
-      // player against a wall.
-      const inset = this.wall.amount * halfBoard * 0.42;
+    if (kind === "narrow") {
+      const inset = amount * halfBoard * 0.42;
       return { left: inset, right: inset };
     }
-    if (this.wall.kind === "zigzag") {
-      const baseInset = this.wall.amount * halfBoard * 0.18;
+    if (kind === "zigzag") {
+      const baseInset = amount * halfBoard * 0.18;
       const y = yWorld ?? (this.boardOriginY + this.boardHeight * 0.5);
       const norm = (y - this.boardOriginY) / Math.max(1, this.boardHeight);
-      const ampPx = this.wall.amount * halfBoard * this.wall.amp;
-      const arg = 2 * Math.PI * (norm * 1.5 + this.wall.phase / Math.max(0.1, this.wall.period));
+      const ampPx = amount * halfBoard * amp;
+      const arg = 2 * Math.PI * (norm * 1.5 + phase / Math.max(0.1, period));
       const offset = Math.sin(arg) * ampPx;
-      // Mirror left/right so corridor width stays roughly constant.
       return { left: baseInset + offset, right: baseInset - offset };
     }
     return { left: 0, right: 0 };
+  }
+
+  private wallInsetAt(yWorld?: number): { left: number; right: number } {
+    return this.computeWallInset(
+      this.wall.kind,
+      this.wall.amount,
+      this.wall.amp,
+      this.wall.period,
+      this.wall.phase,
+      yWorld,
+    );
+  }
+
+  // Worst-case inset px once the wall finishes its current animation:
+  // takes the eventual kind (pendingKind if a transition is queued),
+  // its eventual amp, and the largest amount it'll reach (current,
+  // target, or postWarningAmount). Used by spawn placement so blocks
+  // chosen while a wall is animating in still land inside the corridor.
+  // Zigzag's per-side oscillation peaks at base + amp on whichever
+  // side the sine is currently swinging toward, so we report that
+  // worst-case as a scalar.
+  private projectedWallInsetPx(): number {
+    const usePending = this.wall.pendingKind !== null;
+    const kind: WallKind = usePending ? this.wall.pendingKind! : this.wall.kind;
+    const amp = usePending ? this.wall.pendingAmp : this.wall.amp;
+    const period = usePending ? this.wall.pendingPeriod : this.wall.period;
+    const amount = Math.max(
+      this.wall.amount,
+      this.wall.amountTarget,
+      this.wall.postWarningAmount,
+    );
+    // For zigzag the peak side hits base+amp; force the sine to its
+    // crest by passing phase such that the argument lands at π/2.
+    const phase =
+      kind === "zigzag" ? 0.25 * Math.max(0.1, period) : this.wall.phase;
+    const inset = this.computeWallInset(kind, amount, amp, period, phase, this.boardOriginY);
+    return Math.max(inset.left, inset.right);
   }
 
   private shapeColumnFootprint(shape: Shape): { min: number; max: number } {
@@ -7510,8 +7551,10 @@ export class Game {
     // at the spawn y (top of board). Pinch and narrow are y-independent;
     // zigzag varies with y but spawning is at the top so this is fine.
     const colWidth = SQRT3 * this.hexSize;
-    const insetTop = this.wallInsetAt(this.boardOriginY);
-    const insetCols = Math.max(insetTop.left, insetTop.right) / Math.max(1, colWidth);
+    // Use the *projected* inset (where the wall will be once its
+    // current lerp settles) so spawns picked during the wall-in
+    // animation don't land outside the eventual corridor.
+    const insetCols = this.projectedWallInsetPx() / Math.max(1, colWidth);
     const halfActive = Math.max(1, Math.floor(halfFull - insetCols));
     const fp = this.shapeColumnFootprint(shape);
     const all: number[] = [];
