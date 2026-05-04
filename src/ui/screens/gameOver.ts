@@ -37,10 +37,19 @@ export const GameOver: Screen<GameOverProps> = {
       // finished every wave.
       const pct = Math.max(0, Math.min(100, Math.floor((props.challengeProgress ?? 0) * 100)));
       const pctCls = pct >= 100 ? "challenge-pct full" : "challenge-pct partial";
+      // Hide the ID for custom + community challenges — those IDs are
+      // long opaque tokens (custom:UUID or custom:installed:RECORD)
+      // that just clutter the screen. Roster IDs like "1-3" are short
+      // and meaningful so they stay.
+      const id = props.challengeId ?? "";
+      const showId = id.length > 0 && !id.startsWith("custom:");
+      const tagline = showId
+        ? `${escapeHtml(props.challengeName ?? "")} · ${escapeHtml(id)}`
+        : escapeHtml(props.challengeName ?? "");
       return `
         <div class="challenge-gameover">
           <h1>GAME OVER</h1>
-          <p class="tagline">${escapeHtml(props.challengeName ?? "")} · ${escapeHtml(props.challengeId ?? "")}</p>
+          <p class="tagline">${tagline}</p>
           <div class="${pctCls}">${pct}%</div>
           <p class="tagline">Score ${props.score} · Best ${props.best}</p>
           <button type="button" class="play-btn" data-action="play">RETRY</button>
