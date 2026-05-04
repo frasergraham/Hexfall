@@ -3529,10 +3529,16 @@ body:not(.in-play) #touchbar {
   color: #ffe6a8;
 }
 .community-card-top-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
   gap: 6px;
   width: 100%;
+  align-items: stretch;
+}
+.community-card-top-row > .community-card-btn {
+  flex: 1 1 0;
+}
+.community-card-top-row > .community-card-icon-btn {
+  flex: 0 0 44px;
 }
 .community-card-icon-row {
   display: flex;
