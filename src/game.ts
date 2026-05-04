@@ -6826,18 +6826,17 @@ export class Game {
     if (this.challengeFinishingHold <= 0) return;
     if (this.activeChallenge === null) return;
     if (this.challengeWaveIdx < this.activeChallenge.waves.length) return;
-    // Wait for clusters to clear before fully completing.
-    if (this.clusters.length > 0) return;
-    // If a time effect is still running, don't make the player watch the
-    // countdown — bank any pending fast bonus now and clear the effect so
-    // completion can fire on this same tick.
-    if (this.timeEffect !== null) {
-      if (this.timeEffect === "fast") this.awardFastBonus();
+    // Bank any pending FAST/BIG bonus pools and end the matching effect so
+    // the player doesn't have to watch a multi-second countdown drain
+    // after the last wave is over.
+    if (this.timeEffect === "fast") {
+      this.awardFastBonus();
+      this.timeEffect = null;
+      this.timeEffectTimer = 0;
+    } else if (this.timeEffect === "slow") {
       this.timeEffect = null;
       this.timeEffectTimer = 0;
     }
-    // Same for the BIG power-up: bank its bonus pool and end the effect
-    // instead of waiting for the timer to drain.
     if (this.bigTimer > 0) {
       this.awardBigBonus();
       this.bigTimer = 0;
