@@ -644,7 +644,7 @@ export class Game {
   private progress = 0;
   private progressDisplayed = 0;
   private waveBumpT = 0; // pulse the progress bar when wave index increments
-  private challengeFinishingHold = 0; // wait for screen to clear before completion
+  private challengeFinishingHold = 0; // wait for last block to pass before completion
 
   // Time-effect (slow/fast power-ups). timeScale modifies engine + game-logic
   // dt; the visual trail uses timeEffect to decide bubble vs speed-line.
@@ -6659,9 +6659,9 @@ export class Game {
         this.beginChallengeWave();
       } else {
         this.currentParsedWave = null;
-        // Defer completion until the screen is empty AND no fast bonus
-        // is mid-payout, so the trailing animation lands under this run's
-        // banner and not the next state.
+        // Defer completion until the last block has passed the player so
+        // the trailing animation lands under this run's banner and not
+        // the next state.
         this.challengeFinishingHold = 0.5;
       }
     }
@@ -6842,9 +6842,33 @@ export class Game {
     if (this.challengeFinishingHold <= 0) return;
     if (this.activeChallenge === null) return;
     if (this.challengeWaveIdx < this.activeChallenge.waves.length) return;
-    // Wait for clusters to clear before fully completing.
-    if (this.clusters.length > 0) return;
-    if (this.timeEffect === "fast") return;
+    // Wait until every cluster has either passed the player (scored), been
+    // hit (contacted), or fallen off the screen. This means the last block
+    // visibly clears the player line before victory fires.
+    const stillPending = this.clusters.some(
+      (c) => c.alive && !c.scored && !c.contacted,
+    );
+    if (stillPending) return;
+    // Last block is past. Bank any pending FAST/BIG bonus pool and end
+    // the matching effect so the player isn't watching the HUD countdown
+    // drain in real time before completion.
+    if (this.timeEffect === "fast") {
+      this.awardFastBonus();
+      this.timeEffect = null;
+      this.timeEffectTimer = 0;
+      this.timeScale = 1;
+    } else if (this.timeEffect === "slow") {
+      this.timeEffect = null;
+      this.timeEffectTimer = 0;
+      this.timeScale = 1;
+    }
+    if (this.bigTimer > 0) {
+      this.awardBigBonus();
+      this.bigTimer = 0;
+      this.bigLevel = 0;
+      this.bigMax = 1;
+      this.updatePlayerScaleTarget();
+    }
     this.challengeFinishingHold -= dt;
     if (this.challengeFinishingHold <= 0) {
       this.completeChallenge();
