@@ -2289,6 +2289,17 @@ export class Game {
   // / localStorage achievement state.
   private awardAchievement(id: AchievementId): void {
     if (this.debugEnabled) return;
+    // Custom + community challenges are user-authored content with
+    // arbitrary tuning — letting them grant achievements would be
+    // trivially exploitable (a custom level designed purely to farm
+    // badges). Roster challenges and endless still award normally.
+    if (
+      this.gameMode === "challenge" &&
+      this.activeChallenge &&
+      isCustomChallenge(this.activeChallenge)
+    ) {
+      return;
+    }
     void reportAchievement(id);
   }
 
