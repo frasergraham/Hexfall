@@ -649,6 +649,7 @@ export class Game {
   private progressDisplayed = 0;
   private waveBumpT = 0; // pulse the progress bar when wave index increments
   private challengeFinishingHold = 0; // wait for screen to clear before completion
+  private _dbgFinishLog = 0;
 
   // Time-effect (slow/fast power-ups). timeScale modifies engine + game-logic
   // dt; the visual trail uses timeEffect to decide bubble vs speed-line.
@@ -6648,6 +6649,15 @@ export class Game {
         // is mid-payout, so the trailing animation lands under this run's
         // banner and not the next state.
         this.challengeFinishingHold = 0.5;
+        // eslint-disable-next-line no-console
+        console.log("[challenge-finish] ENTER finishing", {
+          clusters: this.clusters.length,
+          timeEffect: this.timeEffect,
+          timeEffectTimer: this.timeEffectTimer.toFixed(2),
+          fastBonus: this.fastBonus,
+          bigTimer: this.bigTimer.toFixed(2),
+          bigBonus: this.bigBonus,
+        });
       }
     }
   }
@@ -6823,6 +6833,33 @@ export class Game {
 
   private updateChallengeFinishing(dt: number): void {
     if (this.gameMode !== "challenge") return;
+    // Diagnostic: log once per second during finishing so we can see why
+    // completion is being deferred. Remove once the wait bug is solved.
+    if (
+      this.activeChallenge !== null &&
+      this.challengeWaveIdx >= this.activeChallenge.waves.length
+    ) {
+      this._dbgFinishLog = (this._dbgFinishLog ?? 0) + dt;
+      if (this._dbgFinishLog >= 1) {
+        this._dbgFinishLog = 0;
+        // eslint-disable-next-line no-console
+        console.log(
+          "[challenge-finish]",
+          {
+            hold: this.challengeFinishingHold.toFixed(2),
+            waveIdx: this.challengeWaveIdx,
+            waveCount: this.activeChallenge.waves.length,
+            clusters: this.clusters.length,
+            timeEffect: this.timeEffect,
+            timeEffectTimer: this.timeEffectTimer.toFixed(2),
+            fastBonus: this.fastBonus,
+            bigTimer: this.bigTimer.toFixed(2),
+            bigBonus: this.bigBonus,
+            state: this.state,
+          },
+        );
+      }
+    }
     if (this.challengeFinishingHold <= 0) return;
     if (this.activeChallenge === null) return;
     if (this.challengeWaveIdx < this.activeChallenge.waves.length) return;
