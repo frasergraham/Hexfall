@@ -648,9 +648,7 @@ export class Game {
   private progress = 0;
   private progressDisplayed = 0;
   private waveBumpT = 0; // pulse the progress bar when wave index increments
-  private challengeFinishingHold = 0; // wait for screen to clear before completion
-  private _dbgFinishLog = 0;
-  private _dbgAdvanceLog = 0;
+  private challengeFinishingHold = 0; // wait for last block to pass before completion
 
   // Time-effect (slow/fast power-ups). timeScale modifies engine + game-logic
   // dt; the visual trail uses timeEffect to decide bubble vs speed-line.
@@ -6527,11 +6525,6 @@ export class Game {
       : def.id;
     this.beginChallengeWave();
     trackChallengeStart(def.block);
-    // eslint-disable-next-line no-console
-    console.log("[challenge-start] BUILD-TAG-FINISH-FIX-1", {
-      id: def.id,
-      waves: def.waves.length,
-    });
   }
 
   private beginChallengeWave(): void {
@@ -6600,25 +6593,7 @@ export class Game {
   private advanceChallenge(dt: number): void {
     const def = this.activeChallenge;
     const wave = this.currentParsedWave;
-    if (!def || !wave) {
-      // Diagnostic: log once per second when advanceChallenge is no-oping
-      // because the wave is already exhausted. If we're seeing this and
-      // updateChallengeFinishing's logs aren't firing, the build is stale.
-      if (def !== null && this.challengeWaveIdx >= def.waves.length) {
-        this._dbgAdvanceLog = (this._dbgAdvanceLog ?? 0) + dt;
-        if (this._dbgAdvanceLog >= 1) {
-          this._dbgAdvanceLog = 0;
-          // eslint-disable-next-line no-console
-          console.log("[advance-challenge] post-last-wave idle", {
-            hold: this.challengeFinishingHold.toFixed(2),
-            clusters: this.clusters.length,
-            timeEffect: this.timeEffect,
-            timeEffectTimer: this.timeEffectTimer.toFixed(2),
-          });
-        }
-      }
-      return;
-    }
+    if (!def || !wave) return;
 
     // Hard wall: dur expired.
     if (wave.durOverride !== null) {
@@ -6669,19 +6644,10 @@ export class Game {
         this.beginChallengeWave();
       } else {
         this.currentParsedWave = null;
-        // Defer completion until the screen is empty AND no fast bonus
-        // is mid-payout, so the trailing animation lands under this run's
-        // banner and not the next state.
+        // Defer completion until the last block has passed the player so
+        // the trailing animation lands under this run's banner and not
+        // the next state.
         this.challengeFinishingHold = 0.5;
-        // eslint-disable-next-line no-console
-        console.log("[challenge-finish] ENTER finishing", {
-          clusters: this.clusters.length,
-          timeEffect: this.timeEffect,
-          timeEffectTimer: this.timeEffectTimer.toFixed(2),
-          fastBonus: this.fastBonus,
-          bigTimer: this.bigTimer.toFixed(2),
-          bigBonus: this.bigBonus,
-        });
       }
     }
   }
@@ -6857,41 +6823,19 @@ export class Game {
 
   private updateChallengeFinishing(dt: number): void {
     if (this.gameMode !== "challenge") return;
-    // Diagnostic: log once per second during finishing so we can see why
-    // completion is being deferred. Remove once the wait bug is solved.
-    if (
-      this.activeChallenge !== null &&
-      this.challengeWaveIdx >= this.activeChallenge.waves.length
-    ) {
-      this._dbgFinishLog = (this._dbgFinishLog ?? 0) + dt;
-      if (this._dbgFinishLog >= 1) {
-        this._dbgFinishLog = 0;
-        // eslint-disable-next-line no-console
-        console.log(
-          "[challenge-finish]",
-          {
-            hold: this.challengeFinishingHold.toFixed(2),
-            waveIdx: this.challengeWaveIdx,
-            waveCount: this.activeChallenge.waves.length,
-            clusters: this.clusters.length,
-            timeEffect: this.timeEffect,
-            timeEffectTimer: this.timeEffectTimer.toFixed(2),
-            fastBonus: this.fastBonus,
-            bigTimer: this.bigTimer.toFixed(2),
-            bigBonus: this.bigBonus,
-            state: this.state,
-          },
-        );
-      }
-    }
     if (this.challengeFinishingHold <= 0) return;
     if (this.activeChallenge === null) return;
     if (this.challengeWaveIdx < this.activeChallenge.waves.length) return;
-    // Bank any pending FAST/BIG bonus pool and end the matching effect
-    // immediately on entering the finishing state. Don't wait for clusters
-    // — once the last wave is done spawning, the player has earned what
-    // they're going to earn from this multiplier and the HUD countdown
-    // shouldn't drain in real time before victory.
+    // Wait until every cluster has either passed the player (scored), been
+    // hit (contacted), or fallen off the screen. This means the last block
+    // visibly clears the player line before victory fires.
+    const stillPending = this.clusters.some(
+      (c) => c.alive && !c.scored && !c.contacted,
+    );
+    if (stillPending) return;
+    // Last block is past. Bank any pending FAST/BIG bonus pool and end
+    // the matching effect so the player isn't watching the HUD countdown
+    // drain in real time before completion.
     if (this.timeEffect === "fast") {
       this.awardFastBonus();
       this.timeEffect = null;
