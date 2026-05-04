@@ -1407,8 +1407,18 @@ export class Game {
         if (!id) return;
         const c = getCustomChallenge(id);
         if (!c) return;
+        // Defense in depth: never delete a published challenge — the
+        // user must UNPUBLISH first. UI shouldn't even surface DELETE
+        // for these, but guard the handler too.
+        if (c.publishedRecordName) {
+          this.closeSwipeRow();
+          window.alert(
+            `"${c.name}" is published. Unpublish it first, then you can delete the local copy.`,
+          );
+          return;
+        }
         const confirmed = window.confirm(
-          `Delete "${c.name}"?\n\nThis can't be undone. Your local copy is removed; if it's published, the public version stays up until you UNPUBLISH from the editor.`,
+          `Delete "${c.name}"?\n\nThis can't be undone. Your local copy is removed.`,
         );
         if (confirmed) {
           deleteCustomChallenge(id);
@@ -3865,7 +3875,9 @@ export class Game {
       window.alert("Couldn't unpublish. Try again later.");
       return;
     }
+    this.swipeOpenId = null;
     if (this.state === "editorHome") this.renderEditorHome();
+    else if (this.state === "challengeSelect") this.renderChallengeSelect();
     this.communityLoaded = false;
   }
 

@@ -50,9 +50,14 @@ export function renderMyChallengesBody(props: MyChallengesBodyProps): string {
     const iconPair = leaderboardBtn || shareBtn
       ? `<div class="editor-home-row-actions-pair">${leaderboardBtn}${shareBtn}</div>`
       : "";
+    // Published challenges swipe to UNPUBLISH (cloud removal only,
+    // local copy stays). Unpublished swipe to DELETE.
+    const swipeAction = isPublished
+      ? `<button type="button" class="editor-home-row-delete" data-action="editor-unpublish" data-custom-id="${escapeHtml(c.id)}" tabindex="-1" aria-label="Unpublish">UNPUBLISH</button>`
+      : `<button type="button" class="editor-home-row-delete" data-action="editor-delete" data-custom-id="${escapeHtml(c.id)}" tabindex="-1" aria-label="Delete">DELETE</button>`;
     return `
       <div class="editor-home-row-swipe" data-swipe-id="${escapeHtml(c.id)}">
-        <button type="button" class="editor-home-row-delete" data-action="editor-delete" data-custom-id="${escapeHtml(c.id)}" tabindex="-1" aria-label="Delete">DELETE</button>
+        ${swipeAction}
         <div class="editor-home-row" data-custom-id="${escapeHtml(c.id)}">
           <div class="editor-home-row-meta">
             <span class="challenge-card-name">${escapeHtml(c.name)}</span>

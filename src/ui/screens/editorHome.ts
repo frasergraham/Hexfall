@@ -100,9 +100,15 @@ function renderAuthoredRow(c: CustomChallenge): string {
   const installedLine = c.installedFrom
     ? `<span class="editor-home-row-installed">Installed from ${escapeHtml(c.installedAuthorName ?? "the community")}${c.installedVersion ? ` · v${c.installedVersion}` : ""}</span>`
     : "";
+  // Published challenges can't be deleted in one shot — the swipe
+  // surfaces UNPUBLISH instead, and DELETE only appears once it has
+  // been pulled from the cloud.
+  const swipeAction = isPublished
+    ? `<button type="button" class="editor-home-row-delete" data-action="editor-unpublish" data-custom-id="${escapeHtml(c.id)}" tabindex="-1" aria-label="Unpublish">UNPUBLISH</button>`
+    : `<button type="button" class="editor-home-row-delete" data-action="editor-delete" data-custom-id="${escapeHtml(c.id)}" tabindex="-1" aria-label="Delete challenge">DELETE</button>`;
   return `
     <div class="editor-home-row-swipe" data-swipe-id="${escapeHtml(c.id)}">
-      <button type="button" class="editor-home-row-delete" data-action="editor-delete" data-custom-id="${escapeHtml(c.id)}" tabindex="-1" aria-label="Delete challenge">DELETE</button>
+      ${swipeAction}
       <div class="editor-home-row" data-custom-id="${escapeHtml(c.id)}">
         <div class="editor-home-row-meta">
           <span class="challenge-card-id">CUSTOM</span>
