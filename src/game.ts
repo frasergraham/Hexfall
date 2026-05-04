@@ -5776,14 +5776,6 @@ export class Game {
     ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-
-    ctx.save();
-    ctx.strokeStyle = `rgba(218, 184, 255, ${0.35 + pulse * 0.30})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(pos.x, pos.y, r * 0.95, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
   }
 
   private spawnDrone(): void {
