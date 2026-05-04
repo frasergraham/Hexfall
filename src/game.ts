@@ -6826,9 +6826,14 @@ export class Game {
     if (this.challengeFinishingHold <= 0) return;
     if (this.activeChallenge === null) return;
     if (this.challengeWaveIdx < this.activeChallenge.waves.length) return;
-    // Wait for remaining clusters to pass — they score (and accrue the
-    // FAST/BIG multiplier into the bonus pool) at normal effect time.
-    if (this.clusters.length > 0) return;
+    // Wait until every cluster has at least passed the player (so its
+    // score + multiplier banks). We don't wait for them to fully exit
+    // the screen — that takes another full board-height of fall and the
+    // player just stares at the FAST/BIG HUD countdown draining.
+    const stillPending = this.clusters.some(
+      (c) => c.alive && !c.scored && !c.contacted,
+    );
+    if (stillPending) return;
     // Last block is past. Don't make the player watch the FAST/BIG
     // countdown drain — bank the pool now and end the effect.
     if (this.timeEffect === "fast") {
