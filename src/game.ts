@@ -6827,8 +6827,10 @@ export class Game {
     if (this.activeChallenge === null) return;
     if (this.challengeWaveIdx < this.activeChallenge.waves.length) return;
     // Bank any pending FAST/BIG bonus pools and end the matching effect so
-    // the player doesn't have to watch a multi-second countdown drain
-    // after the last wave is over.
+    // the HUD countdown doesn't keep ticking while the last clusters fall.
+    // We do this BEFORE the cluster-clear wait so the player isn't staring
+    // at a multi-second timer drain. Remaining clusters still pass and
+    // score normally at 1x time.
     if (this.timeEffect === "fast") {
       this.awardFastBonus();
       this.timeEffect = null;
@@ -6841,6 +6843,9 @@ export class Game {
       this.awardBigBonus();
       this.bigTimer = 0;
     }
+    // Wait for remaining clusters to pass (and bank their score) before
+    // we declare victory.
+    if (this.clusters.length > 0) return;
     this.challengeFinishingHold -= dt;
     if (this.challengeFinishingHold <= 0) {
       this.completeChallenge();
