@@ -334,6 +334,13 @@ export async function fetchCommunityChallenge(recordName: string): Promise<Publi
 // install in place rather than creating a duplicate.
 export async function installCommunity(p: PublishedChallenge): Promise<CustomChallenge | null> {
   const existing = findCustomByPublishedRecord(p.recordName);
+  // Installing your own published challenge is a no-op: the local
+  // record (with publishedRecordName) already exists in My Challenges.
+  // Tagging it with installedFrom would move it to the Installed list
+  // and a subsequent uninstall would delete the authored copy.
+  if (existing && existing.publishedRecordName === p.recordName) {
+    return existing;
+  }
   const local: CustomChallenge = upsertCustomChallenge({
     id: existing?.id ?? `custom:installed:${p.recordName}`,
     name: p.name,

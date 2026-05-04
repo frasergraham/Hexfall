@@ -2533,11 +2533,15 @@ export class Game {
 
   private renderEditorHome(): void {
     const allCustoms = listCustomChallenges();
-    const authoredCustoms = allCustoms.filter((c) => !c.installedFrom);
+    // A challenge is authored (mine) if I haven't installed it from
+    // someone else, OR if I published it myself. The publishedRecordName
+    // takes precedence so an own-install (which shouldn't happen, but
+    // is defended-against here) doesn't move the record off My Challenges.
+    const authoredCustoms = allCustoms.filter((c) => !c.installedFrom || !!c.publishedRecordName);
     const progress = loadChallengeProgress();
     const unlockedSet = new Set(progress.unlockedBlocks);
     const remixRoster = CHALLENGES.filter((def) => unlockedSet.has(def.block));
-    const remixCommunity = allCustoms.filter((c) => !!c.installedFrom);
+    const remixCommunity = allCustoms.filter((c) => !!c.installedFrom && !c.publishedRecordName);
     this.overlay.innerHTML = renderEditorHomeView({
       authoredCustoms,
       remixRoster,
@@ -3921,8 +3925,10 @@ export class Game {
   private renderChallengeSelect(): void {
     const progress = loadChallengeProgress();
     const allCustoms = listCustomChallenges();
-    const authoredCustoms = allCustoms.filter((c) => !c.installedFrom);
-    const installedCustoms = allCustoms.filter((c) => !!c.installedFrom);
+    // Authored = mine to edit. publishedRecordName means I'm the author
+    // even if installedFrom is somehow set (defense vs. own-install).
+    const authoredCustoms = allCustoms.filter((c) => !c.installedFrom || !!c.publishedRecordName);
+    const installedCustoms = allCustoms.filter((c) => !!c.installedFrom && !c.publishedRecordName);
     const showMyChallenges =
       progress.purchasedUnlock || this.debugEnabled || this.isEditorTempUnlocked();
     this.overlay.innerHTML = renderChallengeSelectView({
