@@ -103,7 +103,6 @@ function renderCard(
       <div class="community-card-actions">
         <div class="community-card-top-row">
           ${playOrInstall}
-          <button type="button" class="community-card-btn community-card-btn-remix" data-action="community-remix" data-record-name="${escapeHtml(p.recordName)}">REMIX</button>
         </div>
         <div class="community-card-icon-row">
           ${likeBtn}
