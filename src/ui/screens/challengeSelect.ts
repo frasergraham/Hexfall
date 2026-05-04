@@ -37,6 +37,8 @@ export interface ChallengeSelectProps {
   collapsed: Record<CollapsibleKey, boolean>;
   /** Pre-rendered installed-body markup — Game owns the data plumbing. */
   installedBodyHtml: string;
+  /** Pre-rendered my-challenges body markup — same chrome as installed. */
+  myChallengesBodyHtml: string;
   /** Pre-rendered community-body markup — Game owns the data plumbing. */
   communityBodyHtml: string;
   /** Pre-rendered leaderboard sheet markup (empty string when closed). */
@@ -86,13 +88,12 @@ export function renderChallengeSelect(props: ChallengeSelectProps): string {
   }));
 
   if (props.showMyChallenges && props.authoredCustoms.length > 0) {
-    const customCards = props.authoredCustoms.map(renderCustomCard).join("");
     sections.push(renderCollapsibleSection({
       key: "myChallenges",
       title: "My Challenges",
       progress: String(props.authoredCustoms.length),
       collapsed: props.collapsed.myChallenges,
-      body: `<div class="challenge-cards challenge-cards-custom">${customCards}</div>`,
+      body: props.myChallengesBodyHtml,
     }));
   }
 
@@ -209,29 +210,6 @@ function renderOfficialBlock(
       </header>
       ${body}
     </section>
-  `;
-}
-
-function renderCustomCard(c: CustomChallenge): string {
-  const tint = difficultyTint(c.difficulty);
-  const hexes: string[] = [];
-  for (let i = 0; i < c.difficulty; i++) {
-    hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
-  }
-  const starsHtml = `<div class="challenge-card-stars">${
-    [0, 1, 2].map((i) =>
-      `<span class="challenge-card-star${i < c.starsEarned ? " earned" : ""}">★</span>`,
-    ).join("")
-  }</div>`;
-  const bestText = c.best > 0 ? `Best: ${c.best}` : "Best: —";
-  return `
-    <button type="button" class="challenge-card challenge-card-custom" data-custom-challenge-id="${escapeHtml(c.id)}">
-      <span class="challenge-card-id">CUSTOM</span>
-      <span class="challenge-card-name">${escapeHtml(c.name)}</span>
-      <div class="challenge-card-hexes">${hexes.join("")}</div>
-      ${starsHtml}
-      <span class="challenge-card-best">${bestText}</span>
-    </button>
   `;
 }
 

@@ -113,6 +113,7 @@ import { ReportSheet } from "./ui/screens/reportSheet";
 import { SingleChallenge } from "./ui/screens/singleChallenge";
 import { renderCommunityBody as renderCommunityBodyView } from "./ui/screens/communityBody";
 import { renderInstalledChallengesBody as renderInstalledChallengesBodyView } from "./ui/screens/installedChallengesBody";
+import { renderMyChallengesBody as renderMyChallengesBodyView } from "./ui/screens/myChallengesBody";
 import { renderChallengeSelect as renderChallengeSelectView } from "./ui/screens/challengeSelect";
 import { renderEditorHome as renderEditorHomeView } from "./ui/screens/editorHome";
 import { renderSettingsDialog as renderSettingsDialogView } from "./ui/screens/settingsDialog";
@@ -1413,6 +1414,7 @@ export class Game {
           deleteCustomChallenge(id);
           this.swipeOpenId = null;
           if (this.state === "editorHome") this.renderEditorHome();
+          else if (this.state === "challengeSelect") this.renderChallengeSelect();
         } else {
           // Snap the row back closed.
           this.closeSwipeRow();
@@ -3948,6 +3950,13 @@ export class Game {
       installedBodyHtml:
         installedCustoms.length > 0
           ? this.renderInstalledChallengesBody(installedCustoms)
+          : "",
+      myChallengesBodyHtml:
+        authoredCustoms.length > 0
+          ? renderMyChallengesBodyView({
+              authored: authoredCustoms,
+              showLeaderboard: isCommunityReadable(),
+            })
           : "",
       communityBodyHtml: isCommunityReadable() ? this.renderCommunityBody() : "",
       leaderboardSheetHtml: this.renderLeaderboardSheetHtml(),
