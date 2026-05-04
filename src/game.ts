@@ -459,6 +459,7 @@ interface StickInFlight {
   targetCell: Axial;
   age: number;
   lifetime: number;
+  collisionId: number;
 }
 
 interface Drone {
@@ -761,6 +762,10 @@ export class Game {
   // it as a real cell. Spawned by handleNormalContact and ticked every
   // frame; collide with nothing so they don't disturb other clusters.
   private sticksInFlight: StickInFlight[] = [];
+  // Per-collision tally so we can log expected-vs-landed for every blue
+  // hit. Entries are removed once `remaining` hits zero.
+  private collisionTally = new Map<number, { expected: number; landed: number; remaining: number }>();
+  private nextCollisionId = 1;
 
   // ROTATE tutorial: fires once per page session the first time the
   // player grows from 1 → 2 hexes. Slows the game to 0.25x and shows a
@@ -880,9 +885,9 @@ export class Game {
       collisionMask: CAT_CLUSTER,
     });
     // Player auto-runs a connectivity sweep after every cell mutation
-    // (addCell/removeCell/compact). Anything that falls off arrives
-    // here so the game can spawn debris with appropriate outward
-    // momentum from the player's centre.
+    // (addCell/removeCell). Anything that falls off arrives here so
+    // the game can spawn debris with appropriate outward momentum from
+    // the player's centre.
     this.player.setOrphanListener((orphans) => this.spawnPlayerOrphans(orphans));
 
     Events.on(this.engine, "collisionStart", (e) => this.onCollisionStart(e));
@@ -5846,6 +5851,7 @@ export class Game {
       this.sticksInFlight.map((s) => axialKey(s.targetCell)),
     );
 
+    const collisionId = this.nextCollisionId++;
     const stuckPartIds = new Set<number>();
     let stuck = 0;
     for (const item of partsByDist) {
@@ -5853,9 +5859,21 @@ export class Game {
       const cell = this.player.findStickCell(item.p.x, item.p.y, reserved);
       if (!cell) continue;
       reserved.add(axialKey(cell));
-      this.spawnStickInFlight(cell, item.p, cluster);
+      this.spawnStickInFlight(cell, item.p, cluster, collisionId);
       stuckPartIds.add(item.p.partId);
       stuck += 1;
+    }
+    const droppedFromFindCell = stickCount - stuck;
+    console.log(
+      `[collision ${collisionId}] cluster=${allParts.length}hex expected=${stickCount} queued=${stuck}` +
+        (droppedFromFindCell > 0 ? ` dropped-no-slot=${droppedFromFindCell}` : ""),
+    );
+    if (stuck > 0) {
+      this.collisionTally.set(collisionId, {
+        expected: stickCount,
+        landed: 0,
+        remaining: stuck,
+      });
     }
     // Prevent the same blue cluster from being scored as a "passed without
     // contact" point at end of play. (The cluster is killed below.)
@@ -5961,6 +5979,7 @@ export class Game {
     targetCell: Axial,
     part: { x: number; y: number; angle: number; partId: number },
     cluster: FallingCluster,
+    collisionId: number,
   ): void {
     // Free hex body driven by per-frame velocity blending. Collides with
     // nothing — purely visual motion, never touches the player or other
@@ -5990,6 +6009,7 @@ export class Game {
       targetCell,
       age: 0,
       lifetime: STICK_FLIGHT_LIFETIME,
+      collisionId,
     });
   }
 
@@ -6034,9 +6054,28 @@ export class Game {
 
     const sizeBefore = this.player.size();
     this.player.addCell(s.targetCell);
-    // Sticks can land in unfortunate orders that leave a hole inside the
-    // silhouette. Compact closes the gap so the blob always reads as solid.
-    this.player.compact();
+    const sizeAfter = this.player.size();
+    const landed = sizeAfter > sizeBefore;
+
+    const tally = this.collisionTally.get(s.collisionId);
+    if (tally) {
+      if (landed) tally.landed += 1;
+      tally.remaining -= 1;
+      if (!landed) {
+        console.log(
+          `[collision ${s.collisionId}] stick LOST cell=(${s.targetCell.q},${s.targetCell.r})` +
+            ` (size unchanged at ${sizeBefore})`,
+        );
+      }
+      if (tally.remaining <= 0) {
+        const lost = tally.expected - tally.landed;
+        console.log(
+          `[collision ${s.collisionId}] DONE expected=${tally.expected} landed=${tally.landed}` +
+            (lost > 0 ? ` LOST=${lost}` : ""),
+        );
+        this.collisionTally.delete(s.collisionId);
+      }
+    }
 
     // First-ever 1→2 growth (persisted across launches) teaches the
     // rotate gesture.
