@@ -6420,26 +6420,11 @@ export class Game {
     if (sideSpawn) {
       const fromLeft = Math.random() < 0.5;
       sideEntryFromLeft = fromLeft;
-      // Always enter from the upper half of the play area so the player has
-      // enough vertical runway to react.
-      const halfBoard = this.boardHeight * 0.5;
-      const yMin = this.hexSize * 2;
-      const yMax = Math.max(yMin + this.hexSize, halfBoard - this.hexSize);
-      y = this.boardOriginY + yMin + Math.random() * (yMax - yMin);
-      // Almost-horizontal entry so the cluster crosses well into the play
-      // area before gravity pulls it down. Spawn just outside the edge so
-      // it's barely off-screen and visible quickly.
-      const sideAngle = 0.05 + Math.random() * 0.1; // nearly horizontal; gravity arcs them
-      const total = speed * 0.2;
-      if (fromLeft) {
-        x = this.boardOriginX - this.hexSize * 1.2;
-        vx = Math.cos(sideAngle) * total;
-        vy = Math.sin(sideAngle) * total;
-      } else {
-        x = this.boardOriginX + this.boardWidth + this.hexSize * 1.2;
-        vx = -Math.cos(sideAngle) * total;
-        vy = Math.sin(sideAngle) * total;
-      }
+      const entry = this.computeSideEntry(speed, fromLeft, Math.random);
+      x = entry.x;
+      y = entry.y;
+      vx = entry.vx;
+      vy = entry.vy;
     } else {
       const colStep = this.pickSpawnColumn(shape);
       if (colStep === null) return; // would block the safe lane
@@ -6707,24 +6692,13 @@ export class Game {
     let vy: number;
     let sideEntryFromLeft: boolean | null = null;
     if (angle.sideEntry) {
-      // Side entry — mid-screen y, horizontal entry vector.
-      const halfBoard = this.boardHeight * 0.5;
-      const yMin = this.hexSize * 2;
-      const yMax = Math.max(yMin + this.hexSize, halfBoard - this.hexSize);
-      y = this.boardOriginY + yMin + this.rng() * (yMax - yMin);
-      const sideAngle = 0.08 + this.rng() * 0.12;
-      const total = speed * 1.4;
       const fromLeft = angle.sideEntry === "left" || (angle.sideEntry === "random" && this.rng() < 0.5);
       sideEntryFromLeft = fromLeft;
-      if (fromLeft) {
-        x = this.boardOriginX - this.hexSize * 1.2;
-        vx = Math.cos(sideAngle) * total;
-        vy = Math.sin(sideAngle) * total;
-      } else {
-        x = this.boardOriginX + this.boardWidth + this.hexSize * 1.2;
-        vx = -Math.cos(sideAngle) * total;
-        vy = Math.sin(sideAngle) * total;
-      }
+      const entry = this.computeSideEntry(speed, fromLeft, this.rng);
+      x = entry.x;
+      y = entry.y;
+      vx = entry.vx;
+      vy = entry.vy;
     } else {
       x = railCenter + colStep * colWidth;
       y = this.boardOriginY - this.hexSize * 4;
@@ -6741,6 +6715,11 @@ export class Game {
 
     const cluster = this.spawnChallengeCluster(kind, shape, x, y, vx, vy);
     if (cluster && sideEntryFromLeft !== null) {
+      // Side-entry clusters launch with a small horizontal velocity and
+      // rely on gravity to arc them down into the player's lane. The
+      // velocity clamp would otherwise lock vy at the launch value and
+      // prevent gravity from acting, so we opt them out.
+      cluster.targetVy = null;
       this.sideWarnings.push({ cluster, side: sideEntryFromLeft ? "left" : "right", age: 0, lifetime: 0.7 });
     }
   }
@@ -6983,6 +6962,31 @@ export class Game {
     const p = this.waveParams();
     if (this.wavePhase === "wave" && this.swarmWave) return SWARM_SPAWN_INTERVAL;
     return this.wavePhase === "wave" ? p.waveSpawnInterval : p.calmSpawnInterval;
+  }
+
+  // Shared side-entry physics for both endless and challenge spawns. We
+  // launch nearly horizontally at a fraction of the fall speed so gravity
+  // has time to arc the cluster down into the player's lane, instead of
+  // the previous "shoots across the board in a flash" behaviour.
+  // Caller is responsible for clearing targetVy (challenge mode) so the
+  // velocity clamp doesn't lock vy and prevent gravity from acting.
+  private computeSideEntry(
+    baseSpeed: number,
+    fromLeft: boolean,
+    rng: () => number,
+  ): { x: number; y: number; vx: number; vy: number } {
+    const halfBoard = this.boardHeight * 0.5;
+    const yMin = this.hexSize * 2;
+    const yMax = Math.max(yMin + this.hexSize, halfBoard - this.hexSize);
+    const y = this.boardOriginY + yMin + rng() * (yMax - yMin);
+    const sideAngle = 0.05 + rng() * 0.1; // nearly horizontal; gravity arcs them
+    const total = baseSpeed * 0.2;
+    const x = fromLeft
+      ? this.boardOriginX - this.hexSize * 1.2
+      : this.boardOriginX + this.boardWidth + this.hexSize * 1.2;
+    const vx = (fromLeft ? 1 : -1) * Math.cos(sideAngle) * total;
+    const vy = Math.sin(sideAngle) * total;
+    return { x, y, vx, vy };
   }
 
   private computeFallSpeed(): number {
