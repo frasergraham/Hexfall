@@ -6429,8 +6429,8 @@ export class Game {
       // Almost-horizontal entry so the cluster crosses well into the play
       // area before gravity pulls it down. Spawn just outside the edge so
       // it's barely off-screen and visible quickly.
-      const sideAngle = 0.7 + Math.random() * 0.35; // 40°-60° below horizontal
-      const total = speed * 0.95;
+      const sideAngle = 0.05 + Math.random() * 0.1; // nearly horizontal; gravity arcs them
+      const total = speed * 0.2;
       if (fromLeft) {
         x = this.boardOriginX - this.hexSize * 1.2;
         vx = Math.cos(sideAngle) * total;
