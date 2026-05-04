@@ -4863,16 +4863,20 @@ export class Game {
       const cxMax = this.boardOriginX + this.boardWidth - halfTextW - margin;
       const cx = cxMin <= cxMax ? Math.max(cxMin, Math.min(cxMax, cxIdeal)) : cxIdeal;
 
-      // Pin the label just below the slow/fast countdown bar (which
-      // sits at topInset + 6, height 6) so it's never partially
-      // obscured by the iOS Dynamic Island. textBaseline is alphabetic,
-      // so y is the baseline; offset by ~cap-height of the font.
-      const y = this.boardOriginY + this.topInset + 18 + fontSize * 0.74;
+      // Ride above the cluster as it falls so the label visibly
+      // anchors to the block it's describing. textBaseline is
+      // alphabetic, so y is the baseline; sit a half-font above the
+      // cluster top with a small extra gap. While the cluster is still
+      // above the inset (e.g. iOS Dynamic Island), pin the label below
+      // the inset so it stays fully visible.
+      const clusterTop = c.body.bounds.min.y;
+      const idealY = clusterTop - fontSize * 0.4;
+      const minY = this.boardOriginY + this.topInset + 18 + fontSize * 0.74;
+      const y = Math.max(minY, idealY);
 
       // Fade in based on the cluster's descent through the obscured
       // band: fully invisible while the cluster top is still above the
       // canvas, fully visible by the time it has cleared the inset.
-      const clusterTop = c.body.bounds.min.y;
       const fadeStart = this.boardOriginY;
       const fadeEnd = this.boardOriginY + this.topInset + fontSize * 1.2;
       const alpha = fadeEnd > fadeStart
