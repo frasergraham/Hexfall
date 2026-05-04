@@ -1,15 +1,14 @@
 import { defineConfig } from "vite";
 
-// Default config targets GitHub Pages served from the apex of
-// hexrain.xyz (a CNAME-bound custom domain), so the site lives at the
-// root and assets resolve under "/". The iOS / Capacitor build
-// overrides `base` to "./" and `outDir` to "dist" via CLI flags in the
-// npm `build:ios` script — relative URLs are required inside the iOS
-// web view, where the bundle is served from a non-root origin.
+// Default config targets the Railway deploy (static-served from dist/
+// at the apex of hexrain.xyz), so the site lives at the root and assets
+// resolve under "/". The iOS / Capacitor build overrides `base` to "./"
+// via the npm `build:ios` script — relative URLs are required inside
+// the iOS web view, where the bundle is served from a non-root origin.
 export default defineConfig({
   base: "/",
   build: {
-    outDir: "docs",
+    outDir: "dist",
     emptyOutDir: true,
   },
   server: {

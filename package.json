@@ -10,7 +10,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "build:ios": "tsc && vite build --base=./ --outDir=dist --emptyOutDir",
+    "build:ios": "tsc && vite build --base=./",
     "ios:add": "cap add ios --packagemanager SPM",
     "ios:sync": "npm run build:ios && cap sync ios && node scripts/patch-cap-plugins.mjs",
     "ios:copy": "npm run build:ios && cap copy ios && node scripts/patch-cap-plugins.mjs",

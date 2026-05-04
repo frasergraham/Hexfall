@@ -10,15 +10,17 @@ score.
 ```sh
 npm install
 npm run dev          # http://localhost:5173
-npm run build        # tsc + vite build into ./docs (GitHub Pages, hexrain.xyz)
+npm run build        # tsc + vite build into ./dist (Railway, hexrain.xyz)
 npm run ios:sync     # build:ios + cap sync ios + patch-cap-plugins
 ```
 
-The web build is published from `docs/` on `main` to **hexrain.xyz**
-(apex CNAME). `vite.config.ts` pins `base: "/"` and `outDir: "docs"`.
-The iOS build uses `build:ios` which overrides `base="./"` and
-`outDir="dist"` so the WKWebView can serve the bundle from a non-root
-origin.
+The web build is deployed by **Railway** (`railway.json`) — Nixpacks
+runs `npm install --include=dev && npm run build` and the start
+command static-serves `dist/`. Railway also stands up a per-PR preview
+environment at `hexrain-hexrain-pr-N.up.railway.app`. `vite.config.ts`
+pins `base: "/"` and `outDir: "dist"`. The iOS build uses `build:ios`
+which only overrides `base="./"` (relative URLs are required inside
+the WKWebView, served from a non-root origin).
 
 Add `?debug=1` to the URL for **DEBUG buttons** on the menu that start a
 fresh run at 199 / 399 / 599. Runs started this way don't bank a high
