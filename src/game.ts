@@ -488,8 +488,6 @@ const STAR_TIER_THRESHOLDS = [200, 400, 600] as const;
 const NEBULA_INTENSITY_BY_TIER = [0, 0.35, 0.7, 1.0] as const;
 const NEBULA_SCROLL_SPEED = 4; // px/sec downward drift of the nebula
 
-const HINT_TIMESCALE = 0.5; // game runs at this rate while a hint cluster is on screen
-const ROTATE_TUTORIAL_TIMESCALE = 0.25; // even slower while teaching the rotate gesture
 // LATE_RAMP_FLOOR_SCORE / LATE_RAMP_PER_100 moved to src/spawn.ts.
 const ROTATE_SLIDE_SENS = 0.02; // radians of player rotation per pixel of horizontal drag
 
@@ -4684,26 +4682,18 @@ export class Game {
       }
     }
 
-    // The slowest active relative modifier (power-up + hint + tutorial)
-    // determines how much we slow vs the current base rate. The base
-    // rate itself ramps with the late-game multiplier so slow/fast feel
-    // proportional to whatever the current "100%" of the game is.
-    const hintActive = this.clusters.some((c) => c.hintLabel && c.alive);
-    let modifier = this.timeScale;
-    if (hintActive) modifier = Math.min(modifier, HINT_TIMESCALE);
-    if (this.rotateTutorialActive)
-      modifier = Math.min(modifier, ROTATE_TUTORIAL_TIMESCALE);
+    // The slowest active power-up modifier determines how much we slow
+    // vs the current base rate. Base rate itself ramps with the
+    // late-game multiplier so slow/fast feel proportional to whatever
+    // the current "100%" of the game is.
+    const modifier = this.timeScale;
     const effectiveScale = modifier * this.lateGameSpeedMul();
 
     // Music tracks effective scale, except collision-induced slow
     // (stick-buffer) is excluded — the recovery moment shouldn't drag
-    // the music down. Hint and rotate-tutorial slowmo still affect
-    // music because those are deliberate "pay attention" beats.
+    // the music down.
     let musicModifier = this.timeScale;
     if (this.timeEffect === "slow" && !this.slowFromPickup) musicModifier = 1;
-    if (hintActive) musicModifier = Math.min(musicModifier, HINT_TIMESCALE);
-    if (this.rotateTutorialActive)
-      musicModifier = Math.min(musicModifier, ROTATE_TUTORIAL_TIMESCALE);
     // Compress music speed to 30% of the deviation from 1.0 so slow/fast
     // feel like a gentle tape stretch rather than dragging or chipmunking
     // the track. e.g. game scale 0.5 → music 0.85, game 1.25 → music 1.075.
