@@ -49,7 +49,6 @@ export function renderInstalledChallengesBody(props: InstalledChallengesBodyProp
         <button type="button" class="editor-home-row-delete" data-action="installed-uninstall" data-custom-id="${escapeHtml(c.id)}" tabindex="-1" aria-label="Uninstall">UNINSTALL</button>
         <div class="editor-home-row" data-custom-id="${escapeHtml(c.id)}">
           <div class="editor-home-row-meta">
-            <span class="challenge-card-id">COMMUNITY</span>
             <span class="challenge-card-name">${escapeHtml(c.name)}</span>
             <span class="editor-home-row-installed">by ${escapeHtml(author)}${versionStr}</span>
             <div class="challenge-card-hexes">${hexes.join("")}</div>

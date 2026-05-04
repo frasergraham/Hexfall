@@ -87,7 +87,6 @@ function renderCard(
   const waveLabel = `${waveCount} ${waveCount === 1 ? "wave" : "waves"}`;
   return `
     <div class="challenge-card challenge-card-community">
-      <span class="challenge-card-id">COMMUNITY</span>
       <span class="challenge-card-name">${escapeHtml(p.name)}</span>
       <span class="challenge-card-author">by ${escapeHtml(p.authorName)}</span>
       <div class="challenge-card-hex-row">
