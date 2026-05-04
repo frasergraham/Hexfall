@@ -7391,10 +7391,24 @@ export class Game {
     const h = this.boardHeight;
     const tints =
       this.wall.kind === "narrow"
-        ? { fill: "rgba(220, 80, 90, 0.16)", edge: "rgba(255, 130, 140, 0.65)" }
+        ? { rgb: "220, 80, 90", fillA: 0.16, edge: "rgba(255, 130, 140, 0.65)" }
         : this.wall.kind === "zigzag"
-          ? { fill: "rgba(170, 120, 200, 0.14)", edge: "rgba(220, 170, 255, 0.55)" }
-          : { fill: "rgba(180, 100, 110, 0.12)", edge: "rgba(255, 120, 130, 0.55)" };
+          ? { rgb: "170, 120, 200", fillA: 0.14, edge: "rgba(220, 170, 255, 0.55)" }
+          : { rgb: "180, 100, 110", fillA: 0.12, edge: "rgba(255, 120, 130, 0.55)" };
+    const fillFull = `rgba(${tints.rgb}, ${tints.fillA})`;
+    const fillZero = `rgba(${tints.rgb}, 0)`;
+    // Sample inset at the board midpoint for sizing the side gradients.
+    // Long enough that the outer edge is transparent against the
+    // progress-bar margin, short enough that the inner half stays
+    // solid so the obstruction still reads.
+    const insetMid = this.wallInsetAt(y0 + h * 0.5).left;
+    const fadeBand = Math.max(8, insetMid * 0.5);
+    const leftGrad = ctx.createLinearGradient(x0, 0, x0 + fadeBand, 0);
+    leftGrad.addColorStop(0, fillZero);
+    leftGrad.addColorStop(1, fillFull);
+    const rightGrad = ctx.createLinearGradient(x0 + w - fadeBand, 0, x0 + w, 0);
+    rightGrad.addColorStop(0, fillFull);
+    rightGrad.addColorStop(1, fillZero);
     if (this.wall.kind === "zigzag") {
       // Trace polygons that follow wallInsetAt(y) along the board height.
       const STEPS = 24;
@@ -7406,15 +7420,16 @@ export class Game {
         leftPts.push({ x: x0 + inset.left, y });
         rightPts.push({ x: x0 + w - inset.right, y });
       }
-      ctx.fillStyle = tints.fill;
-      // Left slab
+      // Left slab — outer edge fades to transparent.
+      ctx.fillStyle = leftGrad;
       ctx.beginPath();
       ctx.moveTo(x0, y0);
       for (const p of leftPts) ctx.lineTo(p.x, p.y);
       ctx.lineTo(x0, y0 + h);
       ctx.closePath();
       ctx.fill();
-      // Right slab
+      // Right slab — outer edge fades to transparent.
+      ctx.fillStyle = rightGrad;
       ctx.beginPath();
       ctx.moveTo(x0 + w, y0);
       for (const p of rightPts) ctx.lineTo(p.x, p.y);
@@ -7438,10 +7453,12 @@ export class Game {
       ctx.stroke();
       return;
     }
-    // pinch / narrow: rectangular slabs.
+    // pinch / narrow: rectangular slabs with the outer edges fading
+    // out so they don't terminate hard against the progress bars.
     const inset = this.wallInsetAt(y0).left;
-    ctx.fillStyle = tints.fill;
+    ctx.fillStyle = leftGrad;
     ctx.fillRect(x0, y0, inset, h);
+    ctx.fillStyle = rightGrad;
     ctx.fillRect(x0 + w - inset, y0, inset, h);
     ctx.strokeStyle = tints.edge;
     ctx.lineWidth = 2;
@@ -7833,6 +7850,13 @@ export class Game {
     const halfW = this.boardWidth / 2;
     const offset = Math.max(-1, Math.min(1, halfW > 0 ? (this.player.body.position.x - cx) / halfW : 0));
 
+    // Clip stars to the play area so they don't appear in the side
+    // margins under the challenge progress bars or the HUD top inset.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(this.boardOriginX, this.boardOriginY, this.boardWidth, this.boardHeight);
+    ctx.clip();
+
     drawStarLayer(
       ctx,
       this.starsDeep,
@@ -7875,6 +7899,8 @@ export class Game {
       this.starScrollY * STAR_SCROLL_FRONT,
       "#ffffff",
     );
+
+    ctx.restore();
   }
 
   private render(dt: number): void {
