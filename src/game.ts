@@ -3933,6 +3933,11 @@ export class Game {
     const installedCustoms = allCustoms.filter((c) => !!c.installedFrom && !c.publishedRecordName);
     const showMyChallenges =
       progress.purchasedUnlock || this.debugEnabled || this.isEditorTempUnlocked();
+    // Preserve scroll across re-renders triggered by section
+    // collapse/expand, sort chip selection, async community refresh,
+    // etc. Replacing innerHTML otherwise snaps the user back to the
+    // top mid-scroll. Browser clamps to max-scroll if content shrank.
+    const scrollY = this.overlay.scrollTop;
     this.overlay.innerHTML = renderChallengeSelectView({
       progress,
       challenges: CHALLENGES,
@@ -3962,6 +3967,7 @@ export class Game {
       leaderboardSheetHtml: this.renderLeaderboardSheetHtml(),
       reportSheetHtml: this.renderReportSheetHtml(),
     });
+    this.overlay.scrollTop = scrollY;
     if (isCommunityReadable() && !this.communityLoaded && !this.communityLoading) {
       void this.refreshCommunity();
     }
