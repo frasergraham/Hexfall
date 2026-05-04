@@ -170,20 +170,27 @@ const BOARD_COLS = 9;
 
 // Difficulty knobs. Multipliers stack on top of the medium baseline:
 // fall speed (initial cluster velocity), spawn interval (how often
-// clusters arrive — bigger = slower), per-kind helpful spawn chances,
-// and timed-effect duration. `effectDurationMul` is the default for
-// every timed effect; per-effect overrides (slow/fast/shield/drone)
-// take precedence so hardcore can stretch fast while shrinking shields
-// and drones independently.
+// clusters arrive — bigger = slower), per-tier spawn weights, and
+// timed-effect duration. `effectDurationMul` is the default for every
+// timed effect; per-effect overrides (slow/fast/shield/drone) take
+// precedence so hardcore can stretch fast while shrinking shields and
+// drones independently.
+//
+// Spawn picker uses a two-tier model: a single uniform roll picks a
+// tier (Sticky / Helpful / Challenge / Normal), then the kind is
+// chosen uniformly among eligible kinds inside that tier.
+//   Helpful   = coin, slow, tiny, shield, drone (defensive / reward)
+//   Challenge = fast, big                       (risk → bank multiplier)
+// `helpfulExclude` lets a difficulty drop a kind entirely (PAINFUL has
+// no slow). Score gates inside a tier redistribute the tier weight
+// among whichever kinds are currently eligible.
 interface DifficultyConfig {
   fallSpeedMul: number;
   spawnIntervalMul: number;
   stickyMul: number;
-  slowMul: number;
-  shieldMul: number;
-  droneMul: number;
-  tinyMul: number;
-  bigMul: number;
+  helpfulMul: number;
+  challengeMul: number;
+  helpfulExclude?: readonly ClusterKind[];
   // Per-difficulty score gates for tiny/big. Override the global
   // *_MIN_SCORE defaults so easy can hold them back longer (gives the
   // player time to learn the basics) while medium/hard let them show
@@ -213,11 +220,8 @@ const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
     fallSpeedMul: 0.8,
     spawnIntervalMul: 1.25,
     stickyMul: 1.5,
-    slowMul: 1.5,
-    shieldMul: 1.5,
-    droneMul: 1.5,
-    tinyMul: 1.5,
-    bigMul: 1.5,
+    helpfulMul: 1.32,
+    challengeMul: 1.0,
     tinyMinScore: 300,
     bigMinScore: 300,
     effectDurationMul: 1.2,
@@ -230,11 +234,8 @@ const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
     fallSpeedMul: 1.0,
     spawnIntervalMul: 1.0,
     stickyMul: 1.0,
-    slowMul: 1.0,
-    shieldMul: 1.0,
-    droneMul: 1.0,
-    tinyMul: 1.0,
-    bigMul: 1.0,
+    helpfulMul: 1.0,
+    challengeMul: 1.0,
     tinyMinScore: 300,
     bigMinScore: 300,
     effectDurationMul: 1.0,
@@ -247,11 +248,8 @@ const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
     fallSpeedMul: 1.35,
     spawnIntervalMul: 0.85,
     stickyMul: 0.6,
-    slowMul: 1.0,
-    shieldMul: 0.6,
-    droneMul: 0.6,
-    tinyMul: 0.6,
-    bigMul: 0.6,
+    helpfulMul: 0.84,
+    challengeMul: 1.0,
     tinyMinScore: 0,
     bigMinScore: 0,
     effectDurationMul: 0.8,
@@ -264,12 +262,9 @@ const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
     fallSpeedMul: 1.5,
     spawnIntervalMul: 0.75,
     stickyMul: 0.5,
-    // No slow blocks at all in hardcore.
-    slowMul: 0,
-    shieldMul: 0.4,
-    droneMul: 0.4,
-    tinyMul: 0.4,
-    bigMul: 0.4,
+    helpfulMul: 0.53,
+    challengeMul: 1.0,
+    helpfulExclude: ["slow"],
     effectDurationMul: 1.0,
     fastDurationMul: 2.0,
     shieldDurationMul: 0.5,
@@ -357,27 +352,28 @@ const STICK_FLIGHT_SNAP_DIST_FRAC = 0.35; // fraction of hexSize → addCell
 const STICK_FLIGHT_CLOSE_STEPS = 7; // steps the homing piece would take to close the full gap
 const STICK_FLIGHT_VELOCITY_BLEND = 0.35; // per-frame lerp toward the desired velocity
 
-const STICKY_SPAWN_CHANCE = 0.10;
+// Spawn picker tier weights at the medium baseline. A uniform roll
+// picks a tier; per-kind weight inside the tier is uniform across
+// whichever kinds are currently eligible (score-gated). Failed tier
+// gates fall through to Normal. Tunable — exact-restore of pre-BIG/TINY
+// normal share at score ≥400, but expected to drift as we iterate.
+const SPAWN_STICKY_TIER_WEIGHT = 0.10;
+const SPAWN_HELPFUL_TIER_WEIGHT = 0.19;
+const SPAWN_CHALLENGE_TIER_WEIGHT = 0.05;
+
 const STICKY_MIN_SCORE = 3;
-const SLOW_SPAWN_CHANCE = 0.05;
-const FAST_SPAWN_CHANCE = 0.05;
-const COIN_SPAWN_CHANCE = 0.07;
 const COIN_SCORE_BONUS = 5;
 const POWERUP_MIN_SCORE = 5;
-const SHIELD_SPAWN_CHANCE = 0.05;
 const SHIELD_MIN_SCORE = 200;
 const SHIELD_DURATION = 10; // seconds
-const DRONE_SPAWN_CHANCE = 0.02; // rarer than the other power-ups
 const DRONE_MIN_SCORE = 400;
 const DRONE_DURATION = 10; // seconds
 const DRONE_SIZE_FACTOR = 0.5; // multiplier on hexSize for the drone body
 const DRONE_OSCILLATION_SPEED = 0.7; // radians/sec for the back-and-forth
-const TINY_SPAWN_CHANCE = 0.05;
 const TINY_MIN_SCORE = 5;
 const TINY_DURATION = 5; // seconds
 const TINY_PLAYER_SCALE = 0.5; // player hex-size multiplier while tiny is active
 const TINY_REHIT_BONUS = 2; // points awarded if a second tiny is hit while still tiny
-const BIG_SPAWN_CHANCE = 0.04;
 const BIG_MIN_SCORE = 5;
 const BIG_DURATION = 5; // seconds
 const BIG_SIZE_BASE = 1.5; // first big pickup grows the player by 50%
@@ -6321,6 +6317,36 @@ export class Game {
     Composite.add(this.engine.world, cluster.body);
   }
 
+  // Pick a kind from the Helpful tier — coin (always), slow, tiny,
+  // shield, drone — uniform across whichever ones currently pass their
+  // score gate and aren't excluded by the difficulty config. Returns
+  // null if nothing is eligible (which should never happen since coin
+  // is always eligible unless the difficulty excludes it).
+  private pickHelpfulKind(cfg: DifficultyConfig): ClusterKind | null {
+    const exclude = cfg.helpfulExclude;
+    const pool: ClusterKind[] = [];
+    const allow = (k: ClusterKind, gate: boolean) => {
+      if (gate && !(exclude && exclude.includes(k))) pool.push(k);
+    };
+    allow("coin", true);
+    allow("slow", this.score >= POWERUP_MIN_SCORE);
+    allow("tiny", this.score >= (cfg.tinyMinScore ?? TINY_MIN_SCORE));
+    allow("shield", this.score >= SHIELD_MIN_SCORE);
+    allow("drone", this.score >= DRONE_MIN_SCORE);
+    if (pool.length === 0) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  // Pick a kind from the Challenge tier — fast, big — uniform across
+  // whichever pass their score gate.
+  private pickChallengeKind(cfg: DifficultyConfig): ClusterKind | null {
+    const pool: ClusterKind[] = [];
+    if (this.score >= POWERUP_MIN_SCORE) pool.push("fast");
+    if (this.score >= (cfg.bigMinScore ?? BIG_MIN_SCORE)) pool.push("big");
+    if (pool.length === 0) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
   private spawnCluster(): void {
     // Very first spawn of the run: force a centered single-cell blue
     // cluster so the first-ever AVOID hint label is dead-centre. This
@@ -6350,29 +6376,18 @@ export class Game {
         kind = "sticky";
       }
     } else {
-      const r = Math.random();
       const cfg = this.cfg();
-      const coinEnd = COIN_SPAWN_CHANCE;
-      const slowEnd = coinEnd + SLOW_SPAWN_CHANCE * cfg.slowMul;
-      const fastEnd = slowEnd + FAST_SPAWN_CHANCE;
-      const stickyEnd = fastEnd + STICKY_SPAWN_CHANCE * cfg.stickyMul;
-      const shieldEnd = stickyEnd + SHIELD_SPAWN_CHANCE * cfg.shieldMul;
-      const droneEnd = shieldEnd + DRONE_SPAWN_CHANCE * cfg.droneMul;
-      const tinyEnd = droneEnd + TINY_SPAWN_CHANCE * cfg.tinyMul;
-      const bigEnd = tinyEnd + BIG_SPAWN_CHANCE * cfg.bigMul;
-      // Each helpful kind owns its own score gate. Slow/fast/sticky/shield/
-      // drone share the global POWERUP_MIN_SCORE floor; tiny/big honour
-      // only their per-difficulty gate so hard can let them spawn from
-      // score 0 without dragging the rest of the powerups in early.
-      if (r < coinEnd) {
-        kind = "coin";
-      } else if (r < slowEnd && this.score >= POWERUP_MIN_SCORE) kind = "slow";
-      else if (r < fastEnd && this.score >= POWERUP_MIN_SCORE) kind = "fast";
-      else if (r < stickyEnd && this.score >= STICKY_MIN_SCORE) kind = "sticky";
-      else if (r < shieldEnd && this.score >= SHIELD_MIN_SCORE) kind = "shield";
-      else if (r < droneEnd && this.score >= DRONE_MIN_SCORE) kind = "drone";
-      else if (r < tinyEnd && this.score >= (cfg.tinyMinScore ?? TINY_MIN_SCORE)) kind = "tiny";
-      else if (r < bigEnd && this.score >= (cfg.bigMinScore ?? BIG_MIN_SCORE)) kind = "big";
+      const stickyEnd = SPAWN_STICKY_TIER_WEIGHT * cfg.stickyMul;
+      const helpfulEnd = stickyEnd + SPAWN_HELPFUL_TIER_WEIGHT * cfg.helpfulMul;
+      const challengeEnd = helpfulEnd + SPAWN_CHALLENGE_TIER_WEIGHT * cfg.challengeMul;
+      const r = Math.random();
+      if (r < stickyEnd) {
+        if (this.score >= STICKY_MIN_SCORE) kind = "sticky";
+      } else if (r < helpfulEnd) {
+        kind = this.pickHelpfulKind(cfg) ?? "normal";
+      } else if (r < challengeEnd) {
+        kind = this.pickChallengeKind(cfg) ?? "normal";
+      }
     }
 
     // Coin / shield / drone pickups and swarm hexes are always single-cell.
