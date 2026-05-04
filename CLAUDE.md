@@ -122,12 +122,36 @@ hint / tutorial modifiers stack multiplicatively on top.
 | `shield` | Cyan blob ("SHIELD") | 10 s bubble around the player; absorbs blue hits at 1 s of shield per hit. Sticky still rips. |
 | `drone` | Violet sentinel ("DRONE") | Spawns a small mid-screen sensor body that oscillates left/right and shatters blue clusters on contact. 10 s lifetime, `-1 s` per intercept. Only blue. |
 
-Spawn weighting (per spawn during calm/non-swarm waves):
+Spawn weighting (per spawn during calm/non-swarm waves) is a two-tier
+roll. A uniform draw picks a tier, then the kind is chosen uniformly
+across whichever kinds inside that tier currently pass their score
+gate (failed gates redistribute within the tier; failed sticky tier
+falls through to Normal).
 
 ```
-coin: 7%        slow: 5% (≥5)      fast: 5% (≥5)
-sticky: 10% (≥3)   shield: 5% (≥200)   drone: 2% (≥400)
+Sticky tier:    10%  (≥3)            → sticky
+Helpful tier:   19%                  → coin (always),
+                                       slow (≥5), tiny (≥cfg),
+                                       shield (≥200), drone (≥400)
+Challenge tier:  5%                  → fast (≥5), big (≥cfg)
+Normal tier:    rest                 → blue
 ```
+
+Tier weights live in `game.ts` as `SPAWN_*_TIER_WEIGHT` constants and
+are tunables. Per-difficulty `stickyMul` / `helpfulMul` / `challengeMul`
+scale each tier independently; `helpfulExclude` drops kinds entirely
+(PAINFUL excludes `slow`). Resulting share at score ≥400 (all kinds
+eligible):
+
+| Difficulty | Sticky | Helpful | Challenge | Normal |
+| --- | --- | --- | --- | --- |
+| Easy    (×1.5 / ×1.32 / ×1.0) | 15% | ~25% | 5% | ~55% |
+| Medium  (×1.0 / ×1.0  / ×1.0) | 10% | 19%  | 5% | 66%  |
+| Hard    (×0.6 / ×0.84 / ×1.0) |  6% | ~16% | 5% | ~73% |
+| PAINFUL (×0.5 / ×0.53 / ×1.0) |  5% | ~10% | 5% | ~80% |
+
+Tier-share targets currently exact-restore the pre-BIG/TINY normal
+share — expected to drift as we iterate.
 
 Swarm waves (35% of waves) drop single-hex sequences at 0.18 s cadence;
 12% of swarm hexes spawn as red heals (≥3) — only normal + sticky.
