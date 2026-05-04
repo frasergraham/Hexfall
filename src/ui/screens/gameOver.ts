@@ -31,7 +31,11 @@ const DIFFICULTY_BUTTONS_HTML = `
 export const GameOver: Screen<GameOverProps> = {
   render(props) {
     if (props.mode === "challenge") {
-      const pct = Math.max(0, Math.min(100, Math.round((props.challengeProgress ?? 0) * 100)));
+      // Floor (not round) so a death at 99.7% reads as "99%" instead
+      // of being rounded up to a misleading "100% completion" on the
+      // fail screen. Genuine 100% only when the player actually
+      // finished every wave.
+      const pct = Math.max(0, Math.min(100, Math.floor((props.challengeProgress ?? 0) * 100)));
       const pctCls = pct >= 100 ? "challenge-pct full" : "challenge-pct partial";
       return `
         <div class="challenge-gameover">

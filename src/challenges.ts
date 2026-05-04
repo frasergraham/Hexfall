@@ -751,7 +751,9 @@ export function saveChallengeBest(id: string, score: number, pct = 0): Challenge
   const prevScore = p.best[id] ?? 0;
   const prevPct = p.bestPct[id] ?? 0;
   const newScore = Math.max(prevScore, score);
-  const newPct = Math.max(prevPct, Math.round(pct * 100));
+  // Floor so 99.7% is recorded as 99 — only saveChallengeCompletion
+  // ever writes a true 100, which keeps the "FULL" badge meaningful.
+  const newPct = Math.max(prevPct, Math.floor(pct * 100));
   if (newScore === prevScore && newPct === prevPct) return p;
   const next: ChallengeProgress = {
     ...p,
