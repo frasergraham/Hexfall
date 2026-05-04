@@ -7397,12 +7397,11 @@ export class Game {
           : { rgb: "180, 100, 110", fillA: 0.12, edge: "rgba(255, 120, 130, 0.55)" };
     const fillFull = `rgba(${tints.rgb}, ${tints.fillA})`;
     const fillZero = `rgba(${tints.rgb}, 0)`;
-    // Sample inset at the board midpoint for sizing the side gradients.
-    // Long enough that the outer edge is transparent against the
-    // progress-bar margin, short enough that the inner half stays
-    // solid so the obstruction still reads.
-    const insetMid = this.wallInsetAt(y0 + h * 0.5).left;
-    const fadeBand = Math.max(8, insetMid * 0.5);
+    // Small fixed fade band against the outer (margin-side) edge.
+    // Keep this tight so even zigzag's thinnest swing still has its
+    // inner edge well past the gradient's full-alpha stop — otherwise
+    // the wave's inner line picks up partial alpha and looks fuzzy.
+    const fadeBand = 10;
     const leftGrad = ctx.createLinearGradient(x0, 0, x0 + fadeBand, 0);
     leftGrad.addColorStop(0, fillZero);
     leftGrad.addColorStop(1, fillFull);
