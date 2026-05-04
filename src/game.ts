@@ -6755,22 +6755,42 @@ export class Game {
     const railRight = this.currentRailRight();
     const railCenter = (railLeft + railRight) / 2;
     const colWidth = SQRT3 * this.hexSize;
-    const x = railCenter + colStep * colWidth;
-    const y = this.boardOriginY - this.hexSize * 4;
     // Challenge mode uses a clean base (no score ramp, no wave-phase
     // variance) so each `speed=` token in the DSL means exactly what
     // the designer wrote. The cluster's targetVy is re-applied each
     // frame in update() so gravity can't drive slow waves up to
     // terminal velocity.
     const speed = Math.min(CHALLENGE_MAX_FALL_SPEED, CHALLENGE_BASE_FALL_SPEED * wave.baseSpeedMul);
-    // dirRandom: each spawn picks a random tilt in [-defaultDir, +defaultDir].
-    // Without it, every probabilistic cluster falls at the same fixed angle.
-    const tilt = wave.defaultDirRandom
-      ? (this.rng() * 2 - 1) * wave.defaultDir
-      : wave.defaultDir;
-    const vx = Math.sin(tilt) * speed;
-    const vy = Math.cos(tilt) * speed;
-    this.spawnChallengeCluster(kind, shape, x, y, vx, vy);
+
+    let x: number;
+    let y: number;
+    let vx: number;
+    let vy: number;
+    let sideEntryFromLeft: boolean | null = null;
+    if (wave.origin === "side") {
+      const fromLeft = this.rng() < 0.5;
+      sideEntryFromLeft = fromLeft;
+      const entry = this.computeSideEntry(speed, fromLeft, this.rng);
+      x = entry.x;
+      y = entry.y;
+      vx = entry.vx;
+      vy = entry.vy;
+    } else {
+      x = railCenter + colStep * colWidth;
+      y = this.boardOriginY - this.hexSize * 4;
+      // dirRandom: each spawn picks a random tilt in [-defaultDir, +defaultDir].
+      // Without it, every probabilistic cluster falls at the same fixed angle.
+      const tilt = wave.defaultDirRandom
+        ? (this.rng() * 2 - 1) * wave.defaultDir
+        : wave.defaultDir;
+      vx = Math.sin(tilt) * speed;
+      vy = Math.cos(tilt) * speed;
+    }
+    const cluster = this.spawnChallengeCluster(kind, shape, x, y, vx, vy);
+    if (cluster && sideEntryFromLeft !== null) {
+      cluster.targetVy = null;
+      this.sideWarnings.push({ cluster, side: sideEntryFromLeft ? "left" : "right", age: 0, lifetime: 0.7 });
+    }
   }
 
   // Build a FallingCluster from explicit parameters and add it to the
