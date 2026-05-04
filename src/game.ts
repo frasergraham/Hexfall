@@ -6826,27 +6826,27 @@ export class Game {
     if (this.challengeFinishingHold <= 0) return;
     if (this.activeChallenge === null) return;
     if (this.challengeWaveIdx < this.activeChallenge.waves.length) return;
-    // Wait until every cluster has at least passed the player (so its
-    // score + multiplier banks). We don't wait for them to fully exit
-    // the screen — that takes another full board-height of fall and the
-    // player just stares at the FAST/BIG HUD countdown draining.
-    const stillPending = this.clusters.some(
-      (c) => c.alive && !c.scored && !c.contacted,
-    );
-    if (stillPending) return;
-    // Last block is past. Don't make the player watch the FAST/BIG
-    // countdown drain — bank the pool now and end the effect.
+    // Bank any pending FAST/BIG bonus pool and end the matching effect
+    // immediately on entering the finishing state. Don't wait for clusters
+    // — once the last wave is done spawning, the player has earned what
+    // they're going to earn from this multiplier and the HUD countdown
+    // shouldn't drain in real time before victory.
     if (this.timeEffect === "fast") {
       this.awardFastBonus();
       this.timeEffect = null;
       this.timeEffectTimer = 0;
+      this.timeScale = 1;
     } else if (this.timeEffect === "slow") {
       this.timeEffect = null;
       this.timeEffectTimer = 0;
+      this.timeScale = 1;
     }
     if (this.bigTimer > 0) {
       this.awardBigBonus();
       this.bigTimer = 0;
+      this.bigLevel = 0;
+      this.bigMax = 1;
+      this.updatePlayerScaleTarget();
     }
     this.challengeFinishingHold -= dt;
     if (this.challengeFinishingHold <= 0) {
