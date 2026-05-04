@@ -140,7 +140,18 @@ Normal tier:    rest                 → blue
 Tier weights live in `game.ts` as `SPAWN_*_TIER_WEIGHT` constants and
 are tunables. Per-difficulty `stickyMul` / `helpfulMul` / `challengeMul`
 scale each tier independently; `helpfulExclude` drops kinds entirely
-(PAINFUL excludes `slow`).
+(PAINFUL excludes `slow`). Resulting share at score ≥400 (all kinds
+eligible):
+
+| Difficulty | Sticky | Helpful | Challenge | Normal |
+| --- | --- | --- | --- | --- |
+| Easy    (×1.5 / ×1.32 / ×1.0) | 15% | ~25% | 5% | ~55% |
+| Medium  (×1.0 / ×1.0  / ×1.0) | 10% | 19%  | 5% | 66%  |
+| Hard    (×0.6 / ×0.84 / ×1.0) |  6% | ~16% | 5% | ~73% |
+| PAINFUL (×0.5 / ×0.53 / ×1.0) |  5% | ~10% | 5% | ~80% |
+
+Tier-share targets currently exact-restore the pre-BIG/TINY normal
+share — expected to drift as we iterate.
 
 Swarm waves (35% of waves) drop single-hex sequences at 0.18 s cadence;
 12% of swarm hexes spawn as red heals (≥3) — only normal + sticky.
