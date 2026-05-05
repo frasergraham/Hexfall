@@ -2,7 +2,13 @@ import "./style.css";
 import { preloadSfx } from "./audio";
 import { App } from "@capacitor/app";
 import { Game } from "./game";
-import { pullProgressDown, subscribeToInstalledUpdates } from "./cloudSync";
+import { pullOfficialOverrides, pullProgressDown, subscribeToInstalledUpdates } from "./cloudSync";
+import { reconcileBakedOverrides } from "./officialOverrides";
+
+// First thing on boot: drop any locally-cached overrides whose content
+// has been baked into CHALLENGES in this build. Synchronous + cheap;
+// runs before the Game reads the override store.
+reconcileBakedOverrides();
 
 const canvas = document.getElementById("game") as HTMLCanvasElement | null;
 const overlay = document.getElementById("overlay");
@@ -53,12 +59,19 @@ void App.addListener("appUrlOpen", ({ url }) => {
   if (id) void game.openSingleChallenge(id, "menu");
 });
 
-// Cold-launch CloudKit sync. Both calls are no-ops on web / when iCloud
-// is unavailable. Pull first so the menu reflects cloud-side progress
-// (best scores, unlocked blocks, custom challenges) before the player
-// can do anything that would write back. Then wire the live-update
-// subscription for any installed community challenges.
+// Cold-launch CloudKit sync. Personal sync (private DB) needs an
+// iCloud account; the override pull only needs public-read, so it
+// works on web too. Run progress + overrides in parallel — they
+// touch disjoint stores. Subscriptions wait for the personal sync
+// since they read installed-challenge metadata that lives there.
+//
+// Race note: if either pull finishes after the player has already
+// opened the challenge-select screen, refresh it so cards reflect
+// the new data without a manual back-and-forth.
 void (async () => {
-  await pullProgressDown();
+  await Promise.all([
+    pullProgressDown().then(() => game.refreshChallengeSelectIfOpen()),
+    pullOfficialOverrides().then(() => game.refreshChallengeSelectIfOpen()),
+  ]);
   await subscribeToInstalledUpdates();
 })();

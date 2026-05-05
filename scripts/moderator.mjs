@@ -1,20 +1,33 @@
 #!/usr/bin/env node
-// HexRain community moderation script.
+// HexRain admin tool.
 //
-// Manual review surface for the public CloudKit container. Talks to the
-// CloudKit Web Services REST API using a server-to-server token created
-// in the CloudKit Dashboard:
+// Manual review + content management surface for the public CloudKit
+// container. Talks to the CloudKit Web Services REST API using a
+// server-to-server token created in the CloudKit Dashboard:
 //   1. Apple Developer → CloudKit Console → iCloud.com.hexrain.app
 //   2. Tokens & Keys → Server-to-Server Keys → "+" to create a new key
 //   3. Save the private key PEM somewhere safe; copy the Key ID
 //   4. Drop both into ~/.config/hexrain/moderator-token.json (see MODERATION.md)
 //
-// Subcommands:
+// Community moderation:
 //   list-reports [--since 7d]                List recent reports grouped by challenge
 //   hide <recordName> [--reason <text>]      Set status="hidden" on a PublishedChallenge
 //   unhide <recordName>                      Set status="approved"
 //   recount-upvotes <recordName>             Recompute denormalised upvoteCount
 //   recount-plays <recordName>               Recompute denormalised playCount (sum of Score.attempts)
+//
+// Official-challenge overrides (post-ship balance tweaks):
+//   list-overrides                           List all OfficialChallengeOverride records
+//   upload-override <file> [--mark-live] [--publish-silently]
+//                                            Upload an override JSON dumped by the web editor.
+//                                            Default: bumps version against the existing record so cached
+//                                            clients re-arm the UPDATED badge. --publish-silently keeps the
+//                                            version flat and only bumps updatedAt — content propagates,
+//                                            badge stays seen. Status defaults to "draft" unless --mark-live.
+//   mark-live <challengeId>                  Flip status to "live" so clients pull the override
+//   retire-override <challengeId>            Flip status to "retired" so clients clear it on next pull
+//   delete-override <challengeId>            Hard-delete the record (preferred way to undo an override
+//                                            once all clients have pulled the retired status, or for cleanup)
 //
 // Environment overrides (rarely needed):
 //   HEXRAIN_MOD_TOKEN_PATH                   Custom token JSON path
@@ -201,10 +214,148 @@ async function recountPlays(cfg, recordName) {
   console.log(`${recordName} → playCount=${total}`);
 }
 
+// ---------- Official-challenge overrides ---------------------------------
+
+const OVERRIDE_RECORD_TYPE = "OfficialChallengeOverride";
+
+// Deterministic record name per challengeId so re-uploads update the
+// same row instead of creating duplicates. Matches the convention used
+// by PublishedChallenge (pub-...) and Score (score-...).
+function overrideRecordName(challengeId) {
+  return `override-${challengeId}`;
+}
+
+async function deleteOne(cfg, recordName) {
+  return ckRequest(cfg, "/records/modify", {
+    operations: [{ operationType: "forceDelete", record: { recordName } }],
+  });
+}
+
+async function listOverrides(cfg) {
+  const recs = await queryAll(cfg, OVERRIDE_RECORD_TYPE);
+  if (recs.length === 0) {
+    console.log("No OfficialChallengeOverride records.");
+    return;
+  }
+  // Sort by challengeId for stable output.
+  recs.sort((a, b) => {
+    const ai = a.fields?.challengeId?.value ?? "";
+    const bi = b.fields?.challengeId?.value ?? "";
+    return ai.localeCompare(bi);
+  });
+  console.log("challengeId  status   v   updatedAt                name");
+  console.log("-----------  -------  --  -----------------------  --------------------");
+  for (const r of recs) {
+    const id = r.fields?.challengeId?.value ?? "?";
+    const status = r.fields?.status?.value ?? "?";
+    const version = r.fields?.version?.value ?? "?";
+    const updated = r.fields?.updatedAt?.value
+      ? new Date(r.fields.updatedAt.value).toISOString()
+      : "?";
+    const name = r.fields?.name?.value ?? "?";
+    console.log(
+      `${id.padEnd(11)}  ${String(status).padEnd(7)}  ${String(version).padStart(2)}  ${updated.padEnd(23)}  ${name}`,
+    );
+  }
+}
+
+function readOverrideFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    console.error(`File not found: ${filePath}`);
+    process.exit(1);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (err) {
+    console.error(`Invalid JSON in ${filePath}: ${err.message}`);
+    process.exit(1);
+  }
+  // Minimal shape check — the game-side validatePayload does the heavy
+  // lifting on read. We just guard against empty inputs here.
+  const errs = [];
+  if (typeof parsed.challengeId !== "string") errs.push("challengeId missing");
+  if (typeof parsed.name !== "string") errs.push("name missing");
+  if (!Array.isArray(parsed.waves) || parsed.waves.length === 0) errs.push("waves empty");
+  if (typeof parsed.difficulty !== "number") errs.push("difficulty missing");
+  if (errs.length > 0) {
+    console.error(`Invalid override file ${filePath}: ${errs.join(", ")}`);
+    process.exit(1);
+  }
+  return parsed;
+}
+
+async function uploadOverride(cfg, args) {
+  const filePath = args.find((a) => !a.startsWith("--"));
+  if (!filePath) {
+    console.error("Usage: upload-override <file> [--mark-live] [--publish-silently] [--note <text>]");
+    process.exit(1);
+  }
+  const markLive = args.includes("--mark-live");
+  const silent = args.includes("--publish-silently");
+  const noteIdx = args.indexOf("--note");
+  const note = noteIdx >= 0 ? (args[noteIdx + 1] ?? "") : "";
+
+  const payload = readOverrideFile(filePath);
+  const recordName = overrideRecordName(payload.challengeId);
+  const existing = await fetchOne(cfg, recordName);
+  const prevVersion = existing?.fields?.version?.value ?? 0;
+  // --publish-silently holds version flat (or seeds at v1 on first
+  // upload). Default: bump by one. Either way updatedAt is now, which
+  // is what the client uses to decide whether to refresh content.
+  const version = silent
+    ? Math.max(1, prevVersion)
+    : prevVersion + 1;
+  const now = Date.now();
+  const fields = {
+    challengeId: payload.challengeId,
+    name: payload.name,
+    difficulty: payload.difficulty,
+    effects: JSON.stringify(payload.effects ?? {}),
+    waves: payload.waves,
+    stars: payload.stars ? JSON.stringify(payload.stars) : "",
+    version,
+    status: markLive ? "live" : (existing?.fields?.status?.value ?? "draft"),
+    publishedAt: existing?.fields?.publishedAt?.value ?? now,
+    updatedAt: now,
+    note,
+  };
+  await modify(cfg, recordName, fields, OVERRIDE_RECORD_TYPE, existing?.recordChangeTag);
+  const silentTag = silent ? " (silent — badge unchanged for cached clients)" : "";
+  const liveHint = markLive || fields.status === "live"
+    ? ""
+    : ` (run "mark-live ${payload.challengeId}" to publish)`;
+  console.log(`${recordName} → v${version} status=${fields.status}${silentTag}${liveHint}`);
+}
+
+async function setOverrideStatus(cfg, challengeId, status) {
+  const recordName = overrideRecordName(challengeId);
+  const rec = await fetchOne(cfg, recordName);
+  if (!rec) {
+    console.error(`Not found: ${recordName}`);
+    process.exit(1);
+  }
+  await modify(cfg, recordName, { status, updatedAt: Date.now() }, rec.recordType, rec.recordChangeTag);
+  console.log(`${recordName} → status=${status}`);
+}
+
+async function deleteOverride(cfg, challengeId) {
+  const recordName = overrideRecordName(challengeId);
+  const rec = await fetchOne(cfg, recordName);
+  if (!rec) {
+    console.error(`Not found: ${recordName}`);
+    process.exit(1);
+  }
+  await deleteOne(cfg, recordName);
+  console.log(`${recordName} → deleted`);
+}
+
 async function main() {
   const [, , cmd, ...rest] = process.argv;
   if (!cmd) {
-    console.error("Usage: moderator.mjs <list-reports|hide|unhide|recount-upvotes|recount-plays> [args]");
+    console.error("Usage: moderator.mjs <command> [args]");
+    console.error("  Community: list-reports, hide, unhide, recount-upvotes, recount-plays");
+    console.error("  Overrides: list-overrides, upload-override, mark-live, retire-override, delete-override");
     process.exit(1);
   }
   const cfg = loadConfig();
@@ -226,6 +377,22 @@ async function main() {
     const rn = rest[0];
     if (!rn) { console.error("Usage: recount-plays <recordName>"); process.exit(1); }
     await recountPlays(cfg, rn);
+  } else if (cmd === "list-overrides") {
+    await listOverrides(cfg);
+  } else if (cmd === "upload-override") {
+    await uploadOverride(cfg, rest);
+  } else if (cmd === "mark-live") {
+    const id = rest[0];
+    if (!id) { console.error("Usage: mark-live <challengeId>"); process.exit(1); }
+    await setOverrideStatus(cfg, id, "live");
+  } else if (cmd === "retire-override") {
+    const id = rest[0];
+    if (!id) { console.error("Usage: retire-override <challengeId>"); process.exit(1); }
+    await setOverrideStatus(cfg, id, "retired");
+  } else if (cmd === "delete-override") {
+    const id = rest[0];
+    if (!id) { console.error("Usage: delete-override <challengeId>"); process.exit(1); }
+    await deleteOverride(cfg, id);
   } else {
     console.error(`Unknown command: ${cmd}`);
     process.exit(1);

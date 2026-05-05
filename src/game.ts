@@ -49,15 +49,24 @@ import {
   type ChallengeDef,
 } from "./challenges";
 import {
+  getEffectiveChallenge,
+  getEffectiveChallenges,
+  getOverriddenUnseenIds,
+  getOverrideStars,
+  markBadgeSeen,
+} from "./officialOverrides";
+import {
   createCustomChallenge,
   deleteCustomChallenge,
   getCustomChallenge,
   isCustomChallenge,
   listCustomChallenges,
+  makeOfficialEditId,
   makeRandomSeed,
   MAX_CUSTOM_NAME_LEN,
   MAX_WAVES_PER_CUSTOM,
   remixCustomChallenge,
+  rosterIdFromOfficialEditId,
   saveCustomChallengeRun,
   toChallengeDef,
   upsertCustomChallenge,
@@ -1150,7 +1159,7 @@ export class Game {
         const id = challengeCard.dataset.challengeId;
         if (challengeCard.classList.contains("locked") || !id) return;
         playSfx("click");
-        const def = challengeById(id);
+        const def = getEffectiveChallenge(id) ?? challengeById(id);
         if (def) this.openChallengeIntro(def);
         return;
       }
@@ -1447,6 +1456,26 @@ export class Game {
           });
           this.openEditorEdit(cloned);
         }
+        return;
+      }
+      // Admin EDIT-on-official (debug+web only): create or load a stable
+      // workbench copy of the roster challenge, open it in the editor.
+      // Stable id keeps in-progress edits across sessions.
+      const editorEditOfficialBtn = target?.closest('button[data-action="editor-edit-official"]') as HTMLButtonElement | null;
+      if (editorEditOfficialBtn) {
+        playSfx("click");
+        const rosterId = editorEditOfficialBtn.dataset.rosterId;
+        if (rosterId) this.openOfficialEdit(rosterId);
+        return;
+      }
+      // Admin DUMP JSON: serialize the editing custom into the override
+      // payload shape and trigger a browser download. Admin tool picks
+      // up the file and uploads it as an OfficialChallengeOverride.
+      const editorDumpJsonBtn = target?.closest('button[data-action="editor-dump-json"]') as HTMLButtonElement | null;
+      if (editorDumpJsonBtn) {
+        playSfx("click");
+        const customId = editorDumpJsonBtn.dataset.customId;
+        if (customId) this.handleDumpJson(customId);
         return;
       }
       // Remix an installed community challenge into a fresh editable
@@ -2575,13 +2604,98 @@ export class Game {
     const authoredCustoms = allCustoms.filter((c) => !c.installedFrom || !!c.publishedRecordName);
     const progress = loadChallengeProgress();
     const unlockedSet = new Set(progress.unlockedBlocks);
-    const remixRoster = CHALLENGES.filter((def) => unlockedSet.has(def.block));
+    // Use the effective view of the roster so admin EDIT lands in
+    // whatever's actually live (override or hardcoded), not stale source.
+    const effectiveRoster = getEffectiveChallenges();
+    const remixRoster = effectiveRoster.filter((def) => unlockedSet.has(def.block));
     const remixCommunity = allCustoms.filter((c) => !!c.installedFrom && !c.publishedRecordName);
+    // EDIT-on-official is admin-only — gated to debug mode AND the web
+    // build (no point editing-then-dumping JSON inside the iOS WebView,
+    // and the admin tool runs in node). isCloudKitAvailable() is the
+    // simplest proxy for "we're on iOS native"; invert it for web.
+    const showEditOfficial = this.debugEnabled && !isCloudKitAvailable();
     this.overlay.innerHTML = renderEditorHomeView({
       authoredCustoms,
       remixRoster,
       remixCommunity,
+      showEditOfficial,
     });
+  }
+
+  // Admin: open (or create) a workbench copy of a roster challenge.
+  // Reuses the regular editor edit flow — the only thing special is
+  // the stable id, which the editorHome row uses to render DUMP JSON
+  // instead of PUBLISH.
+  private openOfficialEdit(rosterId: string): void {
+    const editId = makeOfficialEditId(rosterId);
+    const existing = getCustomChallenge(editId);
+    if (existing) {
+      this.openEditorEdit(existing);
+      return;
+    }
+    const def = getEffectiveChallenge(rosterId);
+    if (!def) return;
+    // Seed a fresh workbench from the current effective def. We pin a
+    // deterministic seed (the canonical roster id) so a no-op dump
+    // round-trips byte-identically against the source roster.
+    const baseStars = getOverrideStars(rosterId) ?? computeStarThresholds(def);
+    const fresh: CustomChallenge = upsertCustomChallenge({
+      id: editId,
+      name: def.name,
+      seed: 0, // unused — challenge runs key off challengeSeedKey=def.id
+      difficulty: def.difficulty,
+      effects: {
+        slowDuration: def.effects?.slowDuration ?? 5,
+        fastDuration: def.effects?.fastDuration ?? 5,
+        shieldDuration: def.effects?.shieldDuration ?? 10,
+        droneDuration: def.effects?.droneDuration ?? 10,
+        dangerSize: def.effects?.dangerSize ?? 7,
+      },
+      stars: { ...baseStars },
+      waves: [...def.waves],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      best: 0,
+      bestPct: 0,
+      starsEarned: 0,
+    });
+    this.openEditorEdit(fresh);
+  }
+
+  // Admin: serialize the in-progress edit into the override payload
+  // shape and trigger a browser download. The admin tool reads files
+  // matching this shape.
+  private handleDumpJson(customId: string): void {
+    const c = getCustomChallenge(customId);
+    if (!c) return;
+    const rosterId = rosterIdFromOfficialEditId(c.id);
+    if (!rosterId) {
+      console.warn("dumpJson called on non-officialEdit custom:", c.id);
+      return;
+    }
+    // Version is intentionally omitted: the admin tool fetches the
+    // current cloud record (if any) and bumps from there. Emitting a
+    // fixed value here would force authors to think about it.
+    const payload = {
+      challengeId: rosterId,
+      name: c.name,
+      difficulty: c.difficulty,
+      effects: { ...c.effects },
+      waves: [...c.waves],
+      stars: { ...c.stars },
+      // version: filled in by admin tool at upload time.
+      // status: filled in by admin (default "draft" → mark-live promotes).
+    };
+    const text = JSON.stringify(payload, null, 2);
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${rosterId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   private openEditorEdit(custom: CustomChallenge): void {
@@ -3975,7 +4089,8 @@ export class Game {
     const scrollY = this.overlay.scrollTop;
     this.overlay.innerHTML = renderChallengeSelectView({
       progress,
-      challenges: CHALLENGES,
+      challenges: getEffectiveChallenges(),
+      updatedIds: getOverriddenUnseenIds(),
       authoredCustoms,
       installedCustoms,
       showMyChallenges,
@@ -4046,6 +4161,12 @@ export class Game {
   // by main.ts when the launch URL has ?challenge=X, and by future
   // in-app entry points if we ever want a "show one" surface from a
   // share notification. `origin` controls where BACK lands.
+  // Public re-render hook used by main.ts after async cold-launch cloud
+  // pulls land. Cheap no-op when the challenge select isn't open.
+  refreshChallengeSelectIfOpen(): void {
+    if (this.state === "challengeSelect") this.renderChallengeSelect();
+  }
+
   async openSingleChallenge(recordName: string, origin: "menu" | "challengeSelect" = "menu"): Promise<void> {
     this.singleChallenge = { recordName, challenge: null, error: null, origin };
     this.state = "communitySingle";
@@ -4306,7 +4427,7 @@ export class Game {
     const best = isCustom ? (customRecord?.best ?? 0) : (progress.best[def.id] ?? 0);
     const thresholds = isCustom && customRecord
       ? customRecord.stars
-      : computeStarThresholds(def);
+      : (getOverrideStars(def.id) ?? computeStarThresholds(def));
     const props = {
       idLabel: isCustom ? "CUSTOM" : def.id,
       name: def.name,
@@ -6564,6 +6685,10 @@ export class Game {
       : def.id;
     this.beginChallengeWave();
     trackChallengeStart(def.block);
+    // First run on an overridden roster challenge clears its UPDATED
+    // pill. Custom-challenge ids are filtered out by markBadgeSeen
+    // (no-op when no override exists for the id).
+    markBadgeSeen(def.id);
   }
 
   private beginChallengeWave(): void {
@@ -6961,7 +7086,7 @@ export class Game {
     }
 
     const beforeUnlocked = new Set(loadChallengeProgress().unlockedBlocks);
-    const thresholds = computeStarThresholds(def);
+    const thresholds = getOverrideStars(def.id) ?? computeStarThresholds(def);
     const stars = awardStars(this.score, thresholds);
     const progress = saveChallengeCompletion(def.id, this.score, stars);
     // Newly-unlocked blocks (only computed once, when the save flips the

@@ -1413,6 +1413,20 @@ body.editor-previewing #app {
   display: none;
 }
 
+/* "UPDATED" pill: same slot as NEW but cyan-ish so the player can tell
+   that the challenge content shifted under them (vs. just being newly
+   unlocked). Persists through the `.completed` state — an override on
+   a previously-finished challenge still merits the heads-up. */
+.challenge-card-new.updated {
+  background: #6be0ff;
+  color: #06121a;
+  box-shadow: 0 0 10px rgba(107, 224, 255, 0.55);
+  letter-spacing: 0.14em;
+}
+.challenge-card.completed .challenge-card-new.updated {
+  display: inline-block;
+}
+
 /* Big percentage on the challenge game-over screen. */
 .challenge-pct {
   font-size: 78px;

@@ -24,6 +24,10 @@ export type CollapsibleKey =
 export interface ChallengeSelectProps {
   progress: ChallengeProgress;
   challenges: ChallengeDef[];
+  /** Roster ids whose card should show the UPDATED pill — i.e. an
+   *  override from CloudKit has been applied locally and the player
+   *  hasn't started a run on it yet. */
+  updatedIds: string[];
   /** Player-authored customs (installedFrom is falsy). */
   authoredCustoms: CustomChallenge[];
   /** Community installs (installedFrom is set). */
@@ -52,8 +56,9 @@ export function renderChallengeSelect(props: ChallengeSelectProps): string {
   for (const c of props.challenges) blocks[c.block - 1]!.push(c);
   for (const arr of blocks) arr.sort((a, b) => a.index - b.index);
 
+  const updatedSet = new Set(props.updatedIds);
   const blockHtmlByIndex = blocks.map((arr, idx) =>
-    renderOfficialBlock(arr, idx + 1, props.progress),
+    renderOfficialBlock(arr, idx + 1, props.progress, updatedSet),
   );
 
   const totalBlocks = Math.max(...props.challenges.map((c) => c.block));
@@ -138,6 +143,7 @@ function renderOfficialBlock(
   arr: ChallengeDef[],
   blockNum: number,
   progress: ChallengeProgress,
+  updatedSet: Set<string>,
 ): string {
   const unlocked = progress.unlockedBlocks.includes(blockNum);
   const completedInBlock = arr.filter((c) => progress.completed.includes(c.id)).length;
@@ -170,7 +176,12 @@ function renderOfficialBlock(
       hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
     }
     const check = done ? '<span class="check">✓</span>' : "";
-    const newBadge = blockIsFresh ? '<span class="challenge-card-new">NEW</span>' : "";
+    // UPDATED beats NEW — a freshly-overridden card is more interesting
+    // than a freshly-unlocked one, and they share the same corner slot.
+    const isUpdated = unlocked && updatedSet.has(c.id);
+    const newBadge = isUpdated
+      ? '<span class="challenge-card-new updated">UPDATED</span>'
+      : blockIsFresh ? '<span class="challenge-card-new">NEW</span>' : "";
     const starsHtml = unlocked && attempted
       ? `<div class="challenge-card-stars">${
           [0, 1, 2].map((i) =>

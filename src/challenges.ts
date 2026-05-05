@@ -810,6 +810,27 @@ function recomputeUnlocked(completed: Set<string>, purchasedUnlock = false): num
   return out;
 }
 
+// === Baked-override registry =============================================
+
+// challengeId → version of a CloudKit OfficialChallengeOverride record
+// whose content has already been baked into the CHALLENGES literals
+// above. Managed by scripts/bake-overrides.ts; hand-edits are fine but
+// values must monotonically increase per id.
+//
+// Pull-side semantics (officialOverrides.ts):
+//   - Pulled override with version ≤ baked → ignored; any local cache
+//     for that id is cleared. The baked def is now canonical, no need
+//     to layer the override on top.
+//   - Pulled override with version > baked → applied normally (someone
+//     published a new override after the bake).
+//
+// This is what makes "delete the cloud record after baking" optional:
+// the registry is enough to absorb the override even if the record
+// lingers in CloudKit.
+export const BAKED_OVERRIDE_VERSIONS: Record<string, number> = {
+  // "1-3": 3,
+};
+
 // Roster validation lives in tests/challenges-defs.test.ts (Phase 4.1).
 // CI fails the build if any check trips, instead of just printing to
 // console.error in the dev environment.

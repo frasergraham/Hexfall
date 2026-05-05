@@ -29,6 +29,27 @@ DEFINE SCHEMA
         GRANT READ TO "_world"
     );
 
+    RECORD TYPE OfficialChallengeOverride (
+        "___createTime" TIMESTAMP,
+        "___createdBy"  REFERENCE,
+        "___etag"       STRING,
+        "___modTime"    TIMESTAMP,
+        "___modifiedBy" REFERENCE,
+        "___recordID"   REFERENCE QUERYABLE,
+        challengeId     STRING QUERYABLE SEARCHABLE SORTABLE,
+        difficulty      INT64 QUERYABLE SORTABLE,
+        effects         STRING QUERYABLE SEARCHABLE SORTABLE,
+        name            STRING QUERYABLE SEARCHABLE SORTABLE,
+        note            STRING QUERYABLE SEARCHABLE,
+        publishedAt     DOUBLE QUERYABLE SORTABLE,
+        stars           STRING QUERYABLE SEARCHABLE SORTABLE,
+        status          STRING QUERYABLE SEARCHABLE SORTABLE,
+        updatedAt       DOUBLE QUERYABLE SORTABLE,
+        version         INT64 QUERYABLE SORTABLE,
+        waves           LIST<STRING> QUERYABLE SEARCHABLE,
+        GRANT READ TO "_world"
+    );
+
     RECORD TYPE Progress (
         "___createTime" TIMESTAMP,
         "___createdBy"  REFERENCE,

@@ -35,6 +35,12 @@ export const STORAGE_KEYS = {
   // Player-authored custom challenges (customChallenges.ts).
   customChallenges: "hexrain.customChallenges.v1",
 
+  // Cloud-delivered overrides for official challenges (officialOverrides.ts).
+  // Pulled from CloudKit OfficialChallengeOverride records on cold launch
+  // and applied on top of the hardcoded CHALLENGES roster at runtime, so
+  // hand-authored challenges can be tweaked without an app update.
+  officialOverrides: "hexrain.officialOverrides.v1",
+
   // First-appearance hints (game.ts).
   seenHints: "hexrain.seenHints",
   rotateTutorialShown: "hexrain.rotateTutorialShown",

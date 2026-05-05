@@ -11,7 +11,7 @@
 import { difficultyTint } from "../components/blockIcon";
 import { escapeHtml } from "../escape";
 import type { ChallengeDef } from "../../challenges";
-import type { CustomChallenge } from "../../customChallenges";
+import { isOfficialEditId, type CustomChallenge } from "../../customChallenges";
 
 export interface EditorHomeProps {
   /** Player-authored customs (installedFrom is falsy). */
@@ -20,6 +20,11 @@ export interface EditorHomeProps {
   remixRoster: ChallengeDef[];
   /** Community installs offered as remix sources. */
   remixCommunity: CustomChallenge[];
+  /** Admin-only: render an EDIT button alongside REMIX on roster rows
+   *  so authors can drop into the editor with the official challenge's
+   *  contents and dump JSON for upload via the admin tool. Toggled by
+   *  ?debug=1 on the web build. */
+  showEditOfficial: boolean;
 }
 
 export function renderEditorHome(props: EditorHomeProps): string {
@@ -29,7 +34,9 @@ export function renderEditorHome(props: EditorHomeProps): string {
     : list.map(renderAuthoredRow).join("");
 
   const remixCount = props.remixRoster.length + props.remixCommunity.length;
-  const rosterRows = props.remixRoster.map(renderRemixRosterRow).join("");
+  const rosterRows = props.remixRoster
+    .map((def) => renderRemixRosterRow(def, props.showEditOfficial))
+    .join("");
   const communityRows = props.remixCommunity.map(renderRemixCommunityRow).join("");
   const remixSection = remixCount > 0
     ? `
@@ -87,13 +94,21 @@ function renderAuthoredRow(c: CustomChallenge): string {
     ? `<span class="challenge-card-pct${c.bestPct >= 100 ? " full" : ""}">${c.bestPct}%</span>`
     : `<span class="challenge-card-pct">—</span>`;
   const isPublished = !!c.publishedRecordName;
-  const publishLabel = isPublished ? "UPDATE" : "PUBLISH";
-  const unpublishHtml = isPublished
+  const isOfficialEdit = isOfficialEditId(c.id);
+  const publishLabel = isOfficialEdit
+    ? "DUMP JSON"
+    : (isPublished ? "UPDATE" : "PUBLISH");
+  const publishAction = isOfficialEdit ? "editor-dump-json" : "editor-publish";
+  // Officialeedit customs go to JSON, never to the public CloudKit DB,
+  // so PUBLISHED/UNPUBLISH machinery is suppressed for them.
+  const unpublishHtml = !isOfficialEdit && isPublished
     ? `<button type="button" class="editor-row-btn editor-row-btn-unpublish" data-action="editor-unpublish" data-custom-id="${escapeHtml(c.id)}">UNPUBLISH</button>`
     : "";
-  const publishedBadge = isPublished
-    ? `<span class="editor-home-row-published">PUBLISHED v${c.publishedVersion ?? 1}</span>`
-    : "";
+  const publishedBadge = isOfficialEdit
+    ? `<span class="editor-home-row-published" style="background:#2a4a8a; color:#cfe0ff;">OFFICIAL EDIT</span>`
+    : (isPublished
+      ? `<span class="editor-home-row-published">PUBLISHED v${c.publishedVersion ?? 1}</span>`
+      : "");
   const remixLine = c.remixedFrom
     ? `<span class="editor-home-row-remix">Remixed from: ${escapeHtml(c.remixedFrom)}</span>`
     : "";
@@ -124,7 +139,7 @@ function renderAuthoredRow(c: CustomChallenge): string {
         <div class="editor-home-row-actions">
           <button type="button" class="editor-row-btn editor-row-btn-play" data-action="editor-play" data-custom-id="${escapeHtml(c.id)}">PLAY</button>
           <button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-edit" data-custom-id="${escapeHtml(c.id)}">EDIT</button>
-          <button type="button" class="editor-row-btn editor-row-btn-publish" data-action="editor-publish" data-custom-id="${escapeHtml(c.id)}">${publishLabel}</button>
+          <button type="button" class="editor-row-btn editor-row-btn-publish" data-action="${publishAction}" data-custom-id="${escapeHtml(c.id)}">${publishLabel}</button>
           ${unpublishHtml}
         </div>
       </div>
@@ -132,12 +147,15 @@ function renderAuthoredRow(c: CustomChallenge): string {
   `;
 }
 
-function renderRemixRosterRow(def: ChallengeDef): string {
+function renderRemixRosterRow(def: ChallengeDef, showEditOfficial: boolean): string {
   const tint = difficultyTint(def.difficulty);
   const hexes: string[] = [];
   for (let i = 0; i < def.difficulty; i++) {
     hexes.push(`<span class="challenge-card-hex" style="background:${tint};"></span>`);
   }
+  const editBtn = showEditOfficial
+    ? `<button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-edit-official" data-roster-id="${escapeHtml(def.id)}" title="Admin: edit this official challenge for export">EDIT</button>`
+    : "";
   return `
     <div class="editor-home-row editor-home-row-remix-source">
       <div class="editor-home-row-meta">
@@ -146,6 +164,7 @@ function renderRemixRosterRow(def: ChallengeDef): string {
         <div class="challenge-card-hexes">${hexes.join("")}</div>
       </div>
       <div class="editor-home-row-actions">
+        ${editBtn}
         <button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-remix" data-roster-id="${escapeHtml(def.id)}">REMIX</button>
       </div>
     </div>

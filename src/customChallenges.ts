@@ -102,6 +102,12 @@ const DEFAULT_WAVE_DSL = "size=2-3, rate=0.7, speed=1.2, count=10";
 // prefix; the rest of the engine treats them as ordinary ChallengeDefs.
 const CUSTOM_ID_PREFIX = "custom:";
 
+// Admin-only sub-prefix used by the web `?debug=1` "EDIT official" flow.
+// A challenge with this id is a workbench copy of a roster challenge,
+// destined for a JSON dump → CloudKit OfficialChallengeOverride upload.
+// Stable per-roster-id so re-entering EDIT keeps prior local edits.
+const OFFICIAL_EDIT_PREFIX = `${CUSTOM_ID_PREFIX}officialEdit:`;
+
 function makeCustomId(): string {
   const rnd =
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -112,6 +118,18 @@ function makeCustomId(): string {
 
 export function isCustomChallengeId(id: string): boolean {
   return typeof id === "string" && id.startsWith(CUSTOM_ID_PREFIX);
+}
+
+export function isOfficialEditId(id: string): boolean {
+  return typeof id === "string" && id.startsWith(OFFICIAL_EDIT_PREFIX);
+}
+
+export function makeOfficialEditId(rosterId: string): string {
+  return `${OFFICIAL_EDIT_PREFIX}${rosterId}`;
+}
+
+export function rosterIdFromOfficialEditId(id: string): string | null {
+  return isOfficialEditId(id) ? id.slice(OFFICIAL_EDIT_PREFIX.length) : null;
 }
 
 export function isCustomChallenge(def: ChallengeDef | ChallengeDefLike | null | undefined): boolean {

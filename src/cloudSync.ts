@@ -56,6 +56,11 @@ import { hashSeed } from "./rng";
 import { clampDifficulty, clampStars } from "./validation";
 import { loadString, saveJson, saveString } from "./storage";
 import { STORAGE_KEYS } from "./storageKeys";
+import {
+  clearOverride,
+  upsertOverride,
+  type OfficialChallengeOverridePayload,
+} from "./officialOverrides";
 
 // ---------- Identity ------------------------------------------------------
 
@@ -203,6 +208,7 @@ const PUBLISHED_RECORD_TYPE = "PublishedChallenge";
 const SCORE_RECORD_TYPE = "Score";
 const UPVOTE_RECORD_TYPE = "Upvote";
 const REPORT_RECORD_TYPE = "Report";
+const OFFICIAL_OVERRIDE_RECORD_TYPE = "OfficialChallengeOverride";
 
 export type CommunitySort = "newest" | "topVoted" | "mostPlayed";
 
@@ -364,6 +370,87 @@ export async function installCommunity(p: PublishedChallenge): Promise<CustomCha
   void bumpField("public", p.recordName, "installCount", p.installCount + 1);
   await refreshSubscriptions();
   return local;
+}
+
+// ---------- Official challenge overrides ---------------------------------
+
+// Pull the full set of OfficialChallengeOverride records on cold launch.
+// The corpus is small (one record per overridden roster id, typically
+// well under 30) so we fetch unfiltered and reconcile client-side:
+//   - status == "live"     → upsert into the local override store
+//   - status == "retired"  → clear any local cache for that id
+//   - status == "draft"    → ignored (admin work-in-progress)
+//
+// No-op when no community read path exists. Doesn't require an iCloud
+// account — overrides live in the public DB and are world-readable.
+export async function pullOfficialOverrides(): Promise<void> {
+  if (!isCommunityReadable()) return;
+  const result = await queryRecords({
+    db: "public",
+    recordType: OFFICIAL_OVERRIDE_RECORD_TYPE,
+    limit: 100,
+  });
+  for (const rec of result.records) {
+    const status = stringField(rec.fields["status"]) ?? "draft";
+    const challengeId = stringField(rec.fields["challengeId"]);
+    if (!challengeId) continue;
+    if (status === "retired") {
+      clearOverride(challengeId);
+      continue;
+    }
+    if (status !== "live") continue;
+    const payload = recordToOverridePayload(rec);
+    if (!payload) continue;
+    upsertOverride(payload);
+  }
+}
+
+function recordToOverridePayload(rec: CloudKitRecord): OfficialChallengeOverridePayload | null {
+  const challengeId = stringField(rec.fields["challengeId"]);
+  if (!challengeId) return null;
+  const name = stringField(rec.fields["name"]);
+  if (!name) return null;
+  const difficulty = clampDifficulty(numberField(rec.fields["difficulty"]) ?? 3);
+  const waves = decodeWaves(rec.fields["waves"]);
+  if (waves.length === 0) return null;
+  const version = numberField(rec.fields["version"]) ?? 1;
+  const updatedAt = numberField(rec.fields["updatedAt"]) ?? rec.modifiedAt ?? Date.now();
+  const note = stringField(rec.fields["note"]) ?? undefined;
+
+  // effects + stars are JSON-encoded the same way they are on
+  // PublishedChallenge. Empty/malformed → omit (caller treats absent
+  // effects as "use roster defaults", absent stars as "recompute").
+  const effectsRaw = stringField(rec.fields["effects"]);
+  let effects: OfficialChallengeOverridePayload["effects"] | undefined;
+  if (effectsRaw) {
+    try {
+      const parsed = JSON.parse(effectsRaw) as OfficialChallengeOverridePayload["effects"];
+      if (parsed && typeof parsed === "object") effects = parsed;
+    } catch { /* fall through */ }
+  }
+
+  const starsRaw = stringField(rec.fields["stars"]);
+  let stars: OfficialChallengeOverridePayload["stars"] | undefined;
+  if (starsRaw) {
+    try {
+      const parsed = JSON.parse(starsRaw) as { one?: number; two?: number; three?: number };
+      if (parsed && typeof parsed.one === "number" && typeof parsed.two === "number" && typeof parsed.three === "number") {
+        stars = { one: parsed.one, two: parsed.two, three: parsed.three };
+      }
+    } catch { /* fall through */ }
+  }
+
+  return {
+    challengeId,
+    name,
+    difficulty,
+    effects,
+    waves,
+    stars,
+    version,
+    updatedAt,
+    note,
+  };
 }
 
 // ---------- Leaderboard --------------------------------------------------
