@@ -1466,6 +1466,7 @@ export class Game {
             difficulty: src.difficulty,
             effects: src.effects,
             waves: src.waves,
+            seed: src.seed,
           });
           this.openEditorEdit(cloned);
         }

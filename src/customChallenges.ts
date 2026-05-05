@@ -220,6 +220,11 @@ export function remixCustomChallenge(source: {
   difficulty: number;
   effects: Partial<CustomChallengeEffects>;
   waves: string[];
+  /** Optional source seed — pass it through so the remix plays out
+   *  identically to the original for waves that lack an explicit
+   *  `seed=` token. Omit (e.g. roster remix where ChallengeDef has no
+   *  seed) and the new copy gets a fresh random seed. */
+  seed?: number;
 }): CustomChallenge {
   const store = loadCustomChallenges();
   const trimmedName = source.name.length > MAX_CUSTOM_NAME_LEN - 6
@@ -237,6 +242,7 @@ export function remixCustomChallenge(source: {
     },
     waves: [...source.waves],
     remixedFrom: source.name,
+    seed: source.seed,
   });
   store.challenges.push(fresh);
   saveStore(store);
