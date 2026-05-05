@@ -1552,13 +1552,24 @@ export class Game {
         this.addCustomWaveRow();
         return;
       }
-      // Custom-wave dialog: clear a row.
+      // Custom-wave dialog: clear a row's block, or — when the row is
+      // already empty — remove the row entirely and slide higher rows
+      // down to fill the gap.
       const customClearBtn = target?.closest('button[data-action="editor-custom-clear"]') as HTMLButtonElement | null;
       if (customClearBtn) {
         playSfx("click");
         const row = parseInt(customClearBtn.dataset.row ?? "-1", 10);
         if (Number.isFinite(row) && row >= 0 && row < CUSTOM_WAVE_LEN) {
-          this.editorCustomWaveSlots[row] = null;
+          if (this.editorCustomWaveSlots[row] !== null) {
+            this.editorCustomWaveSlots[row] = null;
+          } else if (this.editorCustomWaveVisibleRows > 1) {
+            for (let i = row; i < this.editorCustomWaveVisibleRows - 1; i++) {
+              this.editorCustomWaveSlots[i] = this.editorCustomWaveSlots[i + 1];
+            }
+            this.editorCustomWaveSlots[this.editorCustomWaveVisibleRows - 1] = null;
+            this.editorCustomWaveVisibleRows -= 1;
+          }
+          this.editorDialogWaveLine = this.composeCustomWaveLine();
           this.renderEditorEdit();
         }
         return;
