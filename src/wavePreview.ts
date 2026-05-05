@@ -43,6 +43,7 @@ export function drawWavePreview(
   ctx.fillRect(0, 0, w, h);
 
   drawWalls(ctx, w, h, wave.walls, wave.wallAmp, wave.wallPeriod);
+  const wallInset = wallInsetPx(w, wave.walls, wave.wallAmp);
 
   // Slot-only waves (custom waves authored in the slot-grid editor)
   // get a different render: every actual placed slot drawn at its
@@ -50,8 +51,23 @@ export function drawWavePreview(
   // waves use the distribution-based 20-sample render.
   const isSlotOnly =
     wave.slots.length > 0 && (wave.countCap === 0 || wave.countCap === null);
-  if (isSlotOnly) drawCustomWaveSlots(ctx, w, h, wave);
-  else drawClusterSamples(ctx, w, h, wave);
+  if (isSlotOnly) drawCustomWaveSlots(ctx, w, h, wave, wallInset);
+  else drawClusterSamples(ctx, w, h, wave, wallInset);
+}
+
+// Worst-case wall inset in pixels — must match the geometry drawn by
+// drawWalls below so cluster samples / slot cells stay clear of the
+// shaded wall band. Zigzag oscillates, so we report the max-inset side
+// at the sine peak (the always-clear zone).
+function wallInsetPx(w: number, kind: WallKind, amp: number): { left: number; right: number } {
+  if (kind === "pinch") return { left: w * 0.18, right: w * 0.18 };
+  if (kind === "narrow") return { left: w * 0.26, right: w * 0.26 };
+  if (kind === "zigzag") {
+    const a = Math.max(0.05, Math.min(0.25, amp));
+    const inset = w * (0.12 + a);
+    return { left: inset, right: inset };
+  }
+  return { left: 0, right: 0 };
 }
 
 // Render the first PREVIEW_ROWS slots of a custom wave at their
@@ -64,26 +80,35 @@ function drawCustomWaveSlots(
   w: number,
   h: number,
   wave: ParsedWave,
+  wallInset: { left: number; right: number },
 ): void {
   if (wave.slots.length === 0) return;
   const visible = Math.min(wave.slots.length, CUSTOM_WAVE_PREVIEW_ROWS);
-  const COLS = 12; // 1 left side + 10 main + 1 right side
   const padX = 4;
   const padY = 4;
-  const cellW = (w - padX * 2) / COLS;
+  // Side spawns enter from outside the walls, so the side columns sit
+  // at the canvas edges. The 10 main columns share the inner corridor
+  // bounded by the wall insets so blocks land where they will in-game.
+  const corridorLeft = padX + wallInset.left;
+  const corridorRight = w - padX - wallInset.right;
+  const corridorW = Math.max(20, corridorRight - corridorLeft);
+  const mainCellW = corridorW / 10;
+  const sideCellW = Math.min(mainCellW, (w - padX * 2) / 12);
   const cellH = (h - padY * 2) / visible;
-  const hexSize = Math.max(2, Math.min(cellW * 0.42, cellH * 0.55) * 0.6);
+  const hexSize = Math.max(2, Math.min(mainCellW * 0.42, cellH * 0.55) * 0.6);
   // Stable shape RNG — same wave produces the same polyhex layouts.
   const seed = hashSeed(`${wave.slots.length}|${visible}|${wave.spawnInterval}`);
   const rng = mulberry32(seed);
   for (let i = 0; i < visible; i++) {
     const slot = wave.slots[i];
     if (!slot) continue;
-    let colIdx: number;
-    if (slot.angleIdx === 7) colIdx = 0;            // left side
-    else if (slot.angleIdx === 8) colIdx = COLS - 1; // right side
-    else colIdx = 1 + Math.max(0, Math.min(9, slot.col));
-    const cx = padX + cellW * (colIdx + 0.5);
+    let cx: number;
+    if (slot.angleIdx === 7) cx = padX + sideCellW * 0.5;            // left side
+    else if (slot.angleIdx === 8) cx = w - padX - sideCellW * 0.5;   // right side
+    else {
+      const col = Math.max(0, Math.min(9, slot.col));
+      cx = corridorLeft + mainCellW * (col + 0.5);
+    }
     // Slot 0 at the bottom (first to spawn), slots[visible-1] at the top.
     const cy = h - padY - cellH * (i + 0.5);
     drawClusterSample(ctx, cx, cy, hexSize, slot.kind, slot.size, rng);
@@ -209,6 +234,7 @@ function drawClusterSamples(
   w: number,
   h: number,
   wave: ParsedWave,
+  wallInset: { left: number; right: number },
 ): void {
   const TOTAL = 20;
   const KINDS: ClusterKind[] = ["normal", "sticky", "slow", "fast", "coin", "shield", "drone"];
@@ -264,9 +290,10 @@ function drawClusterSamples(
   // wide the canvas ends up rendering.
   const COLS = 10;
   const ROWS = 2;
-  const padX = 6;
+  const padX = Math.max(6, wallInset.left);
+  const padXRight = Math.max(6, wallInset.right);
   const padY = 6;
-  const cellW = (w - padX * 2) / COLS;
+  const cellW = (w - padX - padXRight) / COLS;
   const cellH = (h - padY * 2) / ROWS;
   const baseHex = Math.max(2.2, Math.min(5.5, Math.min(cellW, cellH) * 0.22));
   const sizeRange = Math.max(1, sizeMax - sizeMin + 1);
