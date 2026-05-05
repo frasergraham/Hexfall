@@ -11,3 +11,4 @@ ios/build
 .env.local
 .env.*.local
 coverage/
+docs/
