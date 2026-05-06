@@ -98,6 +98,20 @@ export function getAchievementMeta(id: AchievementId): AchievementMeta | undefin
   return META_BY_ID.get(id);
 }
 
+export type LeaderboardScope = "global" | "friends";
+
+export interface LeaderboardEntry {
+  rank: number;
+  score: number;
+  playerId: string;
+  playerName: string;
+}
+
+export interface LeaderboardEntriesResult {
+  entries: LeaderboardEntry[];
+  localPlayer: LeaderboardEntry | null;
+}
+
 interface GameCenterPlugin {
   authenticate(): Promise<{ authenticated: boolean; displayName?: string; alias?: string }>;
   submitScore(opts: { score: number; leaderboardId: string }): Promise<void>;
@@ -108,6 +122,15 @@ interface GameCenterPlugin {
   loadAchievements(): Promise<{ ids: string[] }>;
   showLeaderboard(opts: { leaderboardId?: string }): Promise<void>;
   showAchievements(): Promise<void>;
+  loadLeaderboardEntries(opts: {
+    leaderboardId: string;
+    scope: LeaderboardScope;
+    limit: number;
+  }): Promise<{
+    entries: LeaderboardEntry[];
+    localPlayer: LeaderboardEntry | null;
+  }>;
+  loadFriends(): Promise<{ authorized: boolean }>;
 }
 
 const Plugin = registerPlugin<GameCenterPlugin>("GameCenter");
@@ -278,4 +301,39 @@ export function isGameCenterAvailable(): boolean {
 // null on web or before auth completes; callers fall back to "Anonymous".
 export function getGameCenterDisplayName(): string | null {
   return displayName;
+}
+
+// Programmatic leaderboard fetch — top-N entries + local player row.
+// Powers the in-game leaderboard modal. No-ops to an empty payload on
+// non-iOS / unauthenticated.
+export async function loadLeaderboardEntries(
+  difficulty: LeaderboardDifficulty,
+  scope: LeaderboardScope,
+  limit = 10,
+): Promise<LeaderboardEntriesResult> {
+  if (!isIOS() || !authenticated) return { entries: [], localPlayer: null };
+  try {
+    return await Plugin.loadLeaderboardEntries({
+      leaderboardId: LEADERBOARDS[difficulty],
+      scope,
+      limit,
+    });
+  } catch (err) {
+    console.warn("[GameCenter] loadLeaderboardEntries failed:", err);
+    return { entries: [], localPlayer: null };
+  }
+}
+
+// Trigger the friend-list authorization prompt the first time the
+// Friends tab is selected. Resolves { authorized } so the UI can show
+// an empty state when the user declined. iOS-only no-op elsewhere.
+export async function requestFriendsAuthorization(): Promise<boolean> {
+  if (!isIOS() || !authenticated) return false;
+  try {
+    const r = await Plugin.loadFriends();
+    return r.authorized;
+  } catch (err) {
+    console.warn("[GameCenter] loadFriends failed:", err);
+    return false;
+  }
 }

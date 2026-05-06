@@ -6,7 +6,7 @@
 
 import { parseWaveLine, type ChallengeDefLike } from "./waveDsl";
 import type { ChallengeDef } from "./challenges";
-import { syncProgressUp } from "./cloudSync";
+import { deleteCustomChallengeCloud, syncProgressUp } from "./cloudSync";
 import { clamp, clampDifficulty, clampStars, numOr } from "./validation";
 import { loadJson, saveJson } from "./storage";
 import { STORAGE_KEYS } from "./storageKeys";
@@ -66,6 +66,12 @@ export interface CustomChallenge {
    *  Bumped on every successful re-publish so subscribers can detect
    *  outdated installs. */
   publishedVersion?: number;
+  /** Content fingerprint (FNV-1a over waves + effects) captured at
+   *  publish time. Compared against the live content on each render
+   *  so author-side drafts (edits made between publish and re-publish)
+   *  don't pollute the public leaderboard with scores from a different
+   *  wave list. Cleared on unpublish. */
+  publishedContentHash?: number;
   /** Set on a player's local copy when they install someone else's
    *  PublishedChallenge. Stores the source record name so the
    *  background subscription can patch this record in place when the
@@ -177,6 +183,9 @@ function fillDefaults(c: Partial<CustomChallenge>): CustomChallenge {
       : undefined,
     publishedVersion: typeof c.publishedVersion === "number" && Number.isFinite(c.publishedVersion)
       ? Math.max(1, Math.round(c.publishedVersion))
+      : undefined,
+    publishedContentHash: typeof c.publishedContentHash === "number" && Number.isFinite(c.publishedContentHash)
+      ? (c.publishedContentHash >>> 0)
       : undefined,
     installedFrom: typeof c.installedFrom === "string" && c.installedFrom.length > 0
       ? c.installedFrom
@@ -290,6 +299,7 @@ export function upsertCustomChallenge(c: CustomChallenge): CustomChallenge {
     // upsert path — so we always keep what was already on disk.
     publishedRecordName: prev?.publishedRecordName ?? c.publishedRecordName,
     publishedVersion: prev?.publishedVersion ?? c.publishedVersion,
+    publishedContentHash: prev?.publishedContentHash ?? c.publishedContentHash,
     installedFrom: prev?.installedFrom ?? c.installedFrom,
     installedVersion: prev?.installedVersion ?? c.installedVersion,
     installedAuthorName: prev?.installedAuthorName ?? c.installedAuthorName,
@@ -305,6 +315,9 @@ export function deleteCustomChallenge(id: string): void {
   const next = store.challenges.filter((c) => c.id !== id);
   if (next.length === store.challenges.length) return;
   saveStore({ v: 1, challenges: next });
+  // Also remove from the user's private CloudKit mirror so the next
+  // cold launch's pullProgressDown doesn't re-install it.
+  deleteCustomChallengeCloud(id);
 }
 
 // Update only run-result fields. Called after a custom run completes so
@@ -393,6 +406,7 @@ export function setPublishedMeta(
   id: string,
   publishedRecordName: string,
   publishedVersion: number,
+  publishedContentHash: number,
 ): void {
   const store = loadCustomChallenges();
   const idx = store.challenges.findIndex((c) => c.id === id);
@@ -402,6 +416,7 @@ export function setPublishedMeta(
     ...prev,
     publishedRecordName,
     publishedVersion: Math.max(1, Math.round(publishedVersion)),
+    publishedContentHash: publishedContentHash >>> 0,
     updatedAt: Date.now(),
   };
   saveStore(store);
@@ -418,6 +433,7 @@ export function clearPublishedMeta(id: string): void {
     ...prev,
     publishedRecordName: undefined,
     publishedVersion: undefined,
+    publishedContentHash: undefined,
     updatedAt: Date.now(),
   };
   saveStore(store);

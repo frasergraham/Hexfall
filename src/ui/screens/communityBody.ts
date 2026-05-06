@@ -102,7 +102,6 @@ function renderCard(
       <div class="community-card-actions">
         <div class="community-card-top-row">
           ${playOrInstall}
-          <button type="button" class="community-card-icon-btn" data-action="community-leaderboard" data-record-name="${escapeHtml(p.recordName)}" aria-label="Leaderboard">🏆</button>
         </div>
         <div class="community-card-icon-row">
           ${likeBtn}

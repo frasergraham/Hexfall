@@ -52,6 +52,7 @@ import {
   type CustomChallengeStars,
 } from "./customChallenges";
 import { checkName, type ModerationResult } from "./moderation";
+import { challengeContentHash } from "./challengeVersion";
 import { hashSeed } from "./rng";
 import { clampDifficulty, clampStars } from "./validation";
 import { loadString, saveJson, saveString } from "./storage";
@@ -279,7 +280,12 @@ export async function publishChallenge(
 
   const upserted = await upsertRecord("public", PUBLISHED_RECORD_TYPE, recordName, fields);
   if (!upserted) return { ok: false, error: "Publish failed" };
-  setPublishedMeta(custom.id, recordName, version);
+  // Stamp the content hash that matches what we just sent up. The
+  // intro screen compares this against the live local content hash
+  // to detect "in-progress draft" state and gates the leaderboard
+  // panel + score submission accordingly.
+  const contentHash = challengeContentHash({ waves: custom.waves, effects: custom.effects });
+  setPublishedMeta(custom.id, recordName, version, contentHash);
   const published = recordToPublished(upserted);
   return published
     ? { ok: true, published }
@@ -292,6 +298,16 @@ export async function unpublishChallenge(custom: CustomChallenge): Promise<boole
   const ok = await deleteRecord("public", custom.publishedRecordName);
   if (ok) clearPublishedMeta(custom.id);
   return ok;
+}
+
+// Delete the user's private-DB mirror of a custom challenge. Called
+// from the local delete path so a swipe-delete (or uninstall) on
+// device A doesn't get re-hydrated by `pullProgressDown` on the next
+// cold launch. Best-effort and silent — the local store is the
+// authority; cloud cleanup is a follow-up.
+export function deleteCustomChallengeCloud(id: string): void {
+  if (!isCloudKitAvailable()) return;
+  void deleteRecord("private", id);
 }
 
 export interface CommunityQueryOpts {
@@ -457,6 +473,11 @@ function recordToOverridePayload(rec: CloudKitRecord): OfficialChallengeOverride
 
 export interface CommunityScore {
   recordName: string;
+  challengeKey: string;
+  challengeVersion: number;
+  /** Legacy: present for community rows that still carry the
+   *  `challengeRef` REFERENCE field. Empty string for official rows
+   *  (which key by `challengeKey` only). */
   challengeRecordName: string;
   playerId: string;
   playerName: string;
@@ -464,64 +485,193 @@ export interface CommunityScore {
   pct: number;
   recordedAt: number;
   /** How many runs this player has logged on this challenge. Bumped
-   *  on every submitCommunityScore call; the leaderboard surfaces it
+   *  on every submitChallengeScore call; the leaderboard surfaces it
    *  as "· N plays" next to the player's best score. */
   attempts: number;
 }
 
+export const SCORE_TOP_N = 10;
+
+// Top-10 cap: at most this many `Score` rows live per (challengeKey,
+// challengeVersion) tuple. Getting on the leaderboard is itself an
+// achievement — runs that don't make the cut bump the parent's
+// playCount but write no Score row.
+const SCORE_CAP = SCORE_TOP_N;
+
+// Build the deterministic per-(player, challengeKey, version) record
+// name. Including the version in the key means a content bump produces
+// a *new* row name; old-version scores become orphaned for the purge
+// job to sweep up rather than silently shadowed by the new version.
+function makeScoreRecordName(playerId: string, challengeKey: string, version: number): string {
+  return `score-${shortHash(playerId)}-${shortHash(challengeKey)}-v${Math.max(1, Math.round(version))}`;
+}
+
+// Score → leaderboard row decoder. Tolerates both the new
+// `challengeKey`/`challengeVersion` shape and the legacy
+// `challengeRef`-only shape so a backfill-in-progress Score table
+// keeps reading cleanly.
+function decodeChallengeRefName(rec: CloudKitRecord): string {
+  const ref = rec.fields["challengeRef"];
+  if (typeof ref === "object" && ref && "recordName" in ref) {
+    return (ref as { recordName: string }).recordName;
+  }
+  return stringField(ref as CloudKitField | undefined) ?? "";
+}
+
+// Submit a score for any kind of challenge — community ("pub:<rn>")
+// or official ("off:<id>"). Top-10 cap is enforced here:
+//
+//   1. Read the current top SCORE_CAP for this (key, version).
+//   2. If we're already in the table, only upsert when our new score
+//      is higher; bump attempts unconditionally.
+//   3. If we're NOT in the table:
+//        - score above the worst in-table → upsert + delete the
+//          displaced row (fewer rows means cheaper queries).
+//        - score below or equal to the worst → skip the upsert. The
+//          parent's playCount bumps regardless so totals stay honest.
+//
+// `challengeRecordName` is optional — present only for community
+// challenges where we want the parent record's `playCount` denorm
+// to bump. Official challenges pass undefined.
+export async function submitChallengeScore(
+  challengeKey: string,
+  challengeVersion: number,
+  playerName: string,
+  score: number,
+  pct: number,
+  challengeRecordName?: string,
+): Promise<void> {
+  if (!(await isCloudReady())) return;
+  const playerId = await getUserRecordName();
+  if (!playerId) return;
+
+  const recordName = makeScoreRecordName(playerId, challengeKey, challengeVersion);
+  const existing = await fetchRecord("public", recordName);
+  const prevScore = existing ? (numberField(existing.fields["score"]) ?? 0) : 0;
+  const prevPct = existing ? (numberField(existing.fields["pct"]) ?? 0) : 0;
+  const prevAttempts = existing ? (numberField(existing.fields["attempts"]) ?? 0) : 0;
+  const newScoreRaw = Math.max(0, Math.round(score));
+  const newPctRaw = Math.max(0, Math.min(1, pct));
+
+  // Always bump the parent's playCount, even when this run doesn't
+  // earn a `Score` row — it's a lifetime attempt counter, not a
+  // leaderboard row count.
+  if (challengeRecordName) {
+    const challenge = await fetchRecord("public", challengeRecordName);
+    if (challenge) {
+      const cur = numberField(challenge.fields["playCount"]) ?? 0;
+      void bumpField("public", challengeRecordName, "playCount", cur + 1);
+    }
+  }
+
+  // Existing in-table row: keep updating it. New scores only ever
+  // raise the player's score; attempts always tick up.
+  if (existing) {
+    const isBest = newScoreRaw > prevScore;
+    const fields: Record<string, CloudKitField> = {
+      challengeKey,
+      challengeVersion: Math.max(1, Math.round(challengeVersion)),
+      playerId,
+      playerName: playerName || "Anonymous",
+      score: isBest ? newScoreRaw : prevScore,
+      pct: isBest ? newPctRaw : prevPct,
+      recordedAt: Date.now(),
+      attempts: prevAttempts + 1,
+    };
+    if (challengeRecordName) {
+      fields["challengeRef"] = { recordName: challengeRecordName, action: "deleteSelf" };
+    }
+    await upsertRecord("public", SCORE_RECORD_TYPE, recordName, fields);
+    return;
+  }
+
+  // No existing row → consult the current top to decide whether this
+  // run earns a slot. We over-fetch by one (CAP+1) so we can both
+  // count and identify the displaced row in a single round-trip.
+  const top = await topScoresByKey(challengeKey, challengeVersion, SCORE_CAP + 1);
+  if (top.length >= SCORE_CAP) {
+    const worst = top[SCORE_CAP - 1]!;
+    if (newScoreRaw <= worst.score) {
+      // Below the cut. Parent count already bumped above; no Score
+      // row written.
+      return;
+    }
+    // We made the cut — evict the worst row to keep the table at CAP.
+    // Fire-and-forget: even if the delete races and fails, the next
+    // submitter (or the moderator's purge job) will clean up.
+    void deleteRecord("public", worst.recordName);
+  }
+
+  const fields: Record<string, CloudKitField> = {
+    challengeKey,
+    challengeVersion: Math.max(1, Math.round(challengeVersion)),
+    playerId,
+    playerName: playerName || "Anonymous",
+    score: newScoreRaw,
+    pct: newPctRaw,
+    recordedAt: Date.now(),
+    attempts: 1,
+  };
+  if (challengeRecordName) {
+    fields["challengeRef"] = { recordName: challengeRecordName, action: "deleteSelf" };
+  }
+  await upsertRecord("public", SCORE_RECORD_TYPE, recordName, fields);
+}
+
+// Thin compat shim so existing community-only call sites don't have
+// to be rewritten in the same change. Computes the new-style key from
+// the published-challenge record name and forwards.
 export async function submitCommunityScore(
   challengeRecordName: string,
   playerName: string,
   score: number,
   pct: number,
+  challengeVersion = 1,
 ): Promise<void> {
-  if (!(await isCloudReady())) return;
-  const playerId = await getUserRecordName();
-  if (!playerId) return;
-  // Deterministic per-(player, challenge) record name so the leaderboard
-  // always shows the player's best, not a forest of individual runs.
-  const recordName = `score-${shortHash(playerId)}-${shortHash(challengeRecordName)}`;
-  const existing = await fetchRecord("public", recordName);
-  const prevScore = existing ? (numberField(existing.fields["score"]) ?? 0) : 0;
-  const prevPct = existing ? (numberField(existing.fields["pct"]) ?? 0) : 0;
-  const prevAttempts = existing ? (numberField(existing.fields["attempts"]) ?? 0) : 0;
-  const newScore = Math.max(0, Math.round(score));
-  const newPct = Math.max(0, Math.min(1, pct));
-  const isBest = newScore > prevScore;
-  await upsertRecord("public", SCORE_RECORD_TYPE, recordName, {
-    challengeRef: { recordName: challengeRecordName, action: "deleteSelf" },
-    playerId,
-    playerName: playerName || "Anonymous",
-    score: isBest ? newScore : prevScore,
-    pct: isBest ? newPct : prevPct,
-    recordedAt: Date.now(),
-    attempts: prevAttempts + 1,
-  });
-  // Bump the denormalised playCount on the parent challenge record.
-  // Best-effort — authoritative count is sum(attempts) across Score
-  // rows; recount-plays moderator command re-syncs if drift is suspected.
-  const challenge = await fetchRecord("public", challengeRecordName);
-  if (challenge) {
-    const cur = numberField(challenge.fields["playCount"]) ?? 0;
-    void bumpField("public", challengeRecordName, "playCount", cur + 1);
-  }
+  return submitChallengeScore(
+    `pub:${challengeRecordName}`,
+    challengeVersion,
+    playerName,
+    score,
+    pct,
+    challengeRecordName,
+  );
 }
 
-export async function topScores(
-  challengeRecordName: string,
-  limit = 20,
+// Query the top-N rows for a given (challengeKey, version). Filters
+// by version at query time so a content edit hides stale rows
+// immediately even before the moderator purge job has run.
+export async function topScoresByKey(
+  challengeKey: string,
+  challengeVersion: number,
+  limit = SCORE_TOP_N,
 ): Promise<CommunityScore[]> {
   if (!isCommunityReadable()) return [];
+  const v = Math.max(1, Math.round(challengeVersion));
   const result = await queryRecords({
     db: "public",
     recordType: SCORE_RECORD_TYPE,
-    predicate: `challengeRef == "${challengeRecordName}"`,
+    predicate: `challengeKey == "${challengeKey}" AND challengeVersion == ${v}`,
     sortBy: { field: "score", ascending: false },
     limit,
   });
   return result.records
     .map(recordToScore)
     .filter((s): s is CommunityScore => s !== null);
+}
+
+// Legacy entry point kept for any caller that still uses the
+// recordName-keyed API. Resolves to the current published version
+// via the parent record (best-effort) so old code paths still see
+// fresh rows. Prefer `topScoresByKey` for new call sites.
+export async function topScores(
+  challengeRecordName: string,
+  limit = SCORE_TOP_N,
+): Promise<CommunityScore[]> {
+  if (!isCommunityReadable()) return [];
+  const parent = await fetchRecord("public", challengeRecordName);
+  const version = parent ? (numberField(parent.fields["version"]) ?? 1) : 1;
+  return topScoresByKey(`pub:${challengeRecordName}`, version, limit);
 }
 
 // ---------- Upvote -------------------------------------------------------
@@ -672,6 +822,7 @@ function customChallengeToFields(c: CustomChallenge): Record<string, CloudKitFie
     remixedFrom: c.remixedFrom ?? "",
     publishedRecordName: c.publishedRecordName ?? "",
     publishedVersion: c.publishedVersion ?? 0,
+    publishedContentHash: c.publishedContentHash ?? 0,
     installedFrom: c.installedFrom ?? "",
     installedVersion: c.installedVersion ?? 0,
     installedAuthorName: c.installedAuthorName ?? "",
@@ -724,6 +875,7 @@ function fieldsToCustomChallenge(rec: CloudKitRecord): CustomChallenge | null {
     remixedFrom: stringField(rec.fields["remixedFrom"]) || undefined,
     publishedRecordName: stringField(rec.fields["publishedRecordName"]) || undefined,
     publishedVersion: numberField(rec.fields["publishedVersion"]) || undefined,
+    publishedContentHash: numberField(rec.fields["publishedContentHash"]) || undefined,
     installedFrom: stringField(rec.fields["installedFrom"]) || undefined,
     installedVersion: numberField(rec.fields["installedVersion"]) || undefined,
     installedAuthorName: stringField(rec.fields["installedAuthorName"]) || undefined,
@@ -755,12 +907,17 @@ function recordToPublished(rec: CloudKitRecord): PublishedChallenge | null {
 
 function recordToScore(rec: CloudKitRecord): CommunityScore | null {
   try {
-    const ref = rec.fields["challengeRef"];
-    const challengeRecordName = typeof ref === "object" && ref && "recordName" in ref
-      ? (ref as { recordName: string }).recordName
-      : stringField(ref as CloudKitField) ?? "";
+    const challengeRecordName = decodeChallengeRefName(rec);
+    let challengeKey = stringField(rec.fields["challengeKey"]) ?? "";
+    if (!challengeKey && challengeRecordName) {
+      // Legacy row written before the schema migration — synthesise
+      // the new-style key so the unified query path still works.
+      challengeKey = `pub:${challengeRecordName}`;
+    }
     return {
       recordName: rec.recordName,
+      challengeKey,
+      challengeVersion: numberField(rec.fields["challengeVersion"]) ?? 1,
       challengeRecordName,
       playerId: stringField(rec.fields["playerId"]) ?? "",
       playerName: stringField(rec.fields["playerName"]) ?? "Anonymous",

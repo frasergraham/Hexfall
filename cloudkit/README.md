@@ -49,6 +49,17 @@ type's contract — read the diff in the import output before answering
 the prompt. New fields are always safe; removed fields, type changes,
 and dropped indexes are not.
 
+## Migrations
+
+After deploying a `Score` schema change that adds a `challengeKey` /
+`challengeVersion` field, run the moderator backfill so historical rows
+populate the new fields and stay queryable:
+
+```sh
+node scripts/moderator.mjs backfill-score-keys --dry-run
+node scripts/moderator.mjs backfill-score-keys
+```
+
 ## What's defined here
 
 | Record type         | DB      | Purpose |
@@ -56,7 +67,7 @@ and dropped indexes are not.
 | `Progress`          | Private | Per-user `ChallengeProgress` blob (single record, name `progress`). |
 | `CustomChallenge`   | Private | Per-user mirror of `hexrain.customChallenges.v1`. |
 | `PublishedChallenge`| Public  | A community-published custom challenge. |
-| `Score`             | Public  | One row per (player, challenge); the player's best score + total attempts. |
+| `Score`             | Public  | One row per (player, challenge, version); the player's best score + total attempts. Capped at top 10 per (challengeKey, challengeVersion). |
 | `Upvote`            | Public  | One row per (player, challenge) like. |
 | `Report`            | Public  | One row per (reporter, challenge) report; consumed by `scripts/moderator.mjs`. |
 | `Users`             | Public  | CloudKit auto-managed user record; `roles` is reserved for future moderator marking. |

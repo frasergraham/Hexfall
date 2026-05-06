@@ -437,6 +437,21 @@ body.editor-previewing #app {
   margin-bottom: 22px;
 }
 
+/* Author byline + stars on the challenge intro screen. */
+.challenge-intro-byline {
+  margin: -6px 0 4px;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #c9a4ff;
+  text-align: center;
+}
+.challenge-intro-stars {
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: #ffd76b;
+}
+
 /* In-game one-shot controls reminder. Positioned over the canvas at
    the top, fades out automatically on first run (see Game class). */
 .controls-hint {
@@ -831,6 +846,26 @@ body.editor-previewing #app {
   background: rgba(170, 100, 220, 0.3);
   border-color: rgba(220, 170, 250, 0.9);
   box-shadow: 0 0 32px rgba(170, 100, 220, 0.45);
+}
+
+/* Tertiary button — same footprint as PLAY, but smaller font and a
+   muted treatment so it reads as a secondary action sitting under
+   the primary one. Used for the menu's LEADERBOARD button. */
+.play-btn-tertiary {
+  background: rgba(120, 145, 220, 0.12);
+  border: 2px solid rgba(120, 145, 220, 0.45);
+  box-shadow: 0 0 14px rgba(120, 145, 220, 0.18);
+  font-size: 13px;
+  letter-spacing: 0.24em;
+  padding: 8px 0;
+}
+
+.play-btn-tertiary:hover,
+.play-btn-tertiary:active {
+  background: rgba(120, 145, 220, 0.24);
+  border-color: rgba(180, 200, 255, 0.85);
+  box-shadow: 0 0 22px rgba(120, 145, 220, 0.36);
+  transform: scale(1.02);
 }
 
 /* Unlock-everything screen — bundles the IAP description, buy button,
@@ -1837,6 +1872,47 @@ body.editor-previewing #app {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+}
+/* Title row: challenge name on the left with the share glyph
+   immediately to its right (small gap), not pinned to the row's
+   right edge. Pure custom rows render only the name. */
+.editor-home-row-name-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+.editor-home-row-name-row .challenge-card-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.editor-home-row-share-inline {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  /* Slightly darker than the name colour (#e8ecff) so the glyph reads
+     as a sibling of the title, not a separate accent. */
+  color: #c8cee8;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  flex: 0 0 auto;
+}
+.editor-home-row-share-inline svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+  /* Bolder strokes — the original glyph is a thin outline; nudge the
+     SVG with a drop-shadow that doubles as a faux-bold weight. */
+  filter: drop-shadow(0 0 0.4px currentColor) drop-shadow(0 0 0.4px currentColor);
+}
+.editor-home-row-share-inline:hover {
+  color: #e8ecff;
 }
 .editor-home-row-meta .editor-home-row-remix {
   font-size: 10px;
@@ -3768,6 +3844,113 @@ body:not(.in-play) #touchbar {
   color: #aab4dc;
   font-size: 12px;
   padding: 16px 10px;
+}
+
+/* Highlighted row used for the "YOU" entry. Renders distinct from the
+   plain row so the player can spot themselves at a glance. */
+.leaderboard-row.you {
+  background: rgba(91, 139, 255, 0.22);
+  border: 1px solid rgba(170, 196, 255, 0.55);
+}
+.leaderboard-row.you .leaderboard-rank {
+  color: #ffd76b;
+}
+.leaderboard-row.you .leaderboard-player {
+  color: #fff;
+  font-weight: 700;
+}
+
+/* Tab strip — used for the difficulty + scope (Global/Friends) tabs
+   on the endless main-menu modal. */
+.leaderboard-tabs,
+.leaderboard-scope-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.leaderboard-scope-tabs {
+  margin-bottom: 2px;
+}
+.leaderboard-tab {
+  flex: 1 1 0;
+  background: rgba(31, 36, 64, 0.55);
+  border: 1px solid rgba(170, 100, 220, 0.18);
+  border-radius: 6px;
+  color: #aab4dc;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  padding: 6px 4px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.leaderboard-tab:hover {
+  color: #f1e3ff;
+  border-color: rgba(170, 100, 220, 0.4);
+}
+.leaderboard-tab.active {
+  background: rgba(170, 100, 220, 0.32);
+  border-color: rgba(220, 170, 250, 0.7);
+  color: #fff;
+}
+.leaderboard-subtitle {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #aab4dc;
+  margin-top: -4px;
+}
+.leaderboard-foot-action {
+  margin-top: 4px;
+  background: transparent;
+  border: 1px solid rgba(170, 100, 220, 0.32);
+  border-radius: 6px;
+  color: #c9a4ff;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.leaderboard-foot-action:hover {
+  background: rgba(170, 100, 220, 0.12);
+  border-color: rgba(220, 170, 250, 0.6);
+  color: #fff;
+}
+
+/* Inline leaderboard panel embedded in the challenge intro screen.
+   No backdrop — flows with the rest of the intro layout. */
+.leaderboard-panel {
+  width: 100%;
+  max-width: 360px;
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  background: rgba(20, 24, 44, 0.55);
+  border: 1px solid rgba(170, 100, 220, 0.22);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.leaderboard-panel-title {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #c9a4ff;
+  text-align: center;
+}
+.leaderboard-panel .leaderboard-rows {
+  gap: 3px;
+}
+.leaderboard-panel .leaderboard-row {
+  font-size: 12px;
+  padding: 5px 7px;
 }
 .report-body {
   display: flex;

@@ -38,18 +38,21 @@ export function renderInstalledChallengesBody(props: InstalledChallengesBodyProp
     const author = c.installedAuthorName ?? "the community";
     const versionStr = c.installedVersion ? ` · v${c.installedVersion}` : "";
     const recordName = c.installedFrom ?? "";
-    const leaderboardBtn = props.showLeaderboard && recordName
-      ? `<button type="button" class="editor-row-btn editor-row-btn-edit" data-action="community-leaderboard" data-record-name="${escapeHtml(recordName)}" aria-label="Leaderboard">🏆</button>`
-      : "";
     const shareBtn = recordName
-      ? `<button type="button" class="editor-row-btn editor-row-btn-share" data-action="community-share" data-record-name="${escapeHtml(recordName)}" data-share-name="${escapeHtml(c.name)}" aria-label="Share">${IOS_SHARE_GLYPH_SVG}</button>`
+      ? `<button type="button" class="editor-home-row-share-inline" data-action="community-share" data-record-name="${escapeHtml(recordName)}" data-share-name="${escapeHtml(c.name)}" aria-label="Share">${IOS_SHARE_GLYPH_SVG}</button>`
       : "";
+    // showLeaderboard prop is preserved for back-compat — the inline
+    // panel on the challenge intro screen is the new home for the board.
+    void props.showLeaderboard;
     return `
       <div class="editor-home-row-swipe" data-swipe-id="${escapeHtml(c.id)}">
         <button type="button" class="editor-home-row-delete" data-action="installed-uninstall" data-custom-id="${escapeHtml(c.id)}" tabindex="-1" aria-label="Uninstall">UNINSTALL</button>
         <div class="editor-home-row" data-custom-id="${escapeHtml(c.id)}">
           <div class="editor-home-row-meta">
-            <span class="challenge-card-name">${escapeHtml(c.name)}</span>
+            <div class="editor-home-row-name-row">
+              <span class="challenge-card-name">${escapeHtml(c.name)}</span>
+              ${shareBtn}
+            </div>
             <span class="editor-home-row-installed">by ${escapeHtml(author)}${versionStr}</span>
             <div class="challenge-card-hexes">${hexes.join("")}</div>
             ${starsHtml}
@@ -58,10 +61,6 @@ export function renderInstalledChallengesBody(props: InstalledChallengesBodyProp
           <div class="editor-home-row-actions">
             <button type="button" class="editor-row-btn editor-row-btn-play" data-action="installed-play" data-custom-id="${escapeHtml(c.id)}">PLAY</button>
             <button type="button" class="editor-row-btn editor-row-btn-edit" data-action="editor-remix-custom" data-custom-id="${escapeHtml(c.id)}">REMIX</button>
-            <div class="editor-home-row-actions-pair">
-              ${leaderboardBtn}
-              ${shareBtn}
-            </div>
           </div>
         </div>
       </div>

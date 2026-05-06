@@ -15,6 +15,14 @@
 //   unhide <recordName>                      Set status="approved"
 //   recount-upvotes <recordName>             Recompute denormalised upvoteCount
 //   recount-plays <recordName>               Recompute denormalised playCount (sum of Score.attempts)
+//   backfill-score-keys [--dry-run]          Populate challengeKey + challengeVersion on
+//                                            legacy Score rows (one-time migration after
+//                                            schema deploy)
+//   purge-stale-scores [--dry-run]           Delete Score rows whose challengeVersion no
+//                                            longer matches the current published version
+//                                            (community) or the current content hash
+//                                            (official, read from scripts/official-versions.json).
+//                                            Also enforces the per-(key,version) top-10 cap.
 //
 // Official-challenge overrides (post-ship balance tweaks):
 //   list-overrides                           List all OfficialChallengeOverride records
@@ -350,12 +358,152 @@ async function deleteOverride(cfg, challengeId) {
   console.log(`${recordName} → deleted`);
 }
 
+// ---------- Score migration / purge --------------------------------------
+
+const SCORE_RECORD_TYPE = "Score";
+const SCORE_CAP = 10;
+const OFFICIAL_VERSIONS_PATH = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  "official-versions.json",
+);
+
+function loadOfficialVersions() {
+  if (!fs.existsSync(OFFICIAL_VERSIONS_PATH)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(OFFICIAL_VERSIONS_PATH, "utf8"));
+  } catch (err) {
+    console.error(`Invalid JSON in ${OFFICIAL_VERSIONS_PATH}: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+// Walks every Score row, ensures it has the new-shape (challengeKey,
+// challengeVersion) fields. Legacy rows have only `challengeRef` —
+// derive the missing fields from the parent PublishedChallenge.
+async function backfillScoreKeys(cfg, args) {
+  const dryRun = args.includes("--dry-run");
+  const scores = await queryAll(cfg, SCORE_RECORD_TYPE);
+  const parentVersionCache = new Map();
+
+  let touched = 0;
+  let skipped = 0;
+  let errors = 0;
+  for (const s of scores) {
+    const fields = s.fields ?? {};
+    const hasKey = !!fields.challengeKey?.value;
+    const hasVer = fields.challengeVersion?.value != null;
+    if (hasKey && hasVer) { skipped += 1; continue; }
+    const ref = fields.challengeRef?.value;
+    const refName = ref && ref.recordName;
+    if (!refName) { errors += 1; continue; }
+    if (!parentVersionCache.has(refName)) {
+      const parent = await fetchOne(cfg, refName);
+      const v = parent?.fields?.version?.value ?? 1;
+      parentVersionCache.set(refName, v);
+    }
+    const version = parentVersionCache.get(refName);
+    const patch = {
+      challengeKey: `pub:${refName}`,
+      challengeVersion: version,
+    };
+    if (dryRun) {
+      console.log(`[dry] ${s.recordName} → key=pub:${refName} v=${version}`);
+    } else {
+      await modify(cfg, s.recordName, patch, s.recordType, s.recordChangeTag);
+    }
+    touched += 1;
+  }
+  console.log(`backfill-score-keys: ${touched} updated, ${skipped} already current, ${errors} skipped (missing parent)${dryRun ? " [dry-run]" : ""}`);
+}
+
+// Purge any Score row whose challengeVersion no longer matches its
+// parent's current version (community → PublishedChallenge.version,
+// official → official-versions.json). Also trims any (key,version)
+// group exceeding the SCORE_CAP top-10 quota.
+async function purgeStaleScores(cfg, args) {
+  const dryRun = args.includes("--dry-run");
+  const officialVersions = loadOfficialVersions();
+  if (!officialVersions) {
+    console.warn(`(no scripts/official-versions.json — official scores won't be checked. Run \`npm run build\` to generate it.)`);
+  }
+  const scores = await queryAll(cfg, SCORE_RECORD_TYPE);
+
+  // Bucket by (challengeKey, challengeVersion) for the cap pass.
+  const buckets = new Map(); // key|version → [score rows sorted desc]
+  // Bucket "current versions" per challengeKey for the stale pass.
+  const parentVersionCache = new Map();
+
+  let staleCount = 0;
+  let trimCount = 0;
+
+  for (const s of scores) {
+    const fields = s.fields ?? {};
+    let key = fields.challengeKey?.value;
+    let version = fields.challengeVersion?.value;
+    // Backfill: synthesise on the fly if a row hasn't been migrated.
+    if (!key && fields.challengeRef?.value?.recordName) {
+      key = `pub:${fields.challengeRef.value.recordName}`;
+    }
+    if (!key) continue;
+    if (version == null) version = 1;
+
+    let currentVersion;
+    if (key.startsWith("pub:")) {
+      const refName = key.slice(4);
+      if (!parentVersionCache.has(refName)) {
+        const parent = await fetchOne(cfg, refName);
+        parentVersionCache.set(refName, parent?.fields?.version?.value ?? 1);
+      }
+      currentVersion = parentVersionCache.get(refName);
+    } else if (key.startsWith("off:") && officialVersions) {
+      currentVersion = officialVersions[key.slice(4)] ?? null;
+    } else {
+      currentVersion = null;
+    }
+
+    if (currentVersion != null && version !== currentVersion) {
+      staleCount += 1;
+      if (dryRun) {
+        console.log(`[dry] stale ${s.recordName} (${key} v=${version}, current=${currentVersion})`);
+      } else {
+        await deleteOne(cfg, s.recordName);
+      }
+      continue;
+    }
+
+    // Live row → bucket for cap enforcement.
+    const bucketKey = `${key}|${version}`;
+    if (!buckets.has(bucketKey)) buckets.set(bucketKey, []);
+    buckets.get(bucketKey).push({
+      recordName: s.recordName,
+      score: fields.score?.value ?? 0,
+    });
+  }
+
+  for (const [bucketKey, rows] of buckets) {
+    if (rows.length <= SCORE_CAP) continue;
+    rows.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    const evict = rows.slice(SCORE_CAP);
+    for (const r of evict) {
+      trimCount += 1;
+      if (dryRun) {
+        console.log(`[dry] trim ${r.recordName} (over cap in ${bucketKey})`);
+      } else {
+        await deleteOne(cfg, r.recordName);
+      }
+    }
+  }
+
+  console.log(`purge-stale-scores: ${staleCount} stale, ${trimCount} trimmed past cap${dryRun ? " [dry-run]" : ""}`);
+}
+
 async function main() {
   const [, , cmd, ...rest] = process.argv;
   if (!cmd) {
     console.error("Usage: moderator.mjs <command> [args]");
     console.error("  Community: list-reports, hide, unhide, recount-upvotes, recount-plays");
     console.error("  Overrides: list-overrides, upload-override, mark-live, retire-override, delete-override");
+    console.error("  Scores:    backfill-score-keys, purge-stale-scores");
     process.exit(1);
   }
   const cfg = loadConfig();
@@ -393,6 +541,10 @@ async function main() {
     const id = rest[0];
     if (!id) { console.error("Usage: delete-override <challengeId>"); process.exit(1); }
     await deleteOverride(cfg, id);
+  } else if (cmd === "backfill-score-keys") {
+    await backfillScoreKeys(cfg, rest);
+  } else if (cmd === "purge-stale-scores") {
+    await purgeStaleScores(cfg, rest);
   } else {
     console.error(`Unknown command: ${cmd}`);
     process.exit(1);

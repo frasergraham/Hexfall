@@ -11,11 +11,15 @@ import {
   getGameCenterDisplayName,
   initGameCenter,
   isGameCenterAvailable,
+  loadLeaderboardEntries as gcLoadLeaderboardEntries,
   reportAchievement,
+  requestFriendsAuthorization as gcRequestFriendsAuth,
   setAchievementListener,
   showAchievements as gcShowAchievements,
   showLeaderboard as gcShowLeaderboard,
   submitScore as gcSubmitScore,
+  type LeaderboardEntry,
+  type LeaderboardScope,
 } from "./gameCenter";
 import {
   axialKey,
@@ -94,15 +98,17 @@ import {
   queryCommunity,
   removeUpvote as cloudRemoveUpvote,
   reportChallenge,
-  submitCommunityScore,
-  topScores as cloudTopScores,
+  submitChallengeScore,
+  topScoresByKey as cloudTopScoresByKey,
   unpublishChallenge,
   upvote as cloudUpvote,
+  SCORE_TOP_N,
   type CommunitySort,
   type CommunityScore,
   type PublishedChallenge,
   type ReportReason,
 } from "./cloudSync";
+import { challengeContentHash, officialChallengeVersion } from "./challengeVersion";
 import { isCloudKitAvailable } from "./cloudKit";
 import { shareChallenge } from "./share";
 import { hashSeed, mulberry32, type Random } from "./rng";
@@ -1219,11 +1225,74 @@ export class Game {
         if (rn) void this.handleCommunityUpvote(rn);
         return;
       }
+      // Community per-card 🏆 buttons are no longer rendered — the
+      // top-N leaderboard is shown on the challenge intro screen
+      // instead. The handler is kept as a guard so existing cached
+      // markup doesn't fall through to other handlers.
       const communityLbBtn = target?.closest('button[data-action="community-leaderboard"]') as HTMLButtonElement | null;
       if (communityLbBtn) {
         playSfx("click");
         const rn = communityLbBtn.dataset.recordName;
-        if (rn) void this.openLeaderboardSheet(rn);
+        if (rn) {
+          const local = listCustomChallenges().find((c) => c.installedFrom === rn);
+          if (local) this.handleCommunityPlay(rn);
+        }
+        return;
+      }
+      // Main-menu LEADERBOARD button — opens the endless leaderboard
+      // modal. iOS-only (no data source on web). Difficulty defaults
+      // to whatever's selected on the menu.
+      const endlessLbBtn = target?.closest('button[data-action="open-endless-leaderboard"]') as HTMLButtonElement | null;
+      if (endlessLbBtn) {
+        playSfx("click");
+        void this.openEndlessLeaderboard();
+        return;
+      }
+      // Endless leaderboard: difficulty tab switch.
+      const endlessLbTab = target?.closest('button[data-action="endless-lb-difficulty"]') as HTMLButtonElement | null;
+      if (endlessLbTab) {
+        playSfx("click");
+        const d = endlessLbTab.dataset.tab as Difficulty | undefined;
+        if (d && this.endlessLeaderboard && d !== this.endlessLeaderboard.difficulty) {
+          this.endlessLeaderboard = {
+            ...this.endlessLeaderboard,
+            difficulty: d,
+            loading: true,
+            rows: [],
+            localPlayer: null,
+            notice: null,
+          };
+          this.renderEndlessLeaderboardOverlay();
+          void this.refreshEndlessLeaderboard();
+        }
+        return;
+      }
+      // Endless leaderboard: scope (Global/Friends) tab switch.
+      const endlessLbScope = target?.closest('button[data-action="endless-lb-scope"]') as HTMLButtonElement | null;
+      if (endlessLbScope) {
+        playSfx("click");
+        const s = endlessLbScope.dataset.scope as LeaderboardScope | undefined;
+        if (s && this.endlessLeaderboard && s !== this.endlessLeaderboard.scope) {
+          this.endlessLeaderboard = {
+            ...this.endlessLeaderboard,
+            scope: s,
+            loading: true,
+            rows: [],
+            localPlayer: null,
+            notice: null,
+          };
+          this.renderEndlessLeaderboardOverlay();
+          void this.refreshEndlessLeaderboard();
+        }
+        return;
+      }
+      // Endless leaderboard foot-button: hand off to Apple's native
+      // GKGameCenterViewController so the player can browse beyond top-N.
+      const endlessLbNative = target?.closest('button[data-action="endless-lb-native"]') as HTMLButtonElement | null;
+      if (endlessLbNative) {
+        playSfx("click");
+        const d = this.endlessLeaderboard?.difficulty ?? this.difficulty;
+        void gcShowLeaderboard(d);
         return;
       }
       const communityReportBtn = target?.closest('button[data-action="community-report"]') as HTMLButtonElement | null;
@@ -1249,18 +1318,18 @@ export class Game {
         this.closeSingleChallenge();
         return;
       }
-      // Leaderboard / report sheet close (backdrop tap or × button).
+      // Leaderboard sheet close (backdrop tap or × button).
+      // The endless main-menu modal is the only leaderboard modal
+      // left in the app; the per-challenge panel is inline on the
+      // intro screen.
       const closeLbBtn = target?.closest('[data-action="close-leaderboard"]') as HTMLElement | null;
       if (closeLbBtn) {
-        // Backdrop has the same data-action as the × button; ignore
-        // bubbles from inside the sheet body so a tap on a row doesn't
-        // dismiss the modal.
         const insideSheet = closeLbBtn.classList.contains("modal-backdrop")
           ? target === closeLbBtn || (target as HTMLElement)?.classList?.contains("modal-close")
           : true;
         if (insideSheet) {
           playSfx("click");
-          this.closeLeaderboardSheet();
+          this.closeEndlessLeaderboard();
         }
         return;
       }
@@ -1310,7 +1379,17 @@ export class Game {
       const goBtn = target?.closest('button[data-action="challenge-go"]') as HTMLButtonElement | null;
       if (goBtn) {
         playSfx("click");
-        if (this.activeChallenge) this.beginChallengeStart(this.activeChallenge);
+        if (this.activeChallenge) {
+          // Custom challenges (including installed community) need to
+          // go through playCustomChallenge so the user-chosen seed
+          // and challenge validation are respected.
+          if (isCustomChallenge(this.activeChallenge)) {
+            const c = getCustomChallenge(this.activeChallenge.id);
+            if (c) this.playCustomChallenge(c, 0);
+          } else {
+            this.beginChallengeStart(this.activeChallenge);
+          }
+        }
         return;
       }
       // Quit from challenge gameover/complete to challenge select.
@@ -1345,7 +1424,11 @@ export class Game {
         playSfx("click");
         const id = editorPlayBtn.dataset.customId;
         const c = id ? getCustomChallenge(id) : undefined;
-        if (c) this.playCustomChallenge(c, 0);
+        if (c) {
+          // Coming from editor home → BACK lands back on editorHome.
+          this.customReturnTo = this.state === "editorEdit" ? "editorEdit" : "editorHome";
+          this.openChallengeIntro(toChallengeDef(c));
+        }
         return;
       }
       const editorEditBtn = target?.closest('button[data-action="editor-edit"]') as HTMLButtonElement | null;
@@ -1381,7 +1464,10 @@ export class Game {
         playSfx("click");
         const id = installedPlayBtn.dataset.customId;
         const c = id ? getCustomChallenge(id) : undefined;
-        if (c) this.playCustomChallenge(c, 0);
+        if (c) {
+          this.customReturnTo = "challengeSelect";
+          this.openChallengeIntro(toChallengeDef(c));
+        }
         return;
       }
       // UNINSTALL on an Installed Challenges row (revealed by swipe).
@@ -2300,9 +2386,31 @@ export class Game {
   // player has upvoted in their CK Upvote rows. Loaded lazily on first
   // browse so the heart icon shows the correct filled / hollow state.
   private upvoteCache = new Set<string>();
-  // Per-modal state for the leaderboard + report sheets.
-  private leaderboardSheet: { recordName: string; rows: CommunityScore[]; loading: boolean } | null = null;
+  // Per-modal state for the report sheet (the leaderboard sheet
+  // moved to a generic endless-mode modal — see endlessLeaderboard).
   private reportSheet: { recordName: string; reason: ReportReason; note: string } | null = null;
+
+  // Endless main-menu leaderboard modal. Open from the LEADERBOARD
+  // button under PLAY; renders top-N + you-row from Game Center via
+  // `loadLeaderboardEntries`. Friends scope is iOS-only.
+  private endlessLeaderboard: {
+    difficulty: Difficulty;
+    scope: LeaderboardScope;
+    loading: boolean;
+    rows: LeaderboardEntry[];
+    localPlayer: LeaderboardEntry | null;
+    notice: string | null;
+  } | null = null;
+
+  // Per-challenge leaderboard panel embedded in the intro screen.
+  // Keyed by `challengeKey` so a stale fetch from a previous intro
+  // open doesn't overwrite the current one.
+  private introLeaderboard: {
+    challengeKey: string;
+    challengeVersion: number;
+    loading: boolean;
+    rows: CommunityScore[];
+  } | null = null;
 
   // Deep-link single-challenge view: when set, renderSingleChallenge
   // shows just this one card with full actions. `origin` records
@@ -2387,6 +2495,7 @@ export class Game {
     this.refreshDifficultyButtons();
     this.refreshAudioToggles();
     this.refreshChallengeEditorLock();
+    this.refreshLeaderboardMenuButton();
     // Score is always 0 on the menu — the BEST readout is the only
     // useful number. Hide the score block until a run starts.
     this.setScoreVisible(false);
@@ -2475,6 +2584,18 @@ export class Game {
       this.refreshDifficultyButtons();
       this.refreshChallengeEditorLock();
     }
+  }
+
+  // The endless LEADERBOARD button reads its data from Game Center,
+  // so on web (no GC bridge) hide it entirely. iOS keeps it visible
+  // regardless of authentication state — the click handler degrades
+  // to a no-op when Game Center is unavailable.
+  private refreshLeaderboardMenuButton(): void {
+    const btn = this.overlay.querySelector<HTMLButtonElement>(
+      'button[data-action="open-endless-leaderboard"]',
+    );
+    if (!btn) return;
+    btn.hidden = !isGameCenterAvailable();
   }
 
   // Mirror the locked/unlocked state of the IAP onto the menu's
@@ -4032,8 +4153,7 @@ export class Game {
     this.setHudVisible(false);
     this.setInPlay(false);
     // Modal state from a prior visit shouldn't carry over — close any
-    // open leaderboard / report sheets before re-rendering.
-    this.leaderboardSheet = null;
+    // open report sheets before re-rendering.
     this.reportSheet = null;
     this.renderChallengeSelect();
     this.overlay.classList.remove("hidden");
@@ -4054,7 +4174,12 @@ export class Game {
     this.state = "challengeIntro";
     this.setHudVisible(false);
     this.setInPlay(false);
+    // Reset stale leaderboard from a previous intro before kicking
+    // off the new fetch — otherwise a fast PLAY → BACK → another
+    // PLAY would briefly show last challenge's rows.
+    this.introLeaderboard = null;
     this.renderChallengeIntro();
+    void this.loadIntroLeaderboard(def);
   }
 
   private beginChallengeStart(def: ChallengeDef): void {
@@ -4114,7 +4239,7 @@ export class Game {
             })
           : "",
       communityBodyHtml: isCommunityReadable() ? this.renderCommunityBody() : "",
-      leaderboardSheetHtml: this.renderLeaderboardSheetHtml(),
+      leaderboardSheetHtml: "",
       reportSheetHtml: this.renderReportSheetHtml(),
     });
     this.overlay.scrollTop = scrollY;
@@ -4209,21 +4334,15 @@ export class Game {
     const sheet = this.singleChallenge;
     if (!sheet) return;
     const recordName = sheet.challenge?.recordName ?? sheet.recordName;
-    const lbSheet = this.leaderboardSheet;
-    const lbChallenge = lbSheet
-      ? this.communityChallenges.find((c) => c.recordName === lbSheet.recordName)
-      : undefined;
     this.overlay.innerHTML = SingleChallenge.render({
       challenge: sheet.challenge,
       error: sheet.error,
       installed: !!listCustomChallenges().find((c) => c.installedFrom === recordName),
       upvoted: this.upvoteCache.has(recordName),
       showAuthedActions: isCloudKitAvailable(),
-      leaderboardSheet: lbSheet ? {
-        title: lbChallenge ? lbChallenge.name : "Leaderboard",
-        loading: lbSheet.loading,
-        rows: lbSheet.rows,
-      } : null,
+      // Per-card leaderboard moved to the challenge intro screen,
+      // shown after PLAY/INSTALL on a single-challenge view.
+      leaderboardSheet: null,
       reportSheet: this.reportSheet
         ? { reason: this.reportSheet.reason, note: this.reportSheet.note }
         : null,
@@ -4291,7 +4410,10 @@ export class Game {
   private handleCommunityPlay(recordName: string): void {
     const local = listCustomChallenges().find((c) => c.installedFrom === recordName);
     if (!local) return;
-    this.playCustomChallenge(local, 0);
+    // Coming in from a community/installed card → BACK from a custom
+    // run lands on challenge select, not the editor.
+    this.customReturnTo = "challengeSelect";
+    this.openChallengeIntro(toChallengeDef(local));
   }
 
   // Fork a published challenge into the user's own My Challenges as an
@@ -4351,29 +4473,230 @@ export class Game {
     else if (this.state === "communitySingle") this.renderSingleChallenge();
   }
 
-  private async openLeaderboardSheet(recordName: string): Promise<void> {
-    this.leaderboardSheet = { recordName, rows: [], loading: true };
-    if (this.state === "challengeSelect") this.renderChallengeSelect();
-    const rows = await cloudTopScores(recordName, 20);
-    if (!this.leaderboardSheet || this.leaderboardSheet.recordName !== recordName) return;
-    this.leaderboardSheet = { recordName, rows, loading: false };
-    if (this.state === "challengeSelect") this.renderChallengeSelect();
+  // Endless main-menu leaderboard modal. Opens with whichever
+  // difficulty the player has currently selected on the menu.
+  private async openEndlessLeaderboard(
+    difficulty: Difficulty = this.difficulty,
+    scope: LeaderboardScope = "global",
+  ): Promise<void> {
+    if (!isGameCenterAvailable()) return;
+    this.endlessLeaderboard = {
+      difficulty, scope, loading: true, rows: [], localPlayer: null, notice: null,
+    };
+    this.renderEndlessLeaderboardOverlay();
+    await this.refreshEndlessLeaderboard();
   }
 
-  private closeLeaderboardSheet(): void {
-    this.leaderboardSheet = null;
-    if (this.state === "challengeSelect") this.renderChallengeSelect();
+  private closeEndlessLeaderboard(): void {
+    this.endlessLeaderboard = null;
+    this.renderEndlessLeaderboardOverlay();
   }
 
-  private renderLeaderboardSheetHtml(): string {
-    const sheet = this.leaderboardSheet;
-    if (!sheet) return "";
-    const challenge = this.communityChallenges.find((c) => c.recordName === sheet.recordName);
-    return LeaderboardSheet.render({
-      title: challenge ? challenge.name : "Leaderboard",
-      loading: sheet.loading,
-      rows: sheet.rows,
-    });
+  private async refreshEndlessLeaderboard(): Promise<void> {
+    const lb = this.endlessLeaderboard;
+    if (!lb) return;
+    // Friends scope on first open: kick the auth prompt before the
+    // fetch so a not-yet-authorized user lands on a useful empty
+    // state rather than an error.
+    if (lb.scope === "friends") {
+      const authorized = await gcRequestFriendsAuth();
+      if (!this.endlessLeaderboard || this.endlessLeaderboard !== lb) return;
+      if (!authorized) {
+        this.endlessLeaderboard = {
+          ...lb,
+          loading: false,
+          rows: [],
+          localPlayer: null,
+          notice: "Friend list permission needed. Enable it in Game Center.",
+        };
+        this.renderEndlessLeaderboardOverlay();
+        return;
+      }
+    }
+    const result = await gcLoadLeaderboardEntries(
+      this.gcDifficulty(lb.difficulty),
+      lb.scope,
+      SCORE_TOP_N,
+    );
+    if (!this.endlessLeaderboard || this.endlessLeaderboard !== lb) return;
+    this.endlessLeaderboard = {
+      ...lb,
+      loading: false,
+      rows: result.entries,
+      localPlayer: result.localPlayer,
+      notice: null,
+    };
+    this.renderEndlessLeaderboardOverlay();
+  }
+
+  // Map our internal Difficulty enum to the LeaderboardDifficulty
+  // type so the GC bridge picks the right leaderboard id.
+  private gcDifficulty(d: Difficulty): "easy" | "medium" | "hard" | "hardcore" {
+    return d;
+  }
+
+  // The endless leaderboard is a modal that sits over the main menu.
+  // Mounted as a child of `this.overlay` so the delegated click
+  // listener bound on the overlay catches taps inside the modal —
+  // and so renderMenu()'s innerHTML reset cleans the modal up when
+  // the user navigates away from the menu.
+  private renderEndlessLeaderboardOverlay(): void {
+    const ID = "endlessLeaderboardHost";
+    let host = document.getElementById(ID);
+    if (!host || host.parentElement !== this.overlay) {
+      host?.remove();
+      host = document.createElement("div");
+      host.id = ID;
+      this.overlay.appendChild(host);
+    }
+    const lb = this.endlessLeaderboard;
+    if (!lb) {
+      host.innerHTML = "";
+      return;
+    }
+    const difficultyLabel: Record<Difficulty, string> = {
+      easy: "Easy",
+      medium: "Medium",
+      hard: "Hard",
+      hardcore: "Painful",
+    };
+    const subtitle = `${difficultyLabel[lb.difficulty]} · ${lb.scope === "friends" ? "Friends" : "Global"}`;
+    const tabs = (["easy", "medium", "hard", "hardcore"] as Difficulty[]).map((d) => ({
+      id: d, label: difficultyLabel[d].toUpperCase(),
+    }));
+    const youRow = lb.localPlayer
+      ? {
+          rank: lb.localPlayer.rank > 0 ? lb.localPlayer.rank : null,
+          score: lb.localPlayer.score,
+          playerName: getGameCenterDisplayName() ?? "YOU",
+        }
+      : null;
+    // Friends sub-tabs only on iOS. Build a small inline strip rather
+    // than hijacking the difficulty tab strip.
+    const showFriendsTab = isGameCenterAvailable();
+    const scopeStripMarkup = showFriendsTab ? `
+      <div class="leaderboard-scope-tabs" role="tablist">
+        ${(["global", "friends"] as LeaderboardScope[]).map((s) => `
+          <button
+            type="button"
+            class="leaderboard-tab${s === lb.scope ? " active" : ""}"
+            role="tab"
+            aria-selected="${s === lb.scope}"
+            data-action="endless-lb-scope"
+            data-scope="${s}"
+          >${s === "friends" ? "FRIENDS" : "GLOBAL"}</button>
+        `).join("")}
+      </div>
+    ` : "";
+    // Convert GC entries to the renderer's row shape (no attempts).
+    const rows = lb.rows.map((e) => ({
+      playerName: e.playerName,
+      score: e.score,
+      isYou: lb.localPlayer ? e.playerId === lb.localPlayer.playerId : false,
+    }));
+    host.innerHTML = LeaderboardSheet.render({
+      title: "High Scores",
+      subtitle,
+      loading: lb.loading,
+      rows,
+      youRow,
+      noticeText: lb.notice ?? undefined,
+      tabs,
+      selectedTabId: lb.difficulty,
+      tabAction: "endless-lb-difficulty",
+      footAction: { label: "View in Game Center", action: "endless-lb-native" },
+    }).replace(
+      // Inject the scope strip immediately after the difficulty tabs.
+      // The leaderboardSheet template puts tabs right before the rows;
+      // we splice the scope strip in there.
+      `<div class="leaderboard-tabs"`,
+      `${scopeStripMarkup}<div class="leaderboard-tabs"`,
+    );
+  }
+
+  // Inline leaderboard panel state for the challenge intro screen.
+  // Resolves a (challengeKey, version) tuple from the active challenge,
+  // fetches the top-N from CloudKit, then asks the intro renderer to
+  // refresh.
+  private resolveChallengeLeaderboardKey(def: ChallengeDef): { key: string; version: number } | null {
+    if (isCustomChallenge(def)) {
+      const custom = getCustomChallenge(def.id);
+      if (!custom) return null;
+      // Installed community challenge: the player is on someone else's
+      // copy → leaderboard keys off the source's record name + version.
+      if (custom.installedFrom) {
+        return {
+          key: `pub:${custom.installedFrom}`,
+          version: custom.installedVersion ?? 1,
+        };
+      }
+      // Author playing their own published challenge. Only resolve a
+      // key when the local content still matches what was published —
+      // otherwise we'd be submitting v2-content scores to the v1 board
+      // and showing the wrong rows on the intro screen. Drafts are
+      // gated separately by hasUnpublishedDraft().
+      if (custom.publishedRecordName && !this.hasUnpublishedDraft(custom)) {
+        return {
+          key: `pub:${custom.publishedRecordName}`,
+          version: custom.publishedVersion ?? 1,
+        };
+      }
+      // Pure local custom (never published, not installed) — no
+      // shared leaderboard exists.
+      return null;
+    }
+    const effective = getEffectiveChallenge(def.id) ?? def;
+    return {
+      key: `off:${def.id}`,
+      version: officialChallengeVersion(effective),
+    };
+  }
+
+  // True when the author has edited a published challenge locally and
+  // the changes haven't been re-published yet. Compares the current
+  // content fingerprint against the one stamped at publish time.
+  // Returns false for never-published challenges and for installed
+  // copies (which are read-only by definition — the editor doesn't
+  // expose them).
+  private hasUnpublishedDraft(custom: CustomChallenge): boolean {
+    if (!custom.publishedRecordName) return false;
+    if (custom.publishedContentHash == null) return false;
+    const live = challengeContentHash({ waves: custom.waves, effects: custom.effects });
+    return live !== custom.publishedContentHash;
+  }
+
+  private async loadIntroLeaderboard(def: ChallengeDef): Promise<void> {
+    const resolved = this.resolveChallengeLeaderboardKey(def);
+    if (!resolved) {
+      this.introLeaderboard = null;
+      return;
+    }
+    if (!isCommunityReadable()) {
+      this.introLeaderboard = null;
+      return;
+    }
+    this.introLeaderboard = {
+      challengeKey: resolved.key,
+      challengeVersion: resolved.version,
+      loading: true,
+      rows: [],
+    };
+    if (this.state === "challengeIntro") this.renderChallengeIntro();
+    const rows = await cloudTopScoresByKey(resolved.key, resolved.version, SCORE_TOP_N);
+    // Bail if the intro screen has been replaced by a different
+    // challenge (or closed) while the fetch was in flight.
+    if (
+      !this.introLeaderboard ||
+      this.introLeaderboard.challengeKey !== resolved.key ||
+      this.introLeaderboard.challengeVersion !== resolved.version
+    ) return;
+    this.introLeaderboard = {
+      challengeKey: resolved.key,
+      challengeVersion: resolved.version,
+      loading: false,
+      rows,
+    };
+    if (this.state === "challengeIntro") this.renderChallengeIntro();
   }
 
   private openReportDialog(recordName: string): void {
@@ -4408,12 +4731,90 @@ export class Game {
   private renderChallengeIntro(): void {
     const def = this.activeChallenge;
     if (!def) return;
+
+    const isCustom = isCustomChallenge(def);
+    const customRecord = isCustom ? getCustomChallenge(def.id) : undefined;
+    const isInstalledCommunity = !!customRecord?.installedFrom;
+    const isOwnPublished = !!customRecord?.publishedRecordName && !customRecord?.installedFrom;
+    const isOwnDraft = isOwnPublished && customRecord ? this.hasUnpublishedDraft(customRecord) : false;
+    const idLabel = isCustom
+      ? (isInstalledCommunity ? "COMMUNITY" : isOwnDraft ? "DRAFT" : isOwnPublished ? "PUBLISHED" : "CUSTOM")
+      : def.id;
+    let byline: string | undefined;
+    if (isInstalledCommunity && customRecord?.installedAuthorName) {
+      byline = `by ${customRecord.installedAuthorName}`;
+    } else if (isOwnDraft) {
+      byline = `unpublished changes (was v${customRecord?.publishedVersion ?? 1})`;
+    } else if (isOwnPublished && customRecord?.publishedVersion) {
+      byline = `published v${customRecord.publishedVersion}`;
+    }
+
+    let best = 0;
+    let stars: 0 | 1 | 2 | 3 = 0;
+    if (isCustom && customRecord) {
+      best = customRecord.best;
+      stars = customRecord.starsEarned;
+    } else if (!isCustom) {
+      const progress = loadChallengeProgress();
+      best = progress.best[def.id] ?? 0;
+      stars = ((progress.stars[def.id] ?? 0) as 0 | 1 | 2 | 3);
+    }
+
+    // Resolve leaderboard panel content. Pure local custom challenges
+    // (no installedFrom and not official) get null = panel hidden.
+    // Author-side drafts (published but locally edited) get a
+    // "publish to update" notice instead of stale rows.
+    const lbState = this.introLeaderboard;
+    const resolved = this.resolveChallengeLeaderboardKey(def);
+    const isDraft = isCustom && customRecord ? this.hasUnpublishedDraft(customRecord) : false;
+    let leaderboardProp: Parameters<typeof ChallengeIntro.render>[0]["leaderboard"] = null;
+    if (isDraft) {
+      leaderboardProp = {
+        loading: false,
+        rows: [],
+        youRow: null,
+        notice: "Unpublished changes — re-publish to refresh the leaderboard.",
+      };
+    } else if (resolved) {
+      const playerId = customRecord?.installedAuthorName; // not actually playerId — left for future linking
+      void playerId;
+      const matches = lbState
+        && lbState.challengeKey === resolved.key
+        && lbState.challengeVersion === resolved.version;
+      const rows = matches ? lbState!.rows.map((r) => ({
+        playerName: r.playerName,
+        score: r.score,
+        attempts: r.attempts,
+        isYou: false, // We don't pre-resolve playerId on intro; submit-side handles in-place display
+      })) : [];
+      // YOU row: show the player's local best below the top-N when
+      // they aren't already in the rendered list.
+      const localBest = best;
+      const youRow = localBest > 0 && !matches
+        ? null  // still loading — don't blink a stale you-row
+        : (localBest > 0
+            ? { rank: null, score: localBest, playerName: getGameCenterDisplayName() ?? "YOU" }
+            : null);
+      leaderboardProp = {
+        loading: !matches || (lbState?.loading ?? true),
+        rows,
+        youRow,
+        notice: !isCommunityReadable()
+          ? "Leaderboards aren't reachable from this build."
+          : undefined,
+      };
+    }
+
     this.overlay.innerHTML = ChallengeIntro.render({
       id: def.id,
+      idLabel,
       name: def.name,
+      byline,
       difficulty: def.difficulty,
       waveCount: def.waves.length,
-      best: loadChallengeProgress().best[def.id] ?? 0,
+      best,
+      stars,
+      leaderboard: leaderboardProp,
     });
     this.overlay.classList.remove("hidden");
   }
@@ -7067,17 +7468,12 @@ export class Game {
         else if (this.score >= custom.stars.one) stars = 1;
       }
       saveCustomChallengeRun(def.id, this.score, 1, stars);
-      // Community: if this is an installed challenge, fire the score off
-      // to the per-challenge leaderboard (best per player; submit only
-      // upserts when the new score is higher).
-      if (custom?.installedFrom) {
-        void submitCommunityScore(
-          custom.installedFrom,
-          getGameCenterDisplayName() ?? "Anonymous",
-          this.score,
-          1,
-        );
-      }
+      // Community: fire the score off to the per-challenge leaderboard
+      // for any custom challenge that has a published presence — either
+      // installed from someone else, or our own publish (so authors
+      // appear on their own boards). Top-10 cap + version filtering
+      // are enforced server-side by submitChallengeScore.
+      if (custom) this.submitCustomScore(custom, this.score, 1);
       this.state = "challengeComplete";
       this.setPauseButtonVisible(false);
       stopMusic();
@@ -7110,10 +7506,54 @@ export class Game {
       if (achId) this.awardAchievement(achId);
     }
 
+    // Official challenge: also push a Score row keyed by the content
+    // hash so the per-challenge leaderboard reflects this run.
+    this.submitOfficialScore(def, this.score, 1);
+
     this.state = "challengeComplete";
     this.setPauseButtonVisible(false);
     stopMusic();
     this.renderChallengeComplete(newlyUnlocked);
+  }
+
+  // Push an official-challenge score to CloudKit. Version is derived
+  // from the *effective* def (override-applied) so a balance tweak
+  // wipes old rows from the leaderboard the same way a community
+  // re-publish does.
+  private submitOfficialScore(def: ChallengeDef, score: number, pct: number): void {
+    if (!isCloudKitAvailable()) return;
+    const effective = getEffectiveChallenge(def.id) ?? def;
+    void submitChallengeScore(
+      `off:${def.id}`,
+      officialChallengeVersion(effective),
+      getGameCenterDisplayName() ?? "Anonymous",
+      score,
+      pct,
+    );
+  }
+
+  // Push a custom-challenge score to CloudKit. The same row is keyed
+  // by either the source (`installedFrom`) or the author's own
+  // publish (`publishedRecordName`) so authors playing their own
+  // challenge land on the same leaderboard as everyone else. Drops
+  // the submit silently when the author is playing an unpublished
+  // draft — submitting would post v2-content scores to the v1 board.
+  private submitCustomScore(custom: CustomChallenge, score: number, pct: number): void {
+    if (!isCloudKitAvailable()) return;
+    const recordName = custom.installedFrom ?? custom.publishedRecordName;
+    if (!recordName) return;  // pure local — never published, never installed
+    if (!custom.installedFrom && this.hasUnpublishedDraft(custom)) return;
+    const version = custom.installedFrom
+      ? (custom.installedVersion ?? 1)
+      : (custom.publishedVersion ?? 1);
+    void submitChallengeScore(
+      `pub:${recordName}`,
+      version,
+      getGameCenterDisplayName() ?? "Anonymous",
+      score,
+      pct,
+      recordName,
+    );
   }
 
   // Called from death path to bank a partial-run best score + best-pct.
@@ -7123,17 +7563,11 @@ export class Game {
     if (isCustomChallenge(def)) {
       saveCustomChallengeRun(def.id, this.score, this.progress, 0);
       const custom = getCustomChallenge(def.id);
-      if (custom?.installedFrom) {
-        void submitCommunityScore(
-          custom.installedFrom,
-          getGameCenterDisplayName() ?? "Anonymous",
-          this.score,
-          this.progress,
-        );
-      }
+      if (custom) this.submitCustomScore(custom, this.score, this.progress);
       return;
     }
     saveChallengeBest(def.id, this.score, this.progress);
+    this.submitOfficialScore(def, this.score, this.progress);
   }
 
   // ----- Wave / difficulty system -----

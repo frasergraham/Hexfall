@@ -8,8 +8,10 @@
   },
   "scripts": {
     "dev": "vite",
+    "prebuild": "tsx scripts/build-official-versions.ts",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "prebuild:ios": "tsx scripts/build-official-versions.ts",
     "build:ios": "tsc && vite build --base=./",
     "ios:add": "cap add ios --packagemanager SPM",
     "ios:sync": "npm run build:ios && cap sync ios && node scripts/patch-cap-plugins.mjs",

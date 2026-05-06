@@ -58,6 +58,33 @@ node scripts/moderator.mjs unhide pub-abcd1234-ef567890
 node scripts/moderator.mjs recount-upvotes pub-abcd1234-ef567890
 ```
 
+## Score maintenance
+
+`Score` rows are pinned to a `(challengeKey, challengeVersion)` tuple
+so a content change (community re-publish, official wave-list edit)
+makes old rows invisible to the client immediately. They linger in
+CloudKit until the purge job sweeps them up.
+
+```sh
+# One-time: backfill challengeKey/challengeVersion onto rows written
+# before the schema migration. Idempotent — already-current rows are
+# skipped.
+node scripts/moderator.mjs backfill-score-keys --dry-run
+node scripts/moderator.mjs backfill-score-keys
+
+# Periodic (e.g. weekly cron): delete Score rows whose version no
+# longer matches the current published version (community) or the
+# current content hash (official). Also enforces the per-(key,version)
+# top-10 cap.
+node scripts/moderator.mjs purge-stale-scores --dry-run
+node scripts/moderator.mjs purge-stale-scores
+```
+
+Official challenge versions are read from `scripts/official-versions.json`,
+which is written by the prebuild step (`tsx scripts/build-official-versions.ts`).
+After bumping a wave list in `src/challenges.ts`, run `npm run build`
+to refresh the file before running `purge-stale-scores`.
+
 The `recordName` in each command is shown in the `list-reports` output
 (it starts with `pub-`).
 
