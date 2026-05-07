@@ -116,6 +116,43 @@ import { loadBool, loadJson, loadString, removeKey, saveBool, saveJson, saveStri
 import { STORAGE_KEYS } from "./storageKeys";
 import { computeWaveParams, lateGameSpeedMul } from "./spawn";
 import { highestTierCrossed, stepMilestones } from "./scoring";
+import {
+  ANGLED_SPAWNS_SCORE,
+  BASE_FALL_SPEED,
+  BIG_DURATION,
+  BIG_MULTIPLIER_BASE,
+  BIG_MULTIPLIER_STEP,
+  BIG_SIZE_BASE,
+  BIG_SIZE_STEP,
+  CHALLENGE_BASE_FALL_SPEED,
+  CHALLENGE_MAX_FALL_SPEED,
+  COIN_SCORE_BONUS,
+  DIFFICULTY_CONFIG,
+  type DifficultyConfig,
+  DRONE_DURATION,
+  FAST_EFFECT_DURATION,
+  FAST_MULTIPLIER_BASE,
+  FAST_MULTIPLIER_STEP,
+  FAST_TIMESCALE_BASE,
+  FAST_TIMESCALE_STEP,
+  LOSE_COMBO,
+  MAX_FALL_SPEED,
+  pickKind as pickKindPure,
+  SHIELD_DURATION,
+  SIDE_SPAWNS_SCORE,
+  SLOW_EFFECT_DURATION,
+  SLOW_TIMESCALE,
+  SPEED_RAMP,
+  STICK_INVULN_MS,
+  STICK_SLOW_BUFFER,
+  STICKY_MIN_SCORE,
+  SWARM_SPAWN_INTERVAL,
+  SWARM_STICKY_CHANCE,
+  SWARM_WAVE_CHANCE,
+  TINY_DURATION,
+  TINY_PLAYER_SCALE,
+  TINY_REHIT_BONUS,
+} from "./spawnKind";
 import { escapeHtml } from "./ui/escape";
 import { drawBlockIcon } from "./ui/components/blockIcon";
 import { BlocksGuide } from "./ui/screens/blocksGuide";
@@ -184,115 +221,9 @@ const BONUS_POOL_TIERS: ReadonlyArray<{ threshold: number; id: AchievementId }> 
 const HEX_SIZE_BASE = 22;
 const BOARD_COLS = 9;
 
-// Difficulty knobs. Multipliers stack on top of the medium baseline:
-// fall speed (initial cluster velocity), spawn interval (how often
-// clusters arrive — bigger = slower), per-tier spawn weights, and
-// timed-effect duration. `effectDurationMul` is the default for every
-// timed effect; per-effect overrides (slow/fast/shield/drone) take
-// precedence so hardcore can stretch fast while shrinking shields and
-// drones independently.
-//
-// Spawn picker uses a two-tier model: a single uniform roll picks a
-// tier (Sticky / Helpful / Challenge / Normal), then the kind is
-// chosen uniformly among eligible kinds inside that tier.
-//   Helpful   = coin, slow, tiny, shield, drone (defensive / reward)
-//   Challenge = fast, big                       (risk → bank multiplier)
-// `helpfulExclude` lets a difficulty drop a kind entirely (PAINFUL has
-// no slow). Score gates inside a tier redistribute the tier weight
-// among whichever kinds are currently eligible.
-interface DifficultyConfig {
-  fallSpeedMul: number;
-  spawnIntervalMul: number;
-  stickyMul: number;
-  helpfulMul: number;
-  challengeMul: number;
-  helpfulExclude?: readonly ClusterKind[];
-  // Per-difficulty score gates for tiny/big. Override the global
-  // *_MIN_SCORE defaults so easy can hold them back longer (gives the
-  // player time to learn the basics) while medium/hard let them show
-  // up alongside slow/fast.
-  tinyMinScore?: number;
-  bigMinScore?: number;
-  effectDurationMul: number;
-  slowDurationMul?: number;
-  fastDurationMul?: number;
-  shieldDurationMul?: number;
-  droneDurationMul?: number;
-  tinyDurationMul?: number;
-  bigDurationMul?: number;
-  // Score thresholds for wall variants. `narrowingScore` gates pinch
-  // (the original "narrowing wave" hence the legacy name); zigzag and
-  // narrow have their own thresholds that hardcore lowers aggressively.
-  narrowingScore: number;
-  zigzagScore: number;
-  narrowScore: number;
-  // Player size at which the danger glow appears and a blue hit becomes
-  // lethal. Default 7; hardcore drops it to 3.
-  dangerSize: number;
-}
-
-const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
-  easy: {
-    fallSpeedMul: 0.8,
-    spawnIntervalMul: 1.25,
-    stickyMul: 1.5,
-    helpfulMul: 1.32,
-    challengeMul: 1.0,
-    tinyMinScore: 300,
-    bigMinScore: 300,
-    effectDurationMul: 1.2,
-    narrowingScore: 600,
-    zigzagScore: 800,
-    narrowScore: 1000,
-    dangerSize: 7,
-  },
-  medium: {
-    fallSpeedMul: 1.0,
-    spawnIntervalMul: 1.0,
-    stickyMul: 1.0,
-    helpfulMul: 1.0,
-    challengeMul: 1.0,
-    tinyMinScore: 300,
-    bigMinScore: 300,
-    effectDurationMul: 1.0,
-    narrowingScore: 600,
-    zigzagScore: 800,
-    narrowScore: 1000,
-    dangerSize: 7,
-  },
-  hard: {
-    fallSpeedMul: 1.35,
-    spawnIntervalMul: 0.85,
-    stickyMul: 0.6,
-    helpfulMul: 0.84,
-    challengeMul: 1.0,
-    tinyMinScore: 0,
-    bigMinScore: 0,
-    effectDurationMul: 0.8,
-    narrowingScore: 200,
-    zigzagScore: 800,
-    narrowScore: 1000,
-    dangerSize: 7,
-  },
-  hardcore: {
-    fallSpeedMul: 1.5,
-    spawnIntervalMul: 0.75,
-    stickyMul: 0.5,
-    helpfulMul: 0.53,
-    challengeMul: 1.0,
-    helpfulExclude: ["slow"],
-    effectDurationMul: 1.0,
-    fastDurationMul: 2.0,
-    shieldDurationMul: 0.5,
-    droneDurationMul: 0.5,
-    tinyDurationMul: 0.5,
-    bigDurationMul: 0.5,
-    narrowingScore: 100,
-    zigzagScore: 200,
-    narrowScore: 400,
-    dangerSize: 3,
-  },
-};
+// DifficultyConfig + DIFFICULTY_CONFIG live in src/spawnKind.ts so the
+// offline balance simulator (scripts/simulate.ts) can consume the same
+// numbers and tier-dispatch logic the live game uses.
 
 const DIFFICULTY_STORAGE_KEY = STORAGE_KEYS.difficulty;
 const DIFFICULTY_DEFAULT: Difficulty = "medium";
@@ -338,24 +269,8 @@ function saveCollapsed(key: CollapsibleKey, collapsed: boolean): void {
   saveBool(COLLAPSED_KEYS[key], collapsed);
 }
 
-const BASE_FALL_SPEED = 1.6; // initial downward velocity for spawned clusters (px/ms)
-const SPEED_RAMP = 0.04; // px/ms per score
-const MAX_FALL_SPEED = 5.5;
-
-// Challenge clusters maintain a constant fall velocity (gravity is
-// re-cancelled each frame in update()) so `speed=` in the wave DSL is
-// the literal fall rate. CHALLENGE_BASE_FALL_SPEED is tuned so that
-// `speed=1.0` feels close to gravity-driven endless mode (which lands
-// near ~12 px/step after the first half-second). speed=0.5 reads as
-// clearly slow, speed=3 as clearly fast.
-const CHALLENGE_BASE_FALL_SPEED = 12;
-const CHALLENGE_MAX_FALL_SPEED = 60;
-
-// SPAWN_INTERVAL_START / _MIN / _RAMP moved to src/spawn.ts in
-// Phase 1.5 — wave-cadence math is pure and lives there now.
-
-const LOSE_COMBO = 2;
-const STICK_INVULN_MS = 180;
+// Balance constants moved to src/spawnKind.ts. Visual/audio/animation
+// tunables that the simulator doesn't need stay here.
 
 // Stick-in-flight tuning. When a blue cluster part lands a hit it spawns a
 // small unrooted hex body that we drive toward the player's target cell
@@ -368,60 +283,17 @@ const STICK_FLIGHT_SNAP_DIST_FRAC = 0.35; // fraction of hexSize → addCell
 const STICK_FLIGHT_CLOSE_STEPS = 7; // steps the homing piece would take to close the full gap
 const STICK_FLIGHT_VELOCITY_BLEND = 0.35; // per-frame lerp toward the desired velocity
 
-// Spawn picker tier weights at the medium baseline. A uniform roll
-// picks a tier; per-kind weight inside the tier is uniform across
-// whichever kinds are currently eligible (score-gated). Failed tier
-// gates fall through to Normal. Tunable — exact-restore of pre-BIG/TINY
-// normal share at score ≥400, but expected to drift as we iterate.
-const SPAWN_STICKY_TIER_WEIGHT = 0.10;
-const SPAWN_HELPFUL_TIER_WEIGHT = 0.19;
-const SPAWN_CHALLENGE_TIER_WEIGHT = 0.05;
-
-const STICKY_MIN_SCORE = 3;
-const COIN_SCORE_BONUS = 5;
-const POWERUP_MIN_SCORE = 5;
-const SHIELD_MIN_SCORE = 200;
-const SHIELD_DURATION = 10; // seconds
-const DRONE_MIN_SCORE = 400;
-const DRONE_DURATION = 10; // seconds
 const DRONE_SIZE_FACTOR = 0.5; // multiplier on hexSize for the drone body
 const DRONE_OSCILLATION_SPEED = 0.7; // radians/sec for the back-and-forth
-const TINY_MIN_SCORE = 5;
-const TINY_DURATION = 5; // seconds
-const TINY_PLAYER_SCALE = 0.5; // player hex-size multiplier while tiny is active
-const TINY_REHIT_BONUS = 2; // points awarded if a second tiny is hit while still tiny
-const BIG_MIN_SCORE = 5;
-const BIG_DURATION = 5; // seconds
-const BIG_SIZE_BASE = 1.5; // first big pickup grows the player by 50%
-const BIG_SIZE_STEP = 0.15; // each subsequent big pickup adds 15% more
-const BIG_MULTIPLIER_BASE = 3; // first big pickup multiplies passes 3x
-const BIG_MULTIPLIER_STEP = 1; // each stack bumps the multiplier by 1
+
 // Per-second exponential approach rate for the smooth shrink/grow animation
 // of the player's hex size when tiny / big toggle on or off.
 const PLAYER_SCALE_RATE = 8;
 
-// Time-effect tuning.
-const SLOW_EFFECT_DURATION = 5;
 // Duration of the slow_up.mp3 wind-up sound. We start playing it this
 // many seconds before the slow timer expires so the audio finishes
 // exactly when the countdown bar empties.
 const SLOW_UP_LEAD = 3.3;
-const FAST_EFFECT_DURATION = 5;
-const STICK_SLOW_BUFFER = 1; // brief slow-mo after gaining a hex
-const SLOW_TIMESCALE = 0.5;
-const FAST_TIMESCALE_BASE = 1.25; // first fast pickup
-const FAST_TIMESCALE_STEP = 0.1; // each subsequent stack adds this much speed
-const FAST_MULTIPLIER_BASE = 3; // first fast pickup multiplies passes 3x
-const FAST_MULTIPLIER_STEP = 1; // each stack bumps the multiplier by 1
-
-// Wave variants.
-const SWARM_WAVE_CHANCE = 0.35; // chance any given wave is a single-hex swarm
-const SWARM_SPAWN_INTERVAL = 0.18; // very short interval during swarms
-const SWARM_STICKY_CHANCE = 0.12; // chance a swarm hex spawns as a heal instead of blue
-
-// Score thresholds for advanced spawn mechanics.
-const ANGLED_SPAWNS_SCORE = 200;
-const SIDE_SPAWNS_SCORE = 400;
 
 const PLAYER_MOVE_SPEED = 18; // px/ms (Matter velocity units, keyboard hold)
 const PLAYER_ROT_SPEED = 0.12; // rad/ms (keyboard hold)
@@ -6878,36 +6750,6 @@ export class Game {
     Composite.add(this.engine.world, cluster.body);
   }
 
-  // Pick a kind from the Helpful tier — coin (always), slow, tiny,
-  // shield, drone — uniform across whichever ones currently pass their
-  // score gate and aren't excluded by the difficulty config. Returns
-  // null if nothing is eligible (which should never happen since coin
-  // is always eligible unless the difficulty excludes it).
-  private pickHelpfulKind(cfg: DifficultyConfig): ClusterKind | null {
-    const exclude = cfg.helpfulExclude;
-    const pool: ClusterKind[] = [];
-    const allow = (k: ClusterKind, gate: boolean) => {
-      if (gate && !(exclude && exclude.includes(k))) pool.push(k);
-    };
-    allow("coin", true);
-    allow("slow", this.score >= POWERUP_MIN_SCORE);
-    allow("tiny", this.score >= (cfg.tinyMinScore ?? TINY_MIN_SCORE));
-    allow("shield", this.score >= SHIELD_MIN_SCORE);
-    allow("drone", this.score >= DRONE_MIN_SCORE);
-    if (pool.length === 0) return null;
-    return pool[Math.floor(Math.random() * pool.length)];
-  }
-
-  // Pick a kind from the Challenge tier — fast, big — uniform across
-  // whichever pass their score gate.
-  private pickChallengeKind(cfg: DifficultyConfig): ClusterKind | null {
-    const pool: ClusterKind[] = [];
-    if (this.score >= POWERUP_MIN_SCORE) pool.push("fast");
-    if (this.score >= (cfg.bigMinScore ?? BIG_MIN_SCORE)) pool.push("big");
-    if (pool.length === 0) return null;
-    return pool[Math.floor(Math.random() * pool.length)];
-  }
-
   private spawnCluster(): void {
     // Very first spawn of the run: force a centered single-cell blue
     // cluster so the first-ever AVOID hint label is dead-centre. This
@@ -6937,18 +6779,7 @@ export class Game {
         kind = "sticky";
       }
     } else {
-      const cfg = this.cfg();
-      const stickyEnd = SPAWN_STICKY_TIER_WEIGHT * cfg.stickyMul;
-      const helpfulEnd = stickyEnd + SPAWN_HELPFUL_TIER_WEIGHT * cfg.helpfulMul;
-      const challengeEnd = helpfulEnd + SPAWN_CHALLENGE_TIER_WEIGHT * cfg.challengeMul;
-      const r = Math.random();
-      if (r < stickyEnd) {
-        if (this.score >= STICKY_MIN_SCORE) kind = "sticky";
-      } else if (r < helpfulEnd) {
-        kind = this.pickHelpfulKind(cfg) ?? "normal";
-      } else if (r < challengeEnd) {
-        kind = this.pickChallengeKind(cfg) ?? "normal";
-      }
+      kind = pickKindPure(this.cfg(), this.score, Math.random);
     }
 
     // Coin / shield / drone pickups and swarm hexes are always single-cell.
