@@ -272,6 +272,19 @@ function saveCollapsed(key: CollapsibleKey, collapsed: boolean): void {
 // Balance constants moved to src/spawnKind.ts. Visual/audio/animation
 // tunables that the simulator doesn't need stay here.
 
+// Continuous-ish collision detection. Default Matter has no CCD — a
+// fast body integrates its full velocity in one Engine.update step
+// and can land deep inside another body. At late-game speeds this
+// caused fast stickies (single-hex heals) to register their SAT
+// contact deep inside the player blob; the closest-cell removal then
+// picked a structural keystone, and the connectivity sweep cascaded
+// the player from 7 cells to 1 in a single contact. We subdivide the
+// physics step so no body moves more than CCD_SAFE_STEP_PX per
+// substep — which keeps the SAT support point at the surface where
+// it should be.
+const CCD_SAFE_STEP_PX = 12;
+const CCD_MAX_SUBSTEPS = 16;
+
 // Stick-in-flight tuning. When a blue cluster part lands a hit it spawns a
 // small unrooted hex body that we drive toward the player's target cell
 // each frame via direct velocity blending. We deliberately don't use a
@@ -5044,7 +5057,7 @@ export class Game {
     // wreckage / practice clusters lurk behind the overlay.
     if ((this.state === "editorEdit" || this.state === "editorHome") && this.editorDialogPreview) {
       this.clampChallengeFallVelocities();
-      Engine.update(this.engine, Math.min(dt * 1000, 1000 / 30));
+      this.stepPhysics(Math.min(dt * 1000, 1000 / 30));
       this.cleanupOffscreenBodies();
       this.tickWalls(dt);
       this.tickWavePreview(dt);
@@ -5057,7 +5070,7 @@ export class Game {
     // shatters into debris but the debris is frozen in place because
     // nothing steps the engine until PLAY AGAIN.
     if (this.state === "gameover") {
-      Engine.update(this.engine, Math.min(dt * 1000, 1000 / 30));
+      this.stepPhysics(Math.min(dt * 1000, 1000 / 30));
       const screenBottom = this.boardOriginY + this.boardHeight + this.hexSize;
       this.debris = this.debris.filter((d) => {
         const alive = d.update(dt);
@@ -5207,8 +5220,8 @@ export class Game {
     // doesn't drift them off-spec. No-op in endless mode (no targetVy).
     this.clampChallengeFallVelocities();
 
-    // Step physics with scaled time.
-    Engine.update(this.engine, Math.min(gameDt * 1000, 1000 / 30));
+    // Step physics with scaled time. CCD substepping inside.
+    this.stepPhysics(Math.min(gameDt * 1000, 1000 / 30));
 
     // Constrain player to the rail using bounds, so the rotated/grown blob
     // never extends past the board bottom — and to the (possibly pinched)
@@ -5681,6 +5694,27 @@ export class Game {
   // left alone (gravity will recover them gradually). Horizontal
   // velocity is always preserved so side entries, tilt, and post-
   // collision shove still play out. Endless-mode clusters have
+  // Substep Engine.update so no cluster moves more than ~half a hex
+  // per step. See CCD_SAFE_STEP_PX comment for why.
+  private stepPhysics(ms: number): void {
+    let maxV = 0;
+    for (const c of this.clusters) {
+      if (!c.alive) continue;
+      const v = c.body.velocity;
+      const m = Math.hypot(v.x, v.y);
+      if (m > maxV) maxV = m;
+    }
+    const movePerStep = maxV * ms;
+    const substeps = Math.max(
+      1,
+      Math.min(CCD_MAX_SUBSTEPS, Math.ceil(movePerStep / CCD_SAFE_STEP_PX)),
+    );
+    const subDt = ms / substeps;
+    for (let i = 0; i < substeps; i++) {
+      Engine.update(this.engine, subDt);
+    }
+  }
+
   // targetVy === null and are skipped.
   private clampChallengeFallVelocities(): void {
     if (this.clusters.length === 0) return;

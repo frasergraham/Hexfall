@@ -121,9 +121,14 @@ export const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
 };
 
 // Endless mode initial cluster fall velocities (Matter px/ms units).
+// MAX_FALL_SPEED is the cap that BASE_FALL_SPEED + score × SPEED_RAMP
+// charges into. Reduced to 3.5 (from 5.5) once CCD substepping landed
+// — the old cap relied on the discrete physics step "smoothing" deep
+// penetrations, which it didn't, and late-game runs felt too fast
+// regardless. With CCD on we don't need the speed for difficulty.
 export const BASE_FALL_SPEED = 1.6;
 export const SPEED_RAMP = 0.04; // px/ms per score
-export const MAX_FALL_SPEED = 5.5;
+export const MAX_FALL_SPEED = 3.5;
 
 // Challenge clusters maintain a constant fall velocity (gravity is
 // re-cancelled each frame) so `speed=` in the wave DSL is the literal
