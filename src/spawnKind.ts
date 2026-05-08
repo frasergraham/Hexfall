@@ -106,13 +106,18 @@ export const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
     stickyMul: 0.5,
     helpfulMul: 0.53,
     challengeMul: 1.0,
-    helpfulExclude: ["slow"],
+    // PAINFUL drops slow + tiny entirely. Slow softens the difficulty
+    // (counter to the mode's intent) and tiny would let the player
+    // out-shrink the dangerSize:3 ceiling.
+    helpfulExclude: ["slow", "tiny"],
     effectDurationMul: 1.0,
+    // Both challenge-tier bonuses (fast + big) run long on hardcore —
+    // they're risk/reward levers and longer duration makes the bonus
+    // pool more meaningful when you survive it.
     fastDurationMul: 2.0,
+    bigDurationMul: 2.0,
     shieldDurationMul: 0.5,
     droneDurationMul: 0.5,
-    tinyDurationMul: 0.5,
-    bigDurationMul: 0.5,
     narrowingScore: 100,
     zigzagScore: 200,
     narrowScore: 400,
