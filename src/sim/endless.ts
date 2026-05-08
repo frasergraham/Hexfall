@@ -29,10 +29,10 @@ const BOARD_COLS = 9;
 const HALF_COLS = (BOARD_COLS - 1) / 2; // 4
 
 // Sim time-budget caps to prevent runaway loops on too-easy configs.
-// Cap raised so skilled+ players don't all saturate at the same number;
-// real-world top scores can clear 5000.
-const SCORE_TIMEOUT = 8000;
-const SECS_TIMEOUT = 1200;
+// Real top scores cluster around ~1700; the 5000 cap is a generous
+// guardrail for outlier perfect runs without saturating typical play.
+const SCORE_TIMEOUT = 5000;
+const SECS_TIMEOUT = 600;
 
 // Reaction-window scaling. Anchor: at score 0, medium difficulty,
 // no active timescale, the cluster spends ~2.5 sim seconds in flight.

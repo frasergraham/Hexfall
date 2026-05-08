@@ -13,8 +13,8 @@ import type { SkillProfile } from "./types";
 export const SKILLS: ReadonlyArray<SkillProfile> = [
   { name: "novice",  reactionMs: 320, accuracy: 0.72, greed: 0.55, lateralColsPerSec:  9 },
   { name: "casual",  reactionMs: 220, accuracy: 0.85, greed: 0.65, lateralColsPerSec: 11 },
-  { name: "skilled", reactionMs: 130, accuracy: 0.93, greed: 0.75, lateralColsPerSec: 13 },
-  { name: "expert",  reactionMs:  70, accuracy: 0.98, greed: 0.85, lateralColsPerSec: 15 },
+  { name: "skilled", reactionMs: 150, accuracy: 0.91, greed: 0.75, lateralColsPerSec: 12 },
+  { name: "expert",  reactionMs: 110, accuracy: 0.95, greed: 0.85, lateralColsPerSec: 13 },
 ];
 
 export function skillByName(name: string): SkillProfile | undefined {

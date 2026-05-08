@@ -251,11 +251,15 @@ function resolveBlue(state: SimState, event: SpawnEvent, ctx: BlueCtx): boolean 
   }
 
   // Player is in the cluster's footprint at impact. Skilled players
-  // can still micro-adjust at the last moment — accuracy drives a wide
-  // range (novice 0.55 → 0.78 hit; expert 0.97 → 0.61 hit).
-  let pHit = 0.6 + 0.4 * (1 - state.skill.accuracy);
+  // can still micro-adjust at the last moment.
+  let pHit = 0.4 + 0.4 * (1 - state.skill.accuracy);
   if (ctx.fastActive) pHit *= 0.7;
-  if (ctx.inDanger) pHit = Math.min(1, pHit * 1.2);
+  if (ctx.inDanger) {
+    // In danger: skilled players become MORE careful (they know one
+    // more hit ends it), novices panic and slip up.
+    pHit *= state.skill.accuracy >= 0.85 ? 0.6 : 1.3;
+  }
+  pHit = Math.min(1, pHit);
 
   if (state.rng() < pHit) {
     state.size += event.size;
@@ -307,6 +311,9 @@ function clampCol(col: number): number {
 
 // Crude collision footprint check: half-widths added together. Player
 // cells are ~1 col each; cluster size N spreads across sqrt(N) cols.
+// The +0.6 buffer counts near-misses as collisions — Matter's SAT can
+// land a contact with even tangential clusters, so a real player needs
+// to dodge with margin, not graze.
 function isOnCourse(
   playerCol: number,
   clusterCol: number,
@@ -316,7 +323,7 @@ function isOnCourse(
 ): boolean {
   const playerHalf = Math.sqrt(playerSize) * playerSizeMul * 0.5;
   const clusterHalf = Math.sqrt(clusterSize) * 0.5;
-  return Math.abs(playerCol - clusterCol) <= playerHalf + clusterHalf + 0.3;
+  return Math.abs(playerCol - clusterCol) <= playerHalf + clusterHalf + 0.6;
 }
 
 // Move state.column toward state.targetCol by skill.lateralColsPerSec
@@ -331,11 +338,12 @@ export function advancePlayerPosition(state: SimState, t: number): void {
   state.column = clampCol(state.column + dir * move);
 }
 
-// Lookahead planner: pick the best column to head toward given the
-// queue of in-flight clusters. Looks ~1.5 sim seconds ahead. Decision
-// rule: imminent on-course blue forces a dodge; otherwise chase the
-// highest-utility helpful that's reachable; default = stay put.
-const LOOKAHEAD_HORIZON_SEC = 1.5;
+// Lookahead horizon. Clusters typically have ~2.5s flight time, so a
+// horizon below that means the player sees them mid-flight, not at
+// spawn. Real-game telemetry showed top players grind Medium higher
+// than Easy because they can read the queue from the moment a cluster
+// appears — a 2.5s horizon captures that.
+const LOOKAHEAD_HORIZON_SEC = 2.5;
 
 export function chooseTarget(
   state: SimState,
@@ -343,8 +351,28 @@ export function chooseTarget(
 ): void {
   const skill = state.skill;
 
-  // Skill-scaled lookahead horizon — novices read fewer clusters ahead.
-  const horizon = LOOKAHEAD_HORIZON_SEC * (0.4 + 0.6 * skill.accuracy);
+  // Plan failure: even experts occasionally misread the queue. A failed
+  // plan freezes the player at their current column for one event,
+  // simulating a hesitation / brain-fart. Rate scales with skill,
+  // run length (cognitive fatigue), and queue size (more clusters in
+  // flight = more cognitive load).
+  const fatigue = Math.max(0, (state.tNow - 60) / 60); // grows past 60s, unbounded
+  const queueLoad = Math.max(0, inFlight.length - 2) * 0.02;
+  const planFailureProb =
+    (1 - skill.accuracy) * 0.4 + Math.min(0.4, fatigue * 0.04) + queueLoad;
+  if (state.rng() < planFailureProb) {
+    state.targetCol = state.column;
+    return;
+  }
+
+  // Skill-scaled lookahead horizon. Spread is narrower now — even
+  // novices read most of the queue, they just react slower to it.
+  const skillFactor = 0.7 + 0.3 * skill.accuracy;
+  // Late-game cognitive overload: at high score, the queue churns
+  // faster than the player can re-plan. Horizon shrinks linearly past
+  // score 600, floored at 50% of base.
+  const overload = Math.max(0.5, 1 - Math.max(0, state.score - 600) / 2500);
+  const horizon = LOOKAHEAD_HORIZON_SEC * skillFactor * overload;
   const horizonCutoff = state.tNow + horizon;
   const playerSizeMul = state.bigUntil > state.tNow ? state.bigSize : state.tinyUntil > state.tNow ? 0.5 : 1;
   const playerHalf = Math.sqrt(state.size) * playerSizeMul * 0.5;
@@ -437,7 +465,7 @@ function pickSafeDodgeCol(
   myDanger?: { column: number; half: number; t: number },
 ): number | null {
   const clusterHalf = Math.sqrt(cluster.size) * 0.5;
-  const requiredOffset = playerHalf + clusterHalf + 0.6;
+  const requiredOffset = playerHalf + clusterHalf + 1.0;
   // Candidates: just outside the cluster on each side, plus board edges.
   const candidates = [
     cluster.column + requiredOffset,
