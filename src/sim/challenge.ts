@@ -1,13 +1,20 @@
 // Challenge-mode run loop. Iterates def.waves, parsing each line via
 // the live waveDsl, then feeding both the scripted slot stream and the
-// probabilistic stream through resolveEncounter.
+// probabilistic stream through the lookahead queue model — same shape
+// as endless.ts so chooseTarget gets to plan ahead.
 
 import type { Difficulty, ClusterKind } from "../types";
 import { hashSeed, mulberry32 } from "../rng";
 import { DIFFICULTY_CONFIG, type DifficultyConfig } from "../spawnKind";
 import { parseWaveLine, type ParsedWave } from "../waveDsl";
 import type { ChallengeDef } from "../challenges";
-import { finalizeRun, initSimState, resolveEncounter } from "./encounter";
+import {
+  advancePlayerPosition,
+  chooseTarget,
+  finalizeRun,
+  initSimState,
+  resolveEncounter,
+} from "./encounter";
 import type { RunResult, SimState, SkillProfile, SpawnEvent } from "./types";
 
 const HALF_COLS = 4;
@@ -17,15 +24,10 @@ const HALF_COLS = 4;
 const BASE_REACTION_WINDOW_SEC = 2.5;
 
 // Map a roster ChallengeDef to a synthetic difficulty for cfg lookup.
-// Roster challenges run against a "challenge" config that's roughly
-// medium with the per-challenge effect overrides applied. For the
-// simulator we use medium as the base and overlay def.effects.
 function challengeCfg(def: ChallengeDef): DifficultyConfig {
   const base = DIFFICULTY_CONFIG.medium;
   const effects = def.effects;
   if (!effects) return base;
-  // Only effect-duration & dangerSize overrides are honoured at the
-  // sim level. Everything else stays at medium values.
   return {
     ...base,
     dangerSize: effects.dangerSize ?? base.dangerSize,
@@ -44,7 +46,6 @@ function challengeCfg(def: ChallengeDef): DifficultyConfig {
   };
 }
 
-// Pick a kind from the wave's `weights` table with the given rng draw.
 function pickWeightedKind(weights: Partial<Record<ClusterKind, number>>, rng: () => number): ClusterKind {
   const entries = Object.entries(weights) as Array<[ClusterKind, number]>;
   let total = 0;
@@ -58,99 +59,144 @@ function pickWeightedKind(weights: Partial<Record<ClusterKind, number>>, rng: ()
   return entries[entries.length - 1][0];
 }
 
-// Project a single wave into the run, mutating sim state. Returns true
-// if the run ended. The `spawnRng` arg is the deterministic per-wave
-// stream used for slot/prob picks; player-decision randomness still
-// comes from state.rng so distributions vary across runs even when
-// the spawn layout is fixed.
+function insertByImpact(queue: SpawnEvent[], event: SpawnEvent): void {
+  let i = queue.length;
+  while (i > 0 && queue[i - 1].t > event.t) i--;
+  queue.splice(i, 0, event);
+}
+
+interface PendingSpawn {
+  spawnT: number;
+  build: () => SpawnEvent;
+}
+
+// Pre-compute every spawn for the wave (slots + prob stream) as a list
+// of PendingSpawn entries with deterministic times. The run loop then
+// merges them with the in-flight impact queue.
+function expandWaveSpawns(
+  wave: ParsedWave,
+  startT: number,
+  spawnRng: () => number,
+  reactionWindow: number,
+): PendingSpawn[] {
+  const out: PendingSpawn[] = [];
+  const safeColSim: number | null =
+    wave.safeCol === null || wave.safeCol === "none"
+      ? null
+      : Math.max(-HALF_COLS, Math.min(HALF_COLS, wave.safeCol - HALF_COLS));
+
+  // Slot stream
+  for (let i = 0; i < wave.slots.length; i++) {
+    const slot = wave.slots[i];
+    if (slot === null) continue;
+    const t = startT + i * wave.slotInterval;
+    const captured = slot;
+    out.push({
+      spawnT: t,
+      build: (): SpawnEvent => ({
+        kind: captured.kind,
+        size: Math.max(1, Math.min(5, captured.size)),
+        column: Math.max(-HALF_COLS, Math.min(HALF_COLS, captured.col - HALF_COLS)),
+        reactionWindow,
+        t: t + reactionWindow,
+        swarm: wave.swarm,
+      }),
+    });
+  }
+
+  // Probabilistic stream
+  const slotsDuration = wave.slots.length * wave.slotInterval;
+  const probDuration =
+    wave.countCap !== null && wave.countCap > 0
+      ? wave.countCap * wave.spawnInterval
+      : 0;
+  const inferredDur = Math.max(slotsDuration, probDuration);
+  const waveDur = wave.durOverride ?? Math.max(2, inferredDur);
+  const hasProb = wave.countCap !== 0 && Object.keys(wave.weights).length > 0;
+  if (hasProb) {
+    let n = 0;
+    let probT = startT;
+    while (probT <= startT + waveDur) {
+      if (wave.countCap !== null && n >= wave.countCap) break;
+      const kind = pickWeightedKind(wave.weights, spawnRng);
+      const size =
+        kind === "coin" || kind === "shield" || kind === "drone"
+          ? 1
+          : wave.sizeMin + Math.floor(spawnRng() * (wave.sizeMax - wave.sizeMin + 1));
+      let col = Math.floor(spawnRng() * (HALF_COLS * 2 + 1)) - HALF_COLS;
+      if (safeColSim !== null && col === safeColSim) {
+        col = col === HALF_COLS ? col - 1 : col + 1;
+      }
+      const tCapture = probT;
+      out.push({
+        spawnT: tCapture,
+        build: (): SpawnEvent => ({
+          kind,
+          size,
+          column: col,
+          reactionWindow,
+          t: tCapture + reactionWindow,
+          swarm: wave.swarm,
+        }),
+      });
+      n += 1;
+      probT += wave.spawnInterval;
+    }
+  }
+
+  out.sort((a, b) => a.spawnT - b.spawnT);
+  return out;
+}
+
 function runWave(
   state: SimState,
   wave: ParsedWave,
   startT: number,
   spawnRng: () => number,
 ): { endT: number; died: boolean } {
-  const rng = spawnRng;
-
-  // Wave duration: explicit `dur=` if set, else derived from slot count
-  // and spawn cadence (rough, the live game has its own logic).
-  const slotCount = wave.slots.length;
-  const slotsDuration = slotCount * wave.slotInterval;
-  const probDuration = wave.countCap !== null && wave.countCap > 0 ? wave.countCap * wave.spawnInterval : 0;
-  const inferredDur = Math.max(slotsDuration, probDuration);
-  const waveDur = wave.durOverride ?? Math.max(2, inferredDur);
-
-  let nextSlotT = startT;
-  let nextProbT = startT;
-  let slotIdx = 0;
-  let probEmitted = 0;
-  const hasProbStream =
-    wave.countCap !== 0 && // count=0 disables probabilistic
-    Object.keys(wave.weights).length > 0;
-
   const reactionWindow = BASE_REACTION_WINDOW_SEC / Math.max(0.4, wave.baseSpeedMul);
-
-  // Resolve safeCol: DSL uses 0..8 (column index from left), sim uses
-  // -4..+4. "none" or null → no enforced safe column.
-  const safeColSim: number | null =
-    wave.safeCol === null || wave.safeCol === "none"
-      ? null
-      : Math.max(-HALF_COLS, Math.min(HALF_COLS, wave.safeCol - HALF_COLS));
-
+  const slotsDuration = wave.slots.length * wave.slotInterval;
+  const probDuration =
+    wave.countCap !== null && wave.countCap > 0
+      ? wave.countCap * wave.spawnInterval
+      : 0;
+  const waveDur = wave.durOverride ?? Math.max(2, Math.max(slotsDuration, probDuration));
   const endT = startT + waveDur;
 
-  while (state.tNow < endT && state.death === null) {
-    // Pick the next event from whichever timer fires first.
-    const slotReady = slotIdx < slotCount && nextSlotT <= endT;
-    const probReady =
-      hasProbStream &&
-      nextProbT <= endT &&
-      (wave.countCap === null || probEmitted < wave.countCap);
+  const pending = expandWaveSpawns(wave, startT, spawnRng, reactionWindow);
+  const inFlight: SpawnEvent[] = [];
+  let pIdx = 0;
 
-    if (!slotReady && !probReady) break;
+  while (state.death === null) {
+    const nextSpawnT = pIdx < pending.length ? pending[pIdx].spawnT : Infinity;
+    const nextImpactT = inFlight.length > 0 ? inFlight[0].t : Infinity;
 
-    let useSlot: boolean;
-    if (slotReady && probReady) useSlot = nextSlotT <= nextProbT;
-    else useSlot = slotReady;
+    if (nextSpawnT === Infinity && nextImpactT === Infinity) break;
 
-    if (useSlot) {
-      const slot = wave.slots[slotIdx];
-      slotIdx += 1;
-      nextSlotT += wave.slotInterval;
-      if (slot === null) continue; // 000 = skip
-      const event: SpawnEvent = {
-        kind: slot.kind,
-        size: Math.max(1, Math.min(5, slot.size)),
-        column: Math.max(-HALF_COLS, Math.min(HALF_COLS, slot.col - HALF_COLS)),
-        reactionWindow,
-        t: state.tNow + 0.001, // monotonic
-        swarm: wave.swarm,
-      };
-      resolveEncounter(state, event);
+    if (nextSpawnT <= nextImpactT) {
+      // Spawn next.
+      advancePlayerPosition(state, nextSpawnT);
+      state.tNow = nextSpawnT;
+      const event = pending[pIdx].build();
+      pIdx += 1;
+      insertByImpact(inFlight, event);
+      chooseTarget(state, inFlight);
     } else {
-      const t = nextProbT;
-      nextProbT += wave.spawnInterval;
-      probEmitted += 1;
-      const kind = pickWeightedKind(wave.weights, rng);
-      let size: number;
-      if (kind === "coin" || kind === "shield" || kind === "drone") size = 1;
-      else size = wave.sizeMin + Math.floor(rng() * (wave.sizeMax - wave.sizeMin + 1));
-      // Column: random in -4..+4, avoid safeCol if set.
-      let col = Math.floor(rng() * (HALF_COLS * 2 + 1)) - HALF_COLS;
-      if (safeColSim !== null && col === safeColSim) {
-        col = col === HALF_COLS ? col - 1 : col + 1;
-      }
-      const event: SpawnEvent = {
-        kind,
-        size,
-        column: col,
-        reactionWindow,
-        t: Math.max(state.tNow + 0.001, t),
-        swarm: wave.swarm,
-      };
+      // Impact next.
+      const event = inFlight.shift()!;
       resolveEncounter(state, event);
+      if (state.death !== null) break;
+      chooseTarget(state, inFlight);
     }
   }
 
+  // Resolve remaining in-flight clusters at wave end (their impacts
+  // would land within the wave's window).
+  for (const event of inFlight) {
+    if (state.death !== null) break;
+    resolveEncounter(state, event);
+  }
+  state.tNow = Math.max(state.tNow, endT);
   return { endT, died: state.death !== null };
 }
 
@@ -160,7 +206,7 @@ export function runChallenge(
   seed: number,
 ): RunResult {
   const cfg = challengeCfg(def);
-  const difficulty: Difficulty = "medium"; // placeholder; challenges aren't strictly mapped
+  const difficulty: Difficulty = "medium";
   const rng = mulberry32(seed >>> 0);
   const state = initSimState(cfg, difficulty, skill, rng);
 
@@ -171,10 +217,8 @@ export function runChallenge(
     try {
       wave = parseWaveLine(def.waves[i]);
     } catch {
-      continue; // skip malformed waves silently
+      continue;
     }
-    // Per-wave seed: explicit override wins, else derive from challenge
-    // id + wave index (mirrors game.ts:7124).
     const waveSeed = wave.seed !== null ? wave.seed : hashSeed(`${def.id}:${i}`);
     const spawnRng = mulberry32(waveSeed >>> 0);
     const { endT } = runWave(state, wave, t, spawnRng);

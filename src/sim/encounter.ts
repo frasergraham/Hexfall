@@ -43,6 +43,7 @@ export function initSimState(
     score: 0,
     size: 1,
     column: 0,
+    targetCol: 0,
     loseCombo: 0,
     invulnUntil: 0,
     slowUntil: 0,
@@ -192,16 +193,18 @@ function applyHelpful(state: SimState, event: SpawnEvent): void {
   }
 }
 
-// Resolve a single spawned cluster against current state. Mutates state.
-// Returns true if the run ended (death set).
+// Resolve a single cluster at impact time. The player has been moving
+// toward state.targetCol since the last decision point — call
+// advancePlayerPosition first to position them. The encounter then
+// reflects whether they're actually in the cluster's footprint.
+//
+// The lookahead planner (chooseTarget) already decided whether to
+// dodge or chase this cluster. resolveEncounter just applies the
+// outcome with a small accuracy fudge for hand-tremor / panic.
 export function resolveEncounter(state: SimState, event: SpawnEvent): boolean {
+  advancePlayerPosition(state, event.t);
   advanceTo(state, event.t);
   if (state.death !== null) return true;
-
-  const skill = state.skill;
-  const tBudget = Math.max(0, event.reactionWindow - skill.reactionMs / 1000);
-  const colDist = Math.abs(event.column - state.column);
-  const reachable = tBudget * skill.lateralColsPerSec >= colDist;
 
   const fastActive = state.fastUntil > state.tNow;
   const shieldActive = state.shieldUntil > state.tNow && state.shieldHp > 0;
@@ -209,73 +212,50 @@ export function resolveEncounter(state: SimState, event: SpawnEvent): boolean {
   const tinyActive = state.tinyUntil > state.tNow;
   const inDanger = state.size >= state.cfg.dangerSize;
   const playerSizeMul = state.bigUntil > state.tNow ? state.bigSize : tinyActive ? 0.5 : 1;
+  const onCourse = isOnCourse(state.column, event.column, state.size, event.size, playerSizeMul);
 
   if (event.kind === "normal") {
-    return resolveBlue(state, event, {
-      reachable,
-      colDist,
-      fastActive,
-      shieldActive,
-      droneActive,
-      inDanger,
-      playerSizeMul,
-    });
+    return resolveBlue(state, event, { onCourse, fastActive, shieldActive, droneActive, inDanger });
   }
-  return resolveHelpful(state, event, { reachable, fastActive, inDanger });
+  return resolveHelpful(state, event, { onCourse, fastActive, inDanger });
 }
 
 interface BlueCtx {
-  reachable: boolean;
-  colDist: number;
+  onCourse: boolean;
   fastActive: boolean;
   shieldActive: boolean;
   droneActive: boolean;
   inDanger: boolean;
-  playerSizeMul: number;
 }
 
-function resolveBlue(
-  state: SimState,
-  event: SpawnEvent,
-  ctx: BlueCtx,
-): boolean {
-  // Crude collision footprint: half-widths added together. If the
-  // cluster would land outside that footprint, it's not on a course
-  // that needs dodging in the first place.
-  const playerHalf = Math.sqrt(state.size) * ctx.playerSizeMul * 0.5;
-  const clusterHalf = Math.sqrt(event.size) * 0.5;
-  const onCourse = ctx.colDist <= playerHalf + clusterHalf + 0.5;
-
-  if (!onCourse) {
+function resolveBlue(state: SimState, event: SpawnEvent, ctx: BlueCtx): boolean {
+  if (!ctx.onCourse) {
     bankPass(state, 1);
     return false;
   }
 
+  // On course — defenses fire in priority order.
   if (ctx.droneActive) {
     state.droneHp -= 1;
     bankPass(state, 1);
     return false;
   }
-
   if (ctx.shieldActive) {
     state.shieldHp -= 1;
     bankPass(state, 1);
     return false;
   }
-
   if (state.invulnUntil > state.tNow) {
     bankPass(state, 1);
     return false;
   }
 
-  let pHit: number;
-  if (!ctx.reachable) {
-    pHit = 0.92; // forced hit — too close, can't cover the distance
-  } else {
-    pHit = 1 - state.skill.accuracy;
-    if (ctx.fastActive) pHit *= 0.5; // extra care to preserve pool
-    if (ctx.inDanger) pHit *= 1.3;   // pressure penalty in danger band
-  }
+  // Player is in the cluster's footprint at impact. Skilled players
+  // can still micro-adjust at the last moment — accuracy drives a wide
+  // range (novice 0.55 → 0.78 hit; expert 0.97 → 0.61 hit).
+  let pHit = 0.6 + 0.4 * (1 - state.skill.accuracy);
+  if (ctx.fastActive) pHit *= 0.7;
+  if (ctx.inDanger) pHit = Math.min(1, pHit * 1.2);
 
   if (state.rng() < pHit) {
     state.size += event.size;
@@ -288,49 +268,34 @@ function resolveBlue(
         return true;
       }
     } else {
-      // Below danger size, hits don't combo but do count as failure
       state.loseCombo = 0;
     }
     return false;
   }
 
-  // Successful dodge — bank +1 and dodge to a clear column nearby.
   bankPass(state, 1);
   state.loseCombo = Math.max(0, state.loseCombo - 1);
-  // Move toward a column that doesn't overlap the cluster.
-  const dodgeTarget = event.column < 0 ? event.column + 2 : event.column - 2;
-  state.column = clampCol(dodgeTarget);
   return false;
 }
 
 interface HelpCtx {
-  reachable: boolean;
+  onCourse: boolean;
   fastActive: boolean;
   inDanger: boolean;
 }
 
-function resolveHelpful(
-  state: SimState,
-  event: SpawnEvent,
-  ctx: HelpCtx,
-): boolean {
-  // Priority: shield is gold when in danger; sticky valuable when large;
-  // slow valuable while fast (pool payout). Coin/tiny/big/drone neutral.
-  let priorityMul = 1;
-  if (event.kind === "shield" && ctx.inDanger) priorityMul = 1.6;
-  else if (event.kind === "sticky" && state.size >= 5) priorityMul = 1.5;
-  else if (event.kind === "slow" && ctx.fastActive) priorityMul = 1.3;
-
-  let pCatch = ctx.reachable ? state.skill.accuracy * state.skill.greed * priorityMul : 0;
-  if (pCatch > 1) pCatch = 1;
-
-  if (state.rng() < pCatch) {
-    applyHelpful(state, event);
-    state.helpfulCaught += 1;
-    state.column = clampCol(event.column);
-  } else {
-    bankPass(state, 1);
+function resolveHelpful(state: SimState, event: SpawnEvent, ctx: HelpCtx): boolean {
+  if (ctx.onCourse) {
+    // Player committed to chasing — small accuracy slip lets some pickups
+    // through their hands, but mostly: catch.
+    const pCatch = 0.8 + 0.2 * state.skill.accuracy;
+    if (state.rng() < pCatch) {
+      applyHelpful(state, event);
+      state.helpfulCaught += 1;
+      return false;
+    }
   }
+  bankPass(state, 1);
   return false;
 }
 
@@ -338,6 +303,215 @@ const HALF_COLS = 4;
 
 function clampCol(col: number): number {
   return Math.max(-HALF_COLS, Math.min(HALF_COLS, col));
+}
+
+// Crude collision footprint check: half-widths added together. Player
+// cells are ~1 col each; cluster size N spreads across sqrt(N) cols.
+function isOnCourse(
+  playerCol: number,
+  clusterCol: number,
+  playerSize: number,
+  clusterSize: number,
+  playerSizeMul: number,
+): boolean {
+  const playerHalf = Math.sqrt(playerSize) * playerSizeMul * 0.5;
+  const clusterHalf = Math.sqrt(clusterSize) * 0.5;
+  return Math.abs(playerCol - clusterCol) <= playerHalf + clusterHalf + 0.3;
+}
+
+// Move state.column toward state.targetCol by skill.lateralColsPerSec
+// for (t - state.tNow) seconds, capped at distance remaining.
+export function advancePlayerPosition(state: SimState, t: number): void {
+  const dt = t - state.tNow;
+  if (dt <= 0) return;
+  const remaining = state.targetCol - state.column;
+  const dir = Math.sign(remaining);
+  const maxMove = state.skill.lateralColsPerSec * dt;
+  const move = Math.min(Math.abs(remaining), maxMove);
+  state.column = clampCol(state.column + dir * move);
+}
+
+// Lookahead planner: pick the best column to head toward given the
+// queue of in-flight clusters. Looks ~1.5 sim seconds ahead. Decision
+// rule: imminent on-course blue forces a dodge; otherwise chase the
+// highest-utility helpful that's reachable; default = stay put.
+const LOOKAHEAD_HORIZON_SEC = 1.5;
+
+export function chooseTarget(
+  state: SimState,
+  inFlight: ReadonlyArray<SpawnEvent>,
+): void {
+  const skill = state.skill;
+
+  // Skill-scaled lookahead horizon — novices read fewer clusters ahead.
+  const horizon = LOOKAHEAD_HORIZON_SEC * (0.4 + 0.6 * skill.accuracy);
+  const horizonCutoff = state.tNow + horizon;
+  const playerSizeMul = state.bigUntil > state.tNow ? state.bigSize : state.tinyUntil > state.tNow ? 0.5 : 1;
+  const playerHalf = Math.sqrt(state.size) * playerSizeMul * 0.5;
+
+  // Build a list of danger zones — columns that would be in collision
+  // with a queued blue. Used by both passes to avoid moving the player
+  // off one blue's path and onto another's.
+  interface Danger { column: number; half: number; t: number }
+  const dangers: Danger[] = [];
+  for (const e of inFlight) {
+    if (e.t > horizonCutoff) break;
+    if (e.kind !== "normal") continue;
+    const clusterHalf = Math.sqrt(e.size) * 0.5;
+    dangers.push({ column: e.column, half: playerHalf + clusterHalf + 0.3, t: e.t });
+  }
+
+  const isSafe = (col: number, ignoreDanger?: Danger): boolean => {
+    for (const d of dangers) {
+      if (d === ignoreDanger) continue;
+      if (Math.abs(col - d.column) <= d.half) return false;
+    }
+    return true;
+  };
+
+  // Pass 1: any imminent blue we're on course for → dodge to a column
+  // that's also safe from ALL other queued blues. If no safe column is
+  // within reach, accept the closest reachable refuge.
+  let dodgeTarget: number | null = null;
+  let dodgeUrgency = -Infinity;
+  for (const e of inFlight) {
+    if (e.t > horizonCutoff) break;
+    if (e.kind !== "normal") continue;
+    const tToImpact = e.t - state.tNow;
+    if (tToImpact <= 0) continue;
+    if (!isOnCourse(state.column, e.column, state.size, e.size, playerSizeMul)) continue;
+
+    const reactionGap = Math.max(0, tToImpact - skill.reactionMs / 1000);
+    const reach = reactionGap * skill.lateralColsPerSec;
+    const myDanger = dangers.find((d) => d.column === e.column);
+    const candidate = pickSafeDodgeCol(state.column, e, playerHalf, reach, isSafe, myDanger);
+    if (candidate === null) continue;
+    const urgency = 1 / Math.max(0.05, tToImpact);
+    if (urgency > dodgeUrgency) {
+      dodgeUrgency = urgency;
+      dodgeTarget = candidate;
+    }
+  }
+  if (dodgeTarget !== null) {
+    state.targetCol = dodgeTarget;
+    return;
+  }
+
+  // Pass 2: highest-value reachable helpful within the horizon, weighted
+  // by greed. Skip helpfuls whose column is in a danger zone — chasing
+  // a coin that sits next to a hex is a real-player no-no.
+  let bestUtility = 0;
+  let bestTarget = pickSafeIdleColumn(state.column, isSafe) ?? state.column;
+  for (const e of inFlight) {
+    if (e.t > horizonCutoff) break;
+    if (e.kind === "normal") continue;
+    const tToImpact = e.t - state.tNow;
+    if (tToImpact <= 0) continue;
+    const reactionGap = Math.max(0, tToImpact - skill.reactionMs / 1000);
+    const colDist = Math.abs(e.column - state.column);
+    if (reactionGap * skill.lateralColsPerSec < colDist) continue;
+    if (!isSafe(e.column)) continue;
+
+    const value = helpfulValue(state, e.kind);
+    if (value <= 0) continue;
+    const greedFactor = effectiveGreed(skill, e.kind, state);
+    const urgency = 1 / Math.max(0.2, tToImpact);
+    const utility = value * greedFactor * urgency;
+    if (utility > bestUtility) {
+      bestUtility = utility;
+      bestTarget = clampCol(e.column);
+    }
+  }
+  state.targetCol = bestTarget;
+}
+
+// Find a column adjacent to the cluster that's outside its footprint
+// AND safe from any other queued blues. Returns null if no reachable
+// safe column exists.
+function pickSafeDodgeCol(
+  playerCol: number,
+  cluster: SpawnEvent,
+  playerHalf: number,
+  reach: number,
+  isSafe: (col: number, ignore?: { column: number; half: number; t: number }) => boolean,
+  myDanger?: { column: number; half: number; t: number },
+): number | null {
+  const clusterHalf = Math.sqrt(cluster.size) * 0.5;
+  const requiredOffset = playerHalf + clusterHalf + 0.6;
+  // Candidates: just outside the cluster on each side, plus board edges.
+  const candidates = [
+    cluster.column + requiredOffset,
+    cluster.column - requiredOffset,
+    cluster.column + requiredOffset + 1,
+    cluster.column - requiredOffset - 1,
+    HALF_COLS,
+    -HALF_COLS,
+  ];
+  // Sort by reach distance ascending so we prefer closer safe spots.
+  candidates.sort((a, b) => Math.abs(a - playerCol) - Math.abs(b - playerCol));
+  for (const raw of candidates) {
+    const col = clampCol(raw);
+    if (Math.abs(col - cluster.column) < requiredOffset - 0.05) continue;
+    if (Math.abs(col - playerCol) > reach) continue;
+    if (!isSafe(col, myDanger)) continue;
+    return col;
+  }
+  // No multi-safe column reachable. Fall back to any reachable column
+  // outside the cluster's footprint, even if conflicting with another.
+  for (const raw of candidates) {
+    const col = clampCol(raw);
+    if (Math.abs(col - cluster.column) < requiredOffset - 0.05) continue;
+    if (Math.abs(col - playerCol) > reach) continue;
+    return col;
+  }
+  return null;
+}
+
+// When idle, default to a column that's safe from all queued blues.
+// Prefer staying put if current column is already safe.
+function pickSafeIdleColumn(
+  current: number,
+  isSafe: (col: number) => boolean,
+): number | null {
+  if (isSafe(current)) return current;
+  const candidates = [0, current + 1, current - 1, current + 2, current - 2, HALF_COLS, -HALF_COLS];
+  for (const raw of candidates) {
+    const col = clampCol(raw);
+    if (isSafe(col)) return col;
+  }
+  return null;
+}
+
+function helpfulValue(state: SimState, kind: SpawnEvent["kind"]): number {
+  const inDanger = state.size >= state.cfg.dangerSize;
+  const sizeNearDanger = state.size >= state.cfg.dangerSize - 2;
+  const fastActive = state.fastUntil > state.tNow;
+  switch (kind) {
+    case "coin":   return 3;
+    case "sticky": return state.size >= 5 ? 10 : state.size >= 3 ? 5 : 1.5;
+    case "shield": return inDanger ? 12 : sizeNearDanger ? 6 : 2;
+    case "drone":  return sizeNearDanger ? 5 : 2.5;
+    case "slow":   return fastActive ? 6 : 1.5;
+    case "fast":   return state.size <= 4 ? 2.5 : 0.5;
+    case "tiny":   return 2;
+    case "big":    return state.size <= 3 ? 2 : 0.5;
+    default:       return 0;
+  }
+}
+
+// For survival-critical items, treat greed as if it were closer to 1.0
+// — real players grab a heal-when-large or shield-when-in-danger
+// reflexively, not based on personality.
+function effectiveGreed(skill: SkillProfile, kind: SpawnEvent["kind"], state: SimState): number {
+  const inDanger = state.size >= state.cfg.dangerSize;
+  const sizeNearDanger = state.size >= state.cfg.dangerSize - 2;
+  const fastActive = state.fastUntil > state.tNow;
+  const survival =
+    (kind === "sticky" && state.size >= 5) ||
+    (kind === "shield" && (inDanger || sizeNearDanger)) ||
+    (kind === "slow" && fastActive);
+  if (survival) return Math.max(skill.greed, 0.85);
+  return skill.greed;
 }
 
 // Pay out any pending fast pool (called at run end so the pool isn't

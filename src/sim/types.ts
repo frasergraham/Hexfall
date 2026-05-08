@@ -47,7 +47,8 @@ export interface SimState {
 
   score: number;
   size: number;
-  column: number;     // -half..+half
+  column: number;     // -half..+half (current position)
+  targetCol: number;  // where the player is heading (lookahead planner output)
 
   loseCombo: number;  // consecutive blue hits while size >= dangerSize
   invulnUntil: number;
