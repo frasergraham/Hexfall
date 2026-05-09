@@ -6756,6 +6756,14 @@ export class Game {
       { q: 1, r: 0 },
       { q: -1, r: 0 },
     ];
+    // DEBUG: instrument first-cluster spawn to track down "missing block" bug.
+    console.log("[hexrain.debug] spawnFirstClusterCentered start", {
+      hexSize: this.hexSize,
+      boardOriginY: this.boardOriginY,
+      playerY: this.playerY,
+      score: this.score,
+      wavePhase: this.wavePhase,
+    });
     const railLeft = this.currentRailLeft();
     const railRight = this.currentRailRight();
     const x = (railLeft + railRight) / 2;
@@ -6790,6 +6798,23 @@ export class Game {
     this.clusters.push(cluster);
     this.clusterByBodyId.set(cluster.body.id, cluster);
     Composite.add(this.engine.world, cluster.body);
+    // DEBUG: post-spawn state dump.
+    console.log("[hexrain.debug] spawnFirstClusterCentered end", {
+      bodyId: cluster.body.id,
+      bodyPosition: { x: cluster.body.position.x, y: cluster.body.position.y },
+      bodyParts: cluster.body.parts.length,
+      bodyBounds: {
+        minX: cluster.body.bounds.min.x,
+        maxX: cluster.body.bounds.max.x,
+        minY: cluster.body.bounds.min.y,
+        maxY: cluster.body.bounds.max.y,
+      },
+      velocity: { x: cluster.body.velocity.x, y: cluster.body.velocity.y },
+      alive: cluster.alive,
+      kind: cluster.kind,
+      hintLabel: cluster.hintLabel,
+      clustersLen: this.clusters.length,
+    });
   }
 
   private spawnCluster(): void {
@@ -8432,7 +8457,20 @@ export class Game {
     ctx.clip();
 
     for (const d of this.debris) d.draw(ctx, this.hexSize);
-    for (const c of this.clusters) c.draw(ctx, this.hexSize, dt, this.timeEffect);
+    for (const c of this.clusters) {
+      // DEBUG: log render of clusters that have a hint (small set, skip noise).
+      if (c.hintLabel && c.alive) {
+        console.log("[hexrain.debug] render cluster", {
+          bodyId: c.body.id,
+          partsLen: c.body.parts.length,
+          posX: c.body.position.x,
+          posY: c.body.position.y,
+          inClipY: c.body.position.y >= this.boardOriginY,
+          partWorldPositions: c.partWorldPositions().length,
+        });
+      }
+      c.draw(ctx, this.hexSize, dt, this.timeEffect);
+    }
     this.drawDrones();
 
     ctx.restore();
