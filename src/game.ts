@@ -8459,8 +8459,6 @@ export class Game {
       if (c.body.id === this.debugFirstClusterId && this.debugFramesLogged < 60) {
         this.debugFramesLogged += 1;
         const inClusterArr = this.clusters.includes(c);
-        const inWorld = this.engine.world.bodies.includes(c.body) ||
-          this.engine.world.composites.length > 0; // sanity-ish
         const pwp = c.partWorldPositions();
         console.log(
           `[hexrain.debug] render f${this.debugFramesLogged} id=${c.body.id} ` +
