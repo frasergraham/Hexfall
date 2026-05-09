@@ -125,6 +125,10 @@ export const DIFFICULTY_CONFIG: Record<Difficulty, DifficultyConfig> = {
   },
 };
 
+// Board geometry. The play area is a fixed 9-column wide grid.
+export const BOARD_COLS = 9;
+export const HALF_COLS = (BOARD_COLS - 1) / 2;
+
 // Endless mode initial cluster fall velocities (Matter px/ms units).
 // MAX_FALL_SPEED is the cap that BASE_FALL_SPEED + score × SPEED_RAMP
 // charges into. Reduced to 3.5 (from 5.5) once CCD substepping landed

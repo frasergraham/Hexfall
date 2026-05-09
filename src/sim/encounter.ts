@@ -12,6 +12,7 @@ import type { Random } from "../rng";
 import {
   type DifficultyConfig,
   BIG_DURATION,
+  HALF_COLS,
   BIG_MULTIPLIER_BASE,
   BIG_MULTIPLIER_STEP,
   BIG_SIZE_BASE,
@@ -290,8 +291,17 @@ interface HelpCtx {
 
 function resolveHelpful(state: SimState, event: SpawnEvent, ctx: HelpCtx): boolean {
   if (ctx.onCourse) {
-    // Player committed to chasing — small accuracy slip lets some pickups
-    // through their hands, but mostly: catch.
+    // Sticky always rips on contact in the live game — there is no
+    // "fumble the heal" path. Apply unconditionally when on-course,
+    // and don't count it as a deliberate catch (it's a forced
+    // interaction).
+    if (event.kind === "sticky") {
+      applyHelpful(state, event);
+      state.helpfulCaught += 1;
+      return false;
+    }
+    // Other helpfuls: small accuracy slip lets some pickups through
+    // their hands, but mostly: catch.
     const pCatch = 0.8 + 0.2 * state.skill.accuracy;
     if (state.rng() < pCatch) {
       applyHelpful(state, event);
@@ -302,8 +312,6 @@ function resolveHelpful(state: SimState, event: SpawnEvent, ctx: HelpCtx): boole
   bankPass(state, 1);
   return false;
 }
-
-const HALF_COLS = 4;
 
 function clampCol(col: number): number {
   return Math.max(-HALF_COLS, Math.min(HALF_COLS, col));

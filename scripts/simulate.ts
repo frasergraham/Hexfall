@@ -54,15 +54,34 @@ function parseArgs(argv: ReadonlyArray<string>): Args {
     json: null,
     diff: null,
   };
+  const requireInt = (flag: string, raw: string | undefined): number => {
+    if (raw === undefined) throw new Error(`${flag} requires a numeric argument`);
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n)) throw new Error(`${flag} must be an integer (got "${raw}")`);
+    return n;
+  };
+  const requirePath = (flag: string, raw: string | undefined): string => {
+    if (raw === undefined || raw.length === 0) {
+      throw new Error(`${flag} requires a path argument`);
+    }
+    return raw;
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--n") args.n = parseInt(argv[++i], 10);
-    else if (a === "--seed") args.seed = parseInt(argv[++i], 10);
-    else if (a === "--challenges") args.challenges = true;
+    if (a === "--n") {
+      const n = requireInt(a, argv[++i]);
+      if (n <= 0) throw new Error("--n must be > 0");
+      args.n = n;
+    } else if (a === "--seed") {
+      args.seed = requireInt(a, argv[++i]);
+    } else if (a === "--challenges") args.challenges = true;
     else if (a === "--audit") args.audit = true;
-    else if (a === "--json") args.json = argv[++i];
+    else if (a === "--json") args.json = requirePath(a, argv[++i]);
     else if (a === "--diff") {
-      args.diff = { baseline: argv[++i], proposed: argv[++i] };
+      args.diff = {
+        baseline: requirePath(a, argv[++i]),
+        proposed: requirePath(a, argv[++i]),
+      };
     } else throw new Error(`unknown arg: ${a}`);
   }
   return args;
@@ -154,8 +173,21 @@ function main(argv: ReadonlyArray<string>): void {
   const args = parseArgs(argv);
 
   if (args.diff !== null) {
-    const baseline = JSON.parse(readFileSync(args.diff.baseline, "utf8")) as CellStats[];
-    const proposed = JSON.parse(readFileSync(args.diff.proposed, "utf8")) as CellStats[];
+    const loadCells = (path: string, label: string): CellStats[] => {
+      let raw: string;
+      try {
+        raw = readFileSync(path, "utf8");
+      } catch (err) {
+        throw new Error(`Could not read ${label} file ${path}: ${(err as Error).message}`);
+      }
+      try {
+        return JSON.parse(raw) as CellStats[];
+      } catch (err) {
+        throw new Error(`Could not parse JSON from ${label} file ${path}: ${(err as Error).message}`);
+      }
+    };
+    const baseline = loadCells(args.diff.baseline, "baseline");
+    const proposed = loadCells(args.diff.proposed, "proposed");
     console.log(formatDiff(buildDiff(baseline, proposed)));
     return;
   }

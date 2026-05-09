@@ -5,11 +5,23 @@
 
 import type { Difficulty, ClusterKind } from "../types";
 import { hashSeed, mulberry32 } from "../rng";
-import { DIFFICULTY_CONFIG, type DifficultyConfig } from "../spawnKind";
+import {
+  BIG_DURATION,
+  DIFFICULTY_CONFIG,
+  type DifficultyConfig,
+  DRONE_DURATION,
+  FAST_EFFECT_DURATION,
+  HALF_COLS,
+  SHIELD_DURATION,
+  SLOW_EFFECT_DURATION,
+  TINY_DURATION,
+} from "../spawnKind";
+import { BASE_REACTION_WINDOW_SEC } from "./constants";
 import { parseWaveLine, type ParsedWave } from "../waveDsl";
 import type { ChallengeDef } from "../challenges";
 import {
   advancePlayerPosition,
+  advanceTo,
   chooseTarget,
   finalizeRun,
   initSimState,
@@ -17,32 +29,24 @@ import {
 } from "./encounter";
 import type { RunResult, SimState, SkillProfile, SpawnEvent } from "./types";
 
-const HALF_COLS = 4;
-
-// Anchor for tImpact; same semantics as endless. Challenge waves carry
-// `baseSpeedMul` per the DSL, so the sim shrinks the window proportionally.
-const BASE_REACTION_WINDOW_SEC = 2.5;
-
 // Map a roster ChallengeDef to a synthetic difficulty for cfg lookup.
 function challengeCfg(def: ChallengeDef): DifficultyConfig {
   const base = DIFFICULTY_CONFIG.medium;
   const effects = def.effects;
   if (!effects) return base;
+  // Per-effect override is given as an absolute duration in seconds;
+  // convert to a multiplier vs the live default.
+  const ratio = (override: number | undefined, def: number, fallback?: number): number | undefined =>
+    override !== undefined ? override / def : fallback;
   return {
     ...base,
     dangerSize: effects.dangerSize ?? base.dangerSize,
-    slowDurationMul:
-      effects.slowDuration !== undefined ? effects.slowDuration / 5 : base.slowDurationMul,
-    fastDurationMul:
-      effects.fastDuration !== undefined ? effects.fastDuration / 5 : base.fastDurationMul,
-    shieldDurationMul:
-      effects.shieldDuration !== undefined ? effects.shieldDuration / 10 : base.shieldDurationMul,
-    droneDurationMul:
-      effects.droneDuration !== undefined ? effects.droneDuration / 10 : base.droneDurationMul,
-    tinyDurationMul:
-      effects.tinyDuration !== undefined ? effects.tinyDuration / 5 : base.tinyDurationMul,
-    bigDurationMul:
-      effects.bigDuration !== undefined ? effects.bigDuration / 5 : base.bigDurationMul,
+    slowDurationMul: ratio(effects.slowDuration, SLOW_EFFECT_DURATION, base.slowDurationMul),
+    fastDurationMul: ratio(effects.fastDuration, FAST_EFFECT_DURATION, base.fastDurationMul),
+    shieldDurationMul: ratio(effects.shieldDuration, SHIELD_DURATION, base.shieldDurationMul),
+    droneDurationMul: ratio(effects.droneDuration, DRONE_DURATION, base.droneDurationMul),
+    tinyDurationMul: ratio(effects.tinyDuration, TINY_DURATION, base.tinyDurationMul),
+    bigDurationMul: ratio(effects.bigDuration, BIG_DURATION, base.bigDurationMul),
   };
 }
 
@@ -176,7 +180,7 @@ function runWave(
     if (nextSpawnT <= nextImpactT) {
       // Spawn next.
       advancePlayerPosition(state, nextSpawnT);
-      state.tNow = nextSpawnT;
+      advanceTo(state, nextSpawnT);
       const event = pending[pIdx].build();
       pIdx += 1;
       insertByImpact(inFlight, event);
@@ -196,7 +200,7 @@ function runWave(
     if (state.death !== null) break;
     resolveEncounter(state, event);
   }
-  state.tNow = Math.max(state.tNow, endT);
+  if (endT > state.tNow) advanceTo(state, endT);
   return { endT, died: state.death !== null };
 }
 
@@ -223,7 +227,7 @@ export function runChallenge(
     const spawnRng = mulberry32(waveSeed >>> 0);
     const { endT } = runWave(state, wave, t, spawnRng);
     t = endT;
-    state.tNow = endT;
+    if (endT > state.tNow) advanceTo(state, endT);
   }
 
   finalizeRun(state);

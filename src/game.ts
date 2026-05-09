@@ -121,6 +121,7 @@ import {
   ANGLED_SPAWNS_SCORE,
   BASE_FALL_SPEED,
   BIG_DURATION,
+  BOARD_COLS,
   BIG_MULTIPLIER_BASE,
   BIG_MULTIPLIER_STEP,
   BIG_SIZE_BASE,
@@ -220,7 +221,6 @@ const BONUS_POOL_TIERS: ReadonlyArray<{ threshold: number; id: AchievementId }> 
 ];
 
 const HEX_SIZE_BASE = 22;
-const BOARD_COLS = 9;
 
 // DifficultyConfig + DIFFICULTY_CONFIG live in src/spawnKind.ts so the
 // offline balance simulator (scripts/simulate.ts) can consume the same

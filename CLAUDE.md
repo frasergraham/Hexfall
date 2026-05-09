@@ -27,6 +27,21 @@ fresh run at 199 / 399 / 599. Runs started this way don't bank a high
 score. Debug also force-unlocks every challenge block + the editor + the
 PAINFUL difficulty so test runs don't need IAP state in localStorage.
 
+## Balance simulator
+
+```sh
+npx tsx scripts/simulate.ts                   # endless × 4 difficulties × 4 skills
+npx tsx scripts/simulate.ts --challenges      # also roster mid-block sample
+npx tsx scripts/simulate.ts --audit           # tier-share audit vs DIFFICULTY_CONFIG
+npx tsx scripts/simulate.ts --json out.json   # emit raw stats
+npx tsx scripts/simulate.ts --diff a.json b.json   # delta table for A/B tuning
+```
+
+Encounter-level model with a lookahead planner — not physics. Trust
+relative deltas between configs more than absolute scores. Skill
+profiles in `src/sim/skills.ts` are calibrated against Game Center
+top-of-leaderboard data; recalibrate when telemetry changes.
+
 ## Module layout (`src/`)
 
 | File | Purpose |
@@ -61,6 +76,8 @@ PAINFUL difficulty so test runs don't need IAP state in localStorage.
 | **`validation.ts`** | `clamp`, `clampDifficulty`, `clampStars`, `numOr` — shared by custom-challenge loader + CloudKit field marshalling |
 | **`spawn.ts`** | `lateGameSpeedMul(score)` + `computeWaveParams(score, spawnIntervalMul)` — pure score-driven cadence |
 | **`scoring.ts`** | `stepMilestones(score, tiers, startIdx)` + `highestTierCrossed(banked, tiers)` — pure milestone awards |
+| **`spawnKind.ts`** | `DIFFICULTY_CONFIG`, tier-weight + score-gate constants, `pickKind` / `pickHelpfulKind` / `pickChallengeKind` — pure spawn-balance data shared by `game.ts` and the offline sim |
+| **`sim/*.ts`** | Encounter-level offline simulator. `sim/types.ts`, `sim/skills.ts`, `sim/encounter.ts` (lookahead planner + pHit/pCatch resolver), `sim/endless.ts`, `sim/challenge.ts`, `sim/aggregate.ts` (percentiles, diff). Run via `tsx scripts/simulate.ts` |
 
 iOS native plugins live in `ios/App/CapApp-SPM/Sources/CapApp-SPM/`:
 `StoreKitPlugin.swift`, `GameCenterPlugin.swift`, `CloudKitPlugin.swift`.

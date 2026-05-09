@@ -18,10 +18,19 @@ export interface CellStats {
   deathCounts: Record<DeathCause, number>;
 }
 
+// Linear-interpolated quantile (R's type-7 / numpy default). At small
+// N the previous floor-only version biased low for non-exact
+// quantiles — e.g. p90 of an N=10 sample landed on the 9th value.
 export function quantile(sorted: ReadonlyArray<number>, q: number): number {
   if (sorted.length === 0) return 0;
-  const idx = Math.max(0, Math.min(sorted.length - 1, Math.floor(q * (sorted.length - 1))));
-  return sorted[idx];
+  if (sorted.length === 1) return sorted[0]!;
+  const clamped = Math.max(0, Math.min(1, q));
+  const idx = clamped * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo]!;
+  const frac = idx - lo;
+  return sorted[lo]! * (1 - frac) + sorted[hi]! * frac;
 }
 
 export function summarize(

@@ -6,17 +6,27 @@
 import type { Difficulty } from "../types";
 import { mulberry32 } from "../rng";
 import {
+  BASE_FALL_SPEED,
+  BOARD_COLS,
   DIFFICULTY_CONFIG,
   type DifficultyConfig,
+  FAST_TIMESCALE_BASE,
+  FAST_TIMESCALE_STEP,
+  HALF_COLS,
+  MAX_FALL_SPEED,
   pickKind,
+  SLOW_TIMESCALE,
+  SPEED_RAMP,
   STICKY_MIN_SCORE,
   SWARM_SPAWN_INTERVAL,
   SWARM_STICKY_CHANCE,
   SWARM_WAVE_CHANCE,
 } from "../spawnKind";
+import { BASE_REACTION_WINDOW_SEC } from "./constants";
 import { computeWaveParams, lateGameSpeedMul } from "../spawn";
 import {
   advancePlayerPosition,
+  advanceTo,
   chooseTarget,
   finalizeRun,
   initSimState,
@@ -25,19 +35,11 @@ import {
 import type { ClusterKind } from "../types";
 import type { RunResult, SimState, SkillProfile, SpawnEvent } from "./types";
 
-const BOARD_COLS = 9;
-const HALF_COLS = (BOARD_COLS - 1) / 2; // 4
-
 // Sim time-budget caps to prevent runaway loops on too-easy configs.
 // Real top scores cluster around ~1700; the 5000 cap is a generous
 // guardrail for outlier perfect runs without saturating typical play.
 const SCORE_TIMEOUT = 5000;
 const SECS_TIMEOUT = 600;
-
-// Reaction-window scaling. Anchor: at score 0, medium difficulty,
-// no active timescale, the cluster spends ~2.5 sim seconds in flight.
-// All speed-related multipliers compress this window proportionally.
-const BASE_REACTION_WINDOW_SEC = 2.5;
 
 interface EndlessLoopState {
   inWave: boolean;
@@ -86,9 +88,9 @@ export function runEndless(
   };
 
   const timescale = (): number => {
-    if (state.slowUntil > state.tNow) return 0.5;
+    if (state.slowUntil > state.tNow) return SLOW_TIMESCALE;
     if (state.fastUntil > state.tNow) {
-      return 1 + 0.25 + (state.fastStacks - 1) * 0.1;
+      return FAST_TIMESCALE_BASE + (state.fastStacks - 1) * FAST_TIMESCALE_STEP;
     }
     return 1;
   };
@@ -118,7 +120,7 @@ export function runEndless(
         // Process impact below.
       } else {
         // Just advance past the boundary.
-        state.tNow = loop.phaseEndsAt;
+        advanceTo(state, loop.phaseEndsAt);
         continue;
       }
     }
@@ -170,9 +172,10 @@ function processSpawn(
   cfg: DifficultyConfig,
   timescaleNow: number,
 ): void {
-  // Advance state.tNow to the spawn time, moving the player along.
+  // Advance state.tNow to the spawn time, moving the player along
+  // and expiring any timers that lapsed in between.
   advancePlayerPosition(state, loop.nextSpawnAt);
-  state.tNow = loop.nextSpawnAt;
+  advanceTo(state, loop.nextSpawnAt);
 
   // Kind selection.
   let kind: ClusterKind = "normal";
@@ -199,12 +202,24 @@ function processSpawn(
   }
 
   // Reaction window — how long the cluster is in flight before impact.
-  const speedMul =
-    cfg.fallSpeedMul *
-    lateGameSpeedMul(state.score) *
-    (loop.inWave ? wp.waveSpeedMul : 1) *
-    timescaleNow;
-  const reactionWindow = BASE_REACTION_WINDOW_SEC / Math.max(0.4, speedMul);
+  // Mirrors live computeFallSpeed: a base that ramps with score and is
+  // capped at MAX_FALL_SPEED, then multiplied by late-game ramp +
+  // wave-speed + slow/fast timescale. Anchored so at score=0 medium
+  // calm (effectiveV == BASE_FALL_SPEED) the window equals BASE.
+  const baseV = Math.min(
+    MAX_FALL_SPEED,
+    BASE_FALL_SPEED * cfg.fallSpeedMul + state.score * SPEED_RAMP,
+  );
+  const waveCap = loop.inWave ? MAX_FALL_SPEED * 1.7 : MAX_FALL_SPEED;
+  const effectiveV = Math.min(
+    waveCap,
+    baseV *
+      lateGameSpeedMul(state.score) *
+      (loop.inWave ? wp.waveSpeedMul : 1) *
+      timescaleNow,
+  );
+  const reactionWindow =
+    (BASE_REACTION_WINDOW_SEC * BASE_FALL_SPEED) / Math.max(0.4, effectiveV);
 
   const event: SpawnEvent = {
     kind,
