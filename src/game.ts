@@ -413,6 +413,9 @@ export class Game {
   // single-cell blue cluster so the first-ever AVOID hint label lands
   // dead-centre on the screen.
   private firstSpawn = true;
+  // DEBUG: track the first cluster across frames.
+  private debugFirstClusterId: number | null = null;
+  private debugFramesLogged = 0;
   // Seconds remaining on the 3-2-1 resume-from-pause countdown. While
   // > 0 the state stays "paused" so update() short-circuits, but the
   // overlay is hidden and a big number renders in the centre.
@@ -6757,13 +6760,10 @@ export class Game {
       { q: -1, r: 0 },
     ];
     // DEBUG: instrument first-cluster spawn to track down "missing block" bug.
-    console.log("[hexrain.debug] spawnFirstClusterCentered start", {
-      hexSize: this.hexSize,
-      boardOriginY: this.boardOriginY,
-      playerY: this.playerY,
-      score: this.score,
-      wavePhase: this.wavePhase,
-    });
+    console.log(
+      `[hexrain.debug] spawn start hex=${this.hexSize} boardOY=${this.boardOriginY} ` +
+        `playerY=${this.playerY} score=${this.score} wavePhase=${this.wavePhase}`,
+    );
     const railLeft = this.currentRailLeft();
     const railRight = this.currentRailRight();
     const x = (railLeft + railRight) / 2;
@@ -6798,23 +6798,20 @@ export class Game {
     this.clusters.push(cluster);
     this.clusterByBodyId.set(cluster.body.id, cluster);
     Composite.add(this.engine.world, cluster.body);
-    // DEBUG: post-spawn state dump.
-    console.log("[hexrain.debug] spawnFirstClusterCentered end", {
-      bodyId: cluster.body.id,
-      bodyPosition: { x: cluster.body.position.x, y: cluster.body.position.y },
-      bodyParts: cluster.body.parts.length,
-      bodyBounds: {
-        minX: cluster.body.bounds.min.x,
-        maxX: cluster.body.bounds.max.x,
-        minY: cluster.body.bounds.min.y,
-        maxY: cluster.body.bounds.max.y,
-      },
-      velocity: { x: cluster.body.velocity.x, y: cluster.body.velocity.y },
-      alive: cluster.alive,
-      kind: cluster.kind,
-      hintLabel: cluster.hintLabel,
-      clustersLen: this.clusters.length,
-    });
+    // DEBUG: post-spawn state dump as flat string so values are visible
+    // without expanding an Object disclosure in the console.
+    const b = cluster.body.bounds;
+    console.log(
+      `[hexrain.debug] spawn end id=${cluster.body.id} ` +
+        `pos=(${cluster.body.position.x.toFixed(1)}, ${cluster.body.position.y.toFixed(1)}) ` +
+        `bounds=(${b.min.x.toFixed(1)},${b.min.y.toFixed(1)})..(${b.max.x.toFixed(1)},${b.max.y.toFixed(1)}) ` +
+        `parts=${cluster.body.parts.length} ` +
+        `vel=(${cluster.body.velocity.x.toFixed(2)},${cluster.body.velocity.y.toFixed(2)}) ` +
+        `alive=${cluster.alive} kind=${cluster.kind} hint=${cluster.hintLabel} ` +
+        `clustersLen=${this.clusters.length}`,
+    );
+    this.debugFirstClusterId = cluster.body.id;
+    this.debugFramesLogged = 0;
   }
 
   private spawnCluster(): void {
@@ -8458,16 +8455,20 @@ export class Game {
 
     for (const d of this.debris) d.draw(ctx, this.hexSize);
     for (const c of this.clusters) {
-      // DEBUG: log render of clusters that have a hint (small set, skip noise).
-      if (c.hintLabel && c.alive) {
-        console.log("[hexrain.debug] render cluster", {
-          bodyId: c.body.id,
-          partsLen: c.body.parts.length,
-          posX: c.body.position.x,
-          posY: c.body.position.y,
-          inClipY: c.body.position.y >= this.boardOriginY,
-          partWorldPositions: c.partWorldPositions().length,
-        });
+      // DEBUG: log first-cluster's render state for the first ~60 frames.
+      if (c.body.id === this.debugFirstClusterId && this.debugFramesLogged < 60) {
+        this.debugFramesLogged += 1;
+        const inClusterArr = this.clusters.includes(c);
+        const inWorld = this.engine.world.bodies.includes(c.body) ||
+          this.engine.world.composites.length > 0; // sanity-ish
+        const pwp = c.partWorldPositions();
+        console.log(
+          `[hexrain.debug] render f${this.debugFramesLogged} id=${c.body.id} ` +
+            `alive=${c.alive} parts=${c.body.parts.length} pwp=${pwp.length} ` +
+            `pos=(${c.body.position.x.toFixed(1)},${c.body.position.y.toFixed(1)}) ` +
+            `inClusters=${inClusterArr} inClip=${c.body.position.y >= this.boardOriginY} ` +
+            `boardOY=${this.boardOriginY.toFixed(0)} hex=${this.hexSize.toFixed(1)}`,
+        );
       }
       c.draw(ctx, this.hexSize, dt, this.timeEffect);
     }
