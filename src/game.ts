@@ -413,9 +413,6 @@ export class Game {
   // single-cell blue cluster so the first-ever AVOID hint label lands
   // dead-centre on the screen.
   private firstSpawn = true;
-  // DEBUG: track the first cluster across frames.
-  private debugFirstClusterId: number | null = null;
-  private debugFramesLogged = 0;
   // Seconds remaining on the 3-2-1 resume-from-pause countdown. While
   // > 0 the state stays "paused" so update() short-circuits, but the
   // overlay is hidden and a big number renders in the centre.
@@ -6759,11 +6756,6 @@ export class Game {
       { q: 1, r: 0 },
       { q: -1, r: 0 },
     ];
-    // DEBUG: instrument first-cluster spawn to track down "missing block" bug.
-    console.log(
-      `[hexrain.debug] spawn start hex=${this.hexSize} boardOY=${this.boardOriginY} ` +
-        `playerY=${this.playerY} score=${this.score} wavePhase=${this.wavePhase}`,
-    );
     const railLeft = this.currentRailLeft();
     const railRight = this.currentRailRight();
     const x = (railLeft + railRight) / 2;
@@ -6798,20 +6790,6 @@ export class Game {
     this.clusters.push(cluster);
     this.clusterByBodyId.set(cluster.body.id, cluster);
     Composite.add(this.engine.world, cluster.body);
-    // DEBUG: post-spawn state dump as flat string so values are visible
-    // without expanding an Object disclosure in the console.
-    const b = cluster.body.bounds;
-    console.log(
-      `[hexrain.debug] spawn end id=${cluster.body.id} ` +
-        `pos=(${cluster.body.position.x.toFixed(1)}, ${cluster.body.position.y.toFixed(1)}) ` +
-        `bounds=(${b.min.x.toFixed(1)},${b.min.y.toFixed(1)})..(${b.max.x.toFixed(1)},${b.max.y.toFixed(1)}) ` +
-        `parts=${cluster.body.parts.length} ` +
-        `vel=(${cluster.body.velocity.x.toFixed(2)},${cluster.body.velocity.y.toFixed(2)}) ` +
-        `alive=${cluster.alive} kind=${cluster.kind} hint=${cluster.hintLabel} ` +
-        `clustersLen=${this.clusters.length}`,
-    );
-    this.debugFirstClusterId = cluster.body.id;
-    this.debugFramesLogged = 0;
   }
 
   private spawnCluster(): void {
@@ -8234,6 +8212,7 @@ export class Game {
   }
 
   private resize(): void {
+    const oldHexSize = this.hexSize;
     const dpr = window.devicePixelRatio || 1;
     const rect = this.canvas.getBoundingClientRect();
     const cssW = Math.max(1, rect.width);
@@ -8305,6 +8284,28 @@ export class Game {
     // Nebula tiles vertically; size it to the canvas so a single tile
     // covers the screen and we can wrap by drawing twice with a y offset.
     this.nebulaCanvas = generateNebula(cssW, cssH);
+
+    // Layout race: if hexSize changed meaningfully, in-flight clusters
+    // were sized against the OLD layout — their Matter body parts are
+    // spread at the old hex-spacing, so after the canvas shrinks the
+    // parts can sit entirely outside the new clip rect and render
+    // invisibly. Drop them. If we just cleared the very first cluster
+    // of a fresh run, re-arm firstSpawn so the centered AVOID block
+    // respawns at the new size.
+    if (
+      oldHexSize > 0 &&
+      Math.abs(this.hexSize - oldHexSize) / oldHexSize > 0.05 &&
+      this.clusters.length > 0
+    ) {
+      for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+      this.clusters = [];
+      this.clusterByBodyId.clear();
+      this.pendingContacts = [];
+      if (this.score === 0 && this.gameMode === "endless") {
+        this.firstSpawn = true;
+        this.spawnTimer = 0;
+      }
+    }
   }
 
   private updateStarTier(): void {
@@ -8454,22 +8455,7 @@ export class Game {
     ctx.clip();
 
     for (const d of this.debris) d.draw(ctx, this.hexSize);
-    for (const c of this.clusters) {
-      // DEBUG: log first-cluster's render state for the first ~60 frames.
-      if (c.body.id === this.debugFirstClusterId && this.debugFramesLogged < 60) {
-        this.debugFramesLogged += 1;
-        const inClusterArr = this.clusters.includes(c);
-        const pwp = c.partWorldPositions();
-        console.log(
-          `[hexrain.debug] render f${this.debugFramesLogged} id=${c.body.id} ` +
-            `alive=${c.alive} parts=${c.body.parts.length} pwp=${pwp.length} ` +
-            `pos=(${c.body.position.x.toFixed(1)},${c.body.position.y.toFixed(1)}) ` +
-            `inClusters=${inClusterArr} inClip=${c.body.position.y >= this.boardOriginY} ` +
-            `boardOY=${this.boardOriginY.toFixed(0)} hex=${this.hexSize.toFixed(1)}`,
-        );
-      }
-      c.draw(ctx, this.hexSize, dt, this.timeEffect);
-    }
+    for (const c of this.clusters) c.draw(ctx, this.hexSize, dt, this.timeEffect);
     this.drawDrones();
 
     ctx.restore();
