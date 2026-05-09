@@ -25,6 +25,7 @@ import {
   axialKey,
   buildPolyhexShape,
   pathHex,
+  SHAPES,
   SQRT3,
 } from "./hex";
 import { bindCanvasSlide, bindInput, bindSlider, isTouchDevice, type SliderHandle } from "./input";
@@ -6747,24 +6748,44 @@ export class Game {
   // down so the AVOID hint sits dead-centre.
   private spawnFirstClusterCentered(): void {
     const kind: ClusterKind = "normal";
-    // Centered horizontal 3-hex trimer. Symmetric around (0,0) so the
-    // body's centre-of-mass lands at the spawn x, which keeps the AVOID
-    // hint label dead-centre on screen. A single-hex first cluster was
-    // visually easy to miss under the big glowing label.
-    const shape: Shape = [
-      { q: 0, r: 0 },
-      { q: 1, r: 0 },
-      { q: -1, r: 0 },
-    ];
+    // Pick a 2-4 cell polyhex for shape variety on replay. Bias toward
+    // 3 so the trimer remains the most common opening, but 2 and 4
+    // appear often enough to keep replays distinct.
+    const sizeRoll = Math.random();
+    const size = sizeRoll < 0.55 ? 3 : sizeRoll < 0.8 ? 2 : 4;
+    const eligible = SHAPES.filter((s) => s.length === size);
+    const shape: Shape = eligible[Math.floor(Math.random() * eligible.length)]!.map(
+      (c) => ({ ...c }),
+    );
+
+    // Compute the shape's centroid in pixels and offset the spawn so
+    // the AVOID hint label still appears centred over the cluster
+    // regardless of which polyhex orientation got picked.
+    let cxLocal = 0;
+    let cyLocal = 0;
+    for (const cell of shape) {
+      cxLocal += this.hexSize * SQRT3 * (cell.q + cell.r / 2);
+      cyLocal += this.hexSize * 1.5 * cell.r;
+    }
+    cxLocal /= shape.length;
+    cyLocal /= shape.length;
+
     const railLeft = this.currentRailLeft();
     const railRight = this.currentRailRight();
     // Jitter ±0.6 columns so the opening doesn't feel scripted on
     // replay, but stays close enough to centre that the AVOID hint
     // label still reads as a deliberate, framed teach.
     const jitterCols = (Math.random() - 0.5) * 1.2;
-    const x = (railLeft + railRight) / 2 + jitterCols * SQRT3 * this.hexSize;
-    const y = this.boardOriginY - this.hexSize * 4;
+    const desiredCenterX =
+      (railLeft + railRight) / 2 + jitterCols * SQRT3 * this.hexSize;
+    const x = desiredCenterX - cxLocal;
+    const y = this.boardOriginY - this.hexSize * 4 - cyLocal;
     const speed = this.computeFallSpeed();
+    // Small initial angle so the cluster doesn't always present a flat
+    // bottom + a tiny spin for life. Both small enough that the AVOID
+    // teach is clearly readable.
+    const initialAngle = (Math.random() - 0.5) * 0.6; // ±~17°
+    const initialSpin = (Math.random() - 0.5) * 0.04;
 
     const cluster = FallingCluster.spawn({
       shape,
@@ -6773,8 +6794,9 @@ export class Game {
       hexSize: this.hexSize,
       kind,
       initialSpeedY: speed,
-      initialSpin: 0,
+      initialSpin,
     });
+    Body.setAngle(cluster.body, initialAngle);
     Body.setVelocity(cluster.body, { x: 0, y: speed });
 
     cluster.body.collisionFilter.category = CAT_CLUSTER;
