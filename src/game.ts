@@ -8297,7 +8297,19 @@ export class Game {
       Math.abs(this.hexSize - oldHexSize) / oldHexSize > 0.05 &&
       this.clusters.length > 0
     ) {
-      for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+      // Roll back any "first appearance" hint state for clusters that
+      // never actually rendered to the player. Otherwise the re-spawn
+      // (below) won't get a hint label because seenKinds has already
+      // recorded the kind from the dropped cluster.
+      let hintRolledBack = false;
+      for (const c of this.clusters) {
+        if (c.hintLabel && this.seenKinds.has(c.kind)) {
+          this.seenKinds.delete(c.kind);
+          hintRolledBack = true;
+        }
+        Composite.remove(this.engine.world, c.body);
+      }
+      if (hintRolledBack) saveSeenHints(this.seenKinds);
       this.clusters = [];
       this.clusterByBodyId.clear();
       this.pendingContacts = [];
