@@ -6758,7 +6758,11 @@ export class Game {
     ];
     const railLeft = this.currentRailLeft();
     const railRight = this.currentRailRight();
-    const x = (railLeft + railRight) / 2;
+    // Jitter ±0.6 columns so the opening doesn't feel scripted on
+    // replay, but stays close enough to centre that the AVOID hint
+    // label still reads as a deliberate, framed teach.
+    const jitterCols = (Math.random() - 0.5) * 1.2;
+    const x = (railLeft + railRight) / 2 + jitterCols * SQRT3 * this.hexSize;
     const y = this.boardOriginY - this.hexSize * 4;
     const speed = this.computeFallSpeed();
 
