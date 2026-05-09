@@ -12,3 +12,6 @@ ios/build
 .env.*.local
 coverage/
 docs/
+# Server-to-server credentials for scripts/moderator.mjs. Never commit.
+*.pem
+moderator-token*.json

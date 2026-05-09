@@ -1005,7 +1005,11 @@ body.editor-previewing #app {
   background: rgba(13, 15, 28, 0.82);
   padding: 8px 4px;
   backdrop-filter: blur(8px);
-  z-index: 1;
+  /* Must out-rank the editor-home-row-swipe rows (which sit at
+     z-index: 1 to clear their own swipe-delete background) so the
+     sticky header keeps the title bar + back button on top while
+     content scrolls underneath. */
+  z-index: 10;
 }
 
 .challenge-back {
@@ -1789,6 +1793,18 @@ body.editor-previewing #app {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* Editor variants: the title bar scrolls off normally rather than
+   sticking to the top — the back button + title aren't needed once
+   the user is reading rows further down, and the floating-action
+   buttons sit lower in the viewport when content has scrolled. */
+.editor-home .challenge-select-top,
+.editor-edit .challenge-select-top {
+  position: static;
+  background: transparent;
+  backdrop-filter: none;
+  z-index: auto;
 }
 
 .editor-home-empty {

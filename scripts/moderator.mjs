@@ -377,6 +377,72 @@ function loadOfficialVersions() {
   }
 }
 
+// List Score rows grouped by challenge. For each community challenge
+// we resolve the parent record so output has a readable name + author.
+async function listScores(_cfg, args) {
+  const cfg = _cfg;
+  const onlyKey = args.find((a) => !a.startsWith("--"));
+  const scores = await queryAll(cfg, SCORE_RECORD_TYPE);
+  if (scores.length === 0) {
+    console.log("No Score records.");
+    return;
+  }
+  // Bucket by (challengeKey, challengeVersion).
+  const buckets = new Map();
+  for (const s of scores) {
+    const f = s.fields ?? {};
+    let key = f.challengeKey?.value;
+    if (!key && f.challengeRef?.value?.recordName) {
+      key = `pub:${f.challengeRef.value.recordName}`;
+    }
+    if (!key) continue;
+    if (onlyKey && key !== onlyKey) continue;
+    const version = f.challengeVersion?.value ?? 1;
+    const bucketKey = `${key}|${version}`;
+    if (!buckets.has(bucketKey)) buckets.set(bucketKey, { key, version, rows: [] });
+    buckets.get(bucketKey).rows.push({
+      playerName: f.playerName?.value ?? "Anonymous",
+      score: f.score?.value ?? 0,
+      pct: f.pct?.value ?? 0,
+      attempts: f.attempts?.value ?? 1,
+      recordedAt: f.recordedAt?.value ?? 0,
+    });
+  }
+  if (buckets.size === 0) {
+    console.log("No matching Score rows.");
+    return;
+  }
+  // Resolve parent challenge names for community keys (best effort).
+  const nameCache = new Map();
+  for (const b of buckets.values()) {
+    if (b.key.startsWith("pub:") && !nameCache.has(b.key)) {
+      const rn = b.key.slice(4);
+      const parent = await fetchOne(cfg, rn);
+      const name = parent?.fields?.name?.value ?? "(missing)";
+      const author = parent?.fields?.authorName?.value ?? "(unknown)";
+      nameCache.set(b.key, `${name} — ${author}`);
+    }
+  }
+  const sorted = [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key));
+  for (const b of sorted) {
+    b.rows.sort((a, b) => b.score - a.score);
+    const label = b.key.startsWith("pub:")
+      ? nameCache.get(b.key) ?? b.key
+      : b.key;
+    console.log(`\n=== ${b.key} v${b.version}`);
+    console.log(`    ${label}`);
+    console.log("    rank  score   pct   attempts  player");
+    console.log("    ----  ------  ----  --------  --------------------");
+    b.rows.forEach((r, i) => {
+      const rank = String(i + 1).padStart(2);
+      const score = String(r.score).padStart(6);
+      const pct = String(Math.round((r.pct ?? 0) * 100)).padStart(3);
+      const attempts = String(r.attempts).padStart(7);
+      console.log(`    ${rank}    ${score}  ${pct}%  ${attempts}   ${r.playerName}`);
+    });
+  }
+}
+
 // Walks every Score row, ensures it has the new-shape (challengeKey,
 // challengeVersion) fields. Legacy rows have only `challengeRef` —
 // derive the missing fields from the parent PublishedChallenge.
@@ -545,6 +611,8 @@ async function main() {
     await backfillScoreKeys(cfg, rest);
   } else if (cmd === "purge-stale-scores") {
     await purgeStaleScores(cfg, rest);
+  } else if (cmd === "list-scores") {
+    await listScores(cfg, rest);
   } else {
     console.error(`Unknown command: ${cmd}`);
     process.exit(1);

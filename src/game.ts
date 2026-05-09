@@ -109,7 +109,7 @@ import {
   type ReportReason,
 } from "./cloudSync";
 import { challengeContentHash, officialChallengeVersion } from "./challengeVersion";
-import { isCloudKitAvailable } from "./cloudKit";
+import { getUserRecordName, isCloudKitAvailable } from "./cloudKit";
 import { shareChallenge } from "./share";
 import { hashSeed, mulberry32, type Random } from "./rng";
 import { loadBool, loadJson, loadString, removeKey, saveBool, saveJson, saveString } from "./storage";
@@ -2412,6 +2412,12 @@ export class Game {
     rows: CommunityScore[];
   } | null = null;
 
+  // Cached CloudKit user record name. Resolved lazily on the first
+  // leaderboard fetch so the intro panel can mark "this is me" rows
+  // and skip the redundant you-row when the player is already in
+  // top-N. Null until the first successful fetch on iOS.
+  private cloudPlayerId: string | null = null;
+
   // Deep-link single-challenge view: when set, renderSingleChallenge
   // shows just this one card with full actions. `origin` records
   // where to send the player when they tap BACK.
@@ -4682,6 +4688,12 @@ export class Game {
       rows: [],
     };
     if (this.state === "challengeIntro") this.renderChallengeIntro();
+    // Resolve the player's CK id once so we can highlight + de-dupe
+    // the local row. Best-effort — null on web or before iCloud auth
+    // settles, in which case rows render without the "you" marker.
+    if (this.cloudPlayerId === null) {
+      this.cloudPlayerId = await getUserRecordName();
+    }
     const rows = await cloudTopScoresByKey(resolved.key, resolved.version, SCORE_TOP_N);
     // Bail if the intro screen has been replaced by a different
     // challenge (or closed) while the fetch was in flight.
@@ -4776,25 +4788,33 @@ export class Game {
         notice: "Unpublished changes — re-publish to refresh the leaderboard.",
       };
     } else if (resolved) {
-      const playerId = customRecord?.installedAuthorName; // not actually playerId — left for future linking
-      void playerId;
       const matches = lbState
         && lbState.challengeKey === resolved.key
         && lbState.challengeVersion === resolved.version;
-      const rows = matches ? lbState!.rows.map((r) => ({
+      const playerId = this.cloudPlayerId;
+      const playerName = getGameCenterDisplayName() ?? "YOU";
+      // Mark the local player's row in-place so the renderer can
+      // highlight it and the redundant YOU row below the top-N
+      // collapses. Match by CK player record name when we have one;
+      // fall back to display-name match for the (rare) pre-auth case.
+      const sourceRows = matches ? lbState!.rows : [];
+      const meIndex = sourceRows.findIndex((r) =>
+        playerId ? r.playerId === playerId : r.playerName === playerName,
+      );
+      const rows = sourceRows.map((r, i) => ({
         playerName: r.playerName,
         score: r.score,
         attempts: r.attempts,
-        isYou: false, // We don't pre-resolve playerId on intro; submit-side handles in-place display
-      })) : [];
-      // YOU row: show the player's local best below the top-N when
-      // they aren't already in the rendered list.
+        isYou: i === meIndex,
+      }));
+      // YOU row: only when the player isn't already represented in
+      // top-N AND they have a local best. Use the *higher* of cloud-
+      // visible score (none, since we're not in top-N) and local
+      // best — i.e. just the local best.
       const localBest = best;
-      const youRow = localBest > 0 && !matches
-        ? null  // still loading — don't blink a stale you-row
-        : (localBest > 0
-            ? { rank: null, score: localBest, playerName: getGameCenterDisplayName() ?? "YOU" }
-            : null);
+      const youRow = (matches && meIndex < 0 && localBest > 0)
+        ? { rank: null, score: localBest, playerName }
+        : null;
       leaderboardProp = {
         loading: !matches || (lbState?.loading ?? true),
         rows,
@@ -7519,16 +7539,22 @@ export class Game {
   // Push an official-challenge score to CloudKit. Version is derived
   // from the *effective* def (override-applied) so a balance tweak
   // wipes old rows from the leaderboard the same way a community
-  // re-publish does.
+  // re-publish does. Submits max(thisRun, localBest) so a pre-existing
+  // local best (banked before the leaderboard feature shipped, or on
+  // a different device that never wrote to the cloud) gets pushed up
+  // on the player's next run.
   private submitOfficialScore(def: ChallengeDef, score: number, pct: number): void {
     if (!isCloudKitAvailable()) return;
     const effective = getEffectiveChallenge(def.id) ?? def;
+    const progress = loadChallengeProgress();
+    const localBest = progress.best[def.id] ?? 0;
+    const localBestPct = (progress.bestPct[def.id] ?? 0) / 100;
     void submitChallengeScore(
       `off:${def.id}`,
       officialChallengeVersion(effective),
       getGameCenterDisplayName() ?? "Anonymous",
-      score,
-      pct,
+      Math.max(score, localBest),
+      Math.max(pct, localBestPct),
     );
   }
 
@@ -7538,6 +7564,8 @@ export class Game {
   // challenge land on the same leaderboard as everyone else. Drops
   // the submit silently when the author is playing an unpublished
   // draft — submitting would post v2-content scores to the v1 board.
+  // Submits max(thisRun, localBest) so a pre-existing local best gets
+  // caught up to the cloud the next time the player runs.
   private submitCustomScore(custom: CustomChallenge, score: number, pct: number): void {
     if (!isCloudKitAvailable()) return;
     const recordName = custom.installedFrom ?? custom.publishedRecordName;
@@ -7550,8 +7578,8 @@ export class Game {
       `pub:${recordName}`,
       version,
       getGameCenterDisplayName() ?? "Anonymous",
-      score,
-      pct,
+      Math.max(score, custom.best),
+      Math.max(pct, custom.bestPct / 100),
       recordName,
     );
   }
