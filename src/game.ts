@@ -6747,7 +6747,15 @@ export class Game {
   // down so the AVOID hint sits dead-centre.
   private spawnFirstClusterCentered(): void {
     const kind: ClusterKind = "normal";
-    const shape: Shape = COIN_SHAPE;
+    // Centered horizontal 3-hex trimer. Symmetric around (0,0) so the
+    // body's centre-of-mass lands at the spawn x, which keeps the AVOID
+    // hint label dead-centre on screen. A single-hex first cluster was
+    // visually easy to miss under the big glowing label.
+    const shape: Shape = [
+      { q: 0, r: 0 },
+      { q: 1, r: 0 },
+      { q: -1, r: 0 },
+    ];
     const railLeft = this.currentRailLeft();
     const railRight = this.currentRailRight();
     const x = (railLeft + railRight) / 2;
