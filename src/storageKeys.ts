@@ -52,6 +52,11 @@ export const STORAGE_KEYS = {
   // CloudKit private-DB sync bookkeeping (cloudSync.ts).
   cloudProgressModifiedAt: "hexrain.cloudSync.progressModifiedAt",
 
+  // FPS / worst-frame debug overlay toggle. Flipped by tapping the
+  // menu title 5x — there's no URL-bar on iOS to set ?debug=1, so
+  // this gives testers an in-app way to surface frame timing.
+  debugFps: "hexrain.debug.fps",
+
   // Challenge select section collapsed state. Suffixed with section
   // key so the actual stored keys look like
   // "hexrain.challengeSelect.officialCollapsed.v1".

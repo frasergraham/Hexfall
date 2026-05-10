@@ -700,6 +700,20 @@ export class Game {
   private rafId = 0;
   private unbindInput: (() => void) | null = null;
 
+  // Frame-timing overlay state. Tracks raw rAF frame intervals (in ms)
+  // over a 1-second sliding window so we can surface both average FPS
+  // and the worst single frame — averages alone hide the hitches that
+  // make late-game runs feel choppy. Persisted toggle lives at
+  // STORAGE_KEYS.debugFps; flipped via 5-tap on the menu title since
+  // iOS has no URL-bar to set ?debug=1.
+  private fpsEl: HTMLElement | null = null;
+  private fpsEnabled = false;
+  private fpsSamples: { t: number; ms: number }[] = [];
+  private fpsLastFlush = 0;
+  // Title-tap bookkeeping for the FPS toggle gesture.
+  private titleTapCount = 0;
+  private titleTapLast = 0;
+
   private holds: Record<"left" | "right" | "rotateCw" | "rotateCcw", HoldState> = {
     left: { active: false },
     right: { active: false },
@@ -727,6 +741,9 @@ export class Game {
     this.scoreEl = opts.scoreEl;
     this.bestEl = opts.bestEl;
     this.pauseBtn = document.getElementById("pauseBtn");
+    this.fpsEl = document.getElementById("fpsOverlay");
+    this.fpsEnabled = loadBool(STORAGE_KEYS.debugFps, false);
+    this.applyFpsVisibility();
     // Touchstart fires the pause immediately, even when another finger is
     // already mid-drag on the position slider — click events can be
     // swallowed when a sibling touch sequence is calling preventDefault.
@@ -2216,13 +2233,74 @@ export class Game {
   start(): void {
     this.lastTime = performance.now();
     const tick = (t: number) => {
-      const dt = Math.min(0.05, (t - this.lastTime) / 1000);
+      // Track the raw rAF interval before clamping — the 50ms cap below
+      // protects physics from huge dt spikes, but the FPS readout needs
+      // the true frame time so hitches actually register.
+      const rawMs = t - this.lastTime;
+      const dt = Math.min(0.05, rawMs / 1000);
       this.lastTime = t;
       this.update(dt);
       this.render(dt);
+      if (this.fpsEnabled) this.recordFrame(t, rawMs);
       this.rafId = requestAnimationFrame(tick);
     };
     this.rafId = requestAnimationFrame(tick);
+  }
+
+  // Push the latest frame interval into the 1-second sliding window
+  // and re-render the overlay text at most 4×/sec. Cheap: at 120 Hz
+  // the window holds ~120 entries and the per-frame work is one push
+  // + a couple of shifts.
+  private recordFrame(t: number, rawMs: number): void {
+    this.fpsSamples.push({ t, ms: rawMs });
+    while (this.fpsSamples.length > 0 && t - this.fpsSamples[0]!.t > 1000) {
+      this.fpsSamples.shift();
+    }
+    if (t - this.fpsLastFlush < 250) return;
+    this.fpsLastFlush = t;
+    if (!this.fpsEl) return;
+    const n = this.fpsSamples.length;
+    const span = n > 0 ? t - this.fpsSamples[0]!.t : 0;
+    const fps = span > 0 ? Math.round((n * 1000) / span) : n;
+    let worst = 0;
+    for (const s of this.fpsSamples) if (s.ms > worst) worst = s.ms;
+    this.fpsEl.textContent = `${fps} FPS · worst ${worst.toFixed(1)}ms`;
+  }
+
+  private applyFpsVisibility(): void {
+    if (!this.fpsEl) return;
+    this.fpsEl.hidden = !this.fpsEnabled;
+    if (!this.fpsEnabled) {
+      this.fpsSamples.length = 0;
+      this.fpsLastFlush = 0;
+      this.fpsEl.textContent = "";
+    }
+  }
+
+  // Re-bind on every renderMenu() since the overlay's innerHTML gets
+  // wholesale replaced — the previous listener is on a detached node.
+  private bindTitleTapToggle(): void {
+    const title = this.overlay.querySelector<HTMLElement>("h1");
+    if (!title) return;
+    title.style.cursor = "default";
+    title.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.handleTitleTap();
+    });
+  }
+
+  // 5 taps on the menu title within a 1.5s rolling window toggles the
+  // FPS overlay. Persisted so testers don't lose it between launches.
+  private handleTitleTap(): void {
+    const now = performance.now();
+    if (now - this.titleTapLast > 1500) this.titleTapCount = 0;
+    this.titleTapLast = now;
+    this.titleTapCount += 1;
+    if (this.titleTapCount < 5) return;
+    this.titleTapCount = 0;
+    this.fpsEnabled = !this.fpsEnabled;
+    saveBool(STORAGE_KEYS.debugFps, this.fpsEnabled);
+    this.applyFpsVisibility();
   }
 
   destroy(): void {
@@ -2383,6 +2461,7 @@ export class Game {
     this.overlay.innerHTML = this.menuOverlayHtml;
     this.overlay.classList.remove("hidden");
     this.debugApplyMenu();
+    this.bindTitleTapToggle();
     this.renderAchievementBadges();
     this.refreshDifficultyButtons();
     this.refreshAudioToggles();
