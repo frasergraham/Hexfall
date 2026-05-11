@@ -330,13 +330,6 @@ interface ContactInfo {
   partId: number;
 }
 
-interface Star {
-  x: number;
-  y: number;
-  r: number;
-  a: number;
-}
-
 interface Floater {
   text: string;
   x: number;
@@ -606,9 +599,16 @@ export class Game {
   // horizontal parallax based on the player's x position and a slow
   // downward scroll that gives a sense of moving forward. Density scales
   // up at score 200/400/600.
-  private starsDeep: Star[] = [];
-  private starsBack: Star[] = [];
-  private starsFront: Star[] = [];
+  //
+  // Each plane is prebaked into an offscreen canvas at regeneration
+  // time and drawn with up to 4 wrapped drawImage calls — the previous
+  // implementation re-issued ~635 arc/fill per frame at tier 3 which
+  // dominated WKWebView frame cost.
+  private starsDeep: HTMLCanvasElement | null = null;
+  private starsBack: HTMLCanvasElement | null = null;
+  private starsFront: HTMLCanvasElement | null = null;
+  private starLayerW = 0;
+  private starLayerH = 0;
   private starScrollY = 0;
   private starTier = 0;
 
@@ -8471,33 +8471,38 @@ export class Game {
     // adds another layer of richness that peaks at score 600.
     const tierMul = 1 + this.starTier * 0.45;
     const area = cssW * cssH;
-    this.starsDeep = generateStars(
+    this.starLayerW = cssW;
+    this.starLayerH = cssH;
+    this.starsDeep = bakeStarLayer(
       cssW,
       cssH,
       Math.round((area / 2200) * tierMul),
       0.25,
       0.6,
       0.15,
+      "#5b6da0",
     );
-    this.starsBack = generateStars(
+    this.starsBack = bakeStarLayer(
       cssW,
       cssH,
       Math.round((area / 3600) * tierMul),
       0.4,
       1.0,
       0.4,
+      "#9fb4e6",
     );
-    this.starsFront = generateStars(
+    this.starsFront = bakeStarLayer(
       cssW,
       cssH,
       Math.round((area / 9000) * tierMul),
       0.9,
       1.9,
       0.7,
+      "#ffffff",
     );
   }
 
-  private drawStarfield(canvasW: number, canvasH: number): void {
+  private drawStarfield(): void {
     const ctx = this.ctx;
     // Parallax driver: how far the player is from the centre of the rail,
     // normalised to [-1, 1]. Negative = left, positive = right.
@@ -8512,15 +8517,19 @@ export class Game {
     ctx.rect(this.boardOriginX, this.boardOriginY, this.boardWidth, this.boardHeight);
     ctx.clip();
 
-    drawStarLayer(
-      ctx,
-      this.starsDeep,
-      canvasW,
-      canvasH,
-      -offset * PARALLAX_DEEP,
-      this.starScrollY * STAR_SCROLL_DEEP,
-      "#5b6da0",
-    );
+    const layerW = this.starLayerW;
+    const layerH = this.starLayerH;
+
+    if (this.starsDeep) {
+      drawStarLayer(
+        ctx,
+        this.starsDeep,
+        layerW,
+        layerH,
+        -offset * PARALLAX_DEEP,
+        this.starScrollY * STAR_SCROLL_DEEP,
+      );
+    }
 
     // Nebula sits between the deep + back planes so foreground stars still
     // sparkle on top of it. Drawn twice so the tile wraps smoothly.
@@ -8536,24 +8545,26 @@ export class Game {
       ctx.restore();
     }
 
-    drawStarLayer(
-      ctx,
-      this.starsBack,
-      canvasW,
-      canvasH,
-      -offset * PARALLAX_BACK,
-      this.starScrollY * STAR_SCROLL_BACK,
-      "#9fb4e6",
-    );
-    drawStarLayer(
-      ctx,
-      this.starsFront,
-      canvasW,
-      canvasH,
-      -offset * PARALLAX_FRONT,
-      this.starScrollY * STAR_SCROLL_FRONT,
-      "#ffffff",
-    );
+    if (this.starsBack) {
+      drawStarLayer(
+        ctx,
+        this.starsBack,
+        layerW,
+        layerH,
+        -offset * PARALLAX_BACK,
+        this.starScrollY * STAR_SCROLL_BACK,
+      );
+    }
+    if (this.starsFront) {
+      drawStarLayer(
+        ctx,
+        this.starsFront,
+        layerW,
+        layerH,
+        -offset * PARALLAX_FRONT,
+        this.starScrollY * STAR_SCROLL_FRONT,
+      );
+    }
 
     ctx.restore();
   }
@@ -8564,7 +8575,7 @@ export class Game {
     ctx.clearRect(0, 0, rect.width, rect.height);
 
     // Two-plane parallax starfield, drawn first so everything else covers it.
-    this.drawStarfield(rect.width, rect.height);
+    this.drawStarfield();
 
     // Board background — translucent so the starfield (and nebula at
     // higher scores) reads through the play area rather than being a
@@ -8905,24 +8916,38 @@ function paintCellOnCanvas(
 
 // difficultyTint moved to src/ui/components/blockIcon.ts in Phase 2.
 
-function generateStars(
-  w: number,
-  h: number,
+// Bake a starfield plane straight into an offscreen canvas at native
+// pixel density. Cheaper at draw time than holding a Star[] array and
+// re-issuing per-star arc/fill every frame — at tier 3 (score ≥ 600)
+// the previous path issued ~635 arc/fill + alpha writes per frame.
+function bakeStarLayer(
+  cssW: number,
+  cssH: number,
   count: number,
   minR: number,
   maxR: number,
   minA: number,
-): Star[] {
-  const out: Star[] = [];
+  color: string,
+): HTMLCanvasElement {
+  const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.ceil(cssW * dpr));
+  c.height = Math.max(1, Math.ceil(cssH * dpr));
+  const cx = c.getContext("2d");
+  if (!cx) return c;
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx.fillStyle = color;
   for (let i = 0; i < count; i++) {
-    out.push({
-      x: Math.random() * w,
-      y: Math.random() * h,
-      r: minR + Math.random() * (maxR - minR),
-      a: minA + Math.random() * (1 - minA),
-    });
+    const x = Math.random() * cssW;
+    const y = Math.random() * cssH;
+    const r = minR + Math.random() * (maxR - minR);
+    const a = minA + Math.random() * (1 - minA);
+    cx.globalAlpha = a;
+    cx.beginPath();
+    cx.arc(x, y, r, 0, Math.PI * 2);
+    cx.fill();
   }
-  return out;
+  return c;
 }
 
 // Pre-render a tile of soft coloured nebula blobs into an offscreen canvas.
@@ -8956,27 +8981,22 @@ function generateNebula(w: number, h: number): HTMLCanvasElement {
 
 function drawStarLayer(
   ctx: CanvasRenderingContext2D,
-  stars: Star[],
-  canvasW: number,
-  canvasH: number,
+  layer: HTMLCanvasElement,
+  layerW: number,
+  layerH: number,
   shiftX: number,
   shiftY: number,
-  color: string,
 ): void {
-  ctx.save();
-  ctx.fillStyle = color;
-  for (const s of stars) {
-    // Wrap horizontally + vertically so stars never disappear off one edge
-    // as the parallax / scroll moves them past it; positive modulo trick
-    // handles negative shifts.
-    const sx = ((s.x + shiftX) % canvasW + canvasW) % canvasW;
-    const sy = ((s.y + shiftY) % canvasH + canvasH) % canvasH;
-    ctx.globalAlpha = s.a;
-    ctx.beginPath();
-    ctx.arc(sx, sy, s.r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  ctx.restore();
+  // Toroidal wrap via 4 tiles at most. shiftX is bounded by the parallax
+  // constants (±22 px) and shiftY accumulates monotonically — both get
+  // folded into [0, layerW) / [0, layerH) before the tile draws, so any
+  // visible parallax offset is covered. Browsers cull the tiles that
+  // land fully off-screen for ~free.
+  const sx = ((shiftX % layerW) + layerW) % layerW;
+  const sy = ((shiftY % layerH) + layerH) % layerH;
+  ctx.drawImage(layer, sx - layerW, sy - layerH, layerW, layerH);
+  ctx.drawImage(layer, sx, sy - layerH, layerW, layerH);
+  ctx.drawImage(layer, sx - layerW, sy, layerW, layerH);
+  ctx.drawImage(layer, sx, sy, layerW, layerH);
 }
 
