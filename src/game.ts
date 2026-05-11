@@ -2284,7 +2284,8 @@ export class Game {
     const fps = recentSpan > 0
       ? Math.round((recentCount * 1000) / recentSpan)
       : recentCount;
-    this.fpsEl.textContent = `${fps} FPS · worst ${worst.toFixed(1)}ms`;
+    this.fpsEl.textContent =
+      `${fps} FPS · ${rawMs.toFixed(1)}ms\nworst ${worst.toFixed(1)}ms (10s)`;
   }
 
   private applyFpsVisibility(): void {
