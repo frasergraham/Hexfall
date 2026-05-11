@@ -164,7 +164,11 @@ async function runSimulation(opts: RunOptions): Promise<RunTrace> {
     playerSizeTimeline: [],
   };
   let lastState = "";
-  const seenBodyIds = new Set<number>();
+  // "Appeared this tick" delta — robust against the cluster pool
+  // recycling body ids across spawns. Pool-disabled runs produce
+  // the same delta because Matter assigns fresh ids monotonically
+  // and a cluster never re-enters the array within one run.
+  let prevBodyIds: Set<number> = new Set();
   for (let i = 0; i < opts.ticks; i++) {
     internals.update(DT);
     trace.clusterCountTimeline.push(internals.clusters.length);
@@ -173,12 +177,14 @@ async function runSimulation(opts: RunOptions): Promise<RunTrace> {
       trace.stateTransitions.push(`${i}:${internals.state}`);
       lastState = internals.state;
     }
+    const currentBodyIds = new Set<number>();
     for (const c of internals.clusters) {
-      if (!seenBodyIds.has(c.body.id)) {
-        seenBodyIds.add(c.body.id);
+      currentBodyIds.add(c.body.id);
+      if (!prevBodyIds.has(c.body.id)) {
         trace.spawnOrder.push(`${i}:${c.kind}`);
       }
     }
+    prevBodyIds = currentBodyIds;
   }
   trace.finalScore = internals.score;
   trace.finalState = internals.state;

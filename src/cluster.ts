@@ -1,4 +1,4 @@
-import { Bodies, Body, type IChamferableBodyDefinition } from "matter-js";
+import { Bodies, Body, Common, type IChamferableBodyDefinition } from "matter-js";
 import {
   blobCoreRadius,
   drawSprite,
@@ -12,9 +12,24 @@ import type { Axial, ClusterKind, Shape } from "./types";
 
 type PartPos = { partId: number; x: number; y: number; angle: number; axial: Axial };
 
+export type SpawnOpts = {
+  shape: Shape;
+  x: number;
+  y: number;
+  hexSize: number;
+  kind: ClusterKind;
+  initialSpeedY: number;
+  initialSpin: number;
+};
+
 export class FallingCluster {
   body: Body;
   kind: ClusterKind;
+  // The shape this body was originally built from. Cached so the pool
+  // can key buckets by polyhex signature without inspecting the body's
+  // parts array each release.
+  readonly shape: Shape;
+  readonly hexSize: number;
   // Map from Matter part body id → axial coord (which logical hex this part is).
   partAxial = new Map<number, Axial>();
   scored = false;
@@ -34,21 +49,21 @@ export class FallingCluster {
   // Endless mode leaves this null so gravity behaves normally.
   targetVy: number | null = null;
 
-  constructor(body: Body, kind: ClusterKind, partAxial: Map<number, Axial>) {
+  constructor(
+    body: Body,
+    kind: ClusterKind,
+    partAxial: Map<number, Axial>,
+    shape: Shape,
+    hexSize: number,
+  ) {
     this.body = body;
     this.kind = kind;
     this.partAxial = partAxial;
+    this.shape = shape;
+    this.hexSize = hexSize;
   }
 
-  static spawn(opts: {
-    shape: Shape;
-    x: number;
-    y: number;
-    hexSize: number;
-    kind: ClusterKind;
-    initialSpeedY: number;
-    initialSpin: number;
-  }): FallingCluster {
+  static spawn(opts: SpawnOpts): FallingCluster {
     const { shape, x, y, hexSize, kind, initialSpeedY, initialSpin } = opts;
 
     const partAxial = new Map<number, Axial>();
@@ -89,7 +104,87 @@ export class FallingCluster {
     Body.setVelocity(body, { x: 0, y: initialSpeedY });
     Body.setAngularVelocity(body, initialSpin);
 
-    return new FallingCluster(body, kind, partAxial);
+    return new FallingCluster(body, kind, partAxial, shape, hexSize);
+  }
+
+  // Reuse this cluster for a new spawn. Called by ClusterPool.acquire
+  // after popping from a bucket. The body's vertices / axes / mass
+  // properties are already correct (the shape is identical); we only
+  // need to reset transient state — position, velocity, angle, kind,
+  // and the lifecycle flags the contact handlers / cleanup pass read.
+  //
+  // We also re-id the parent and each part. Matter's pair table is
+  // keyed by `body.id`; if we reused the same ids across spawns,
+  // Matter would resurrect the previous incarnation's stale pair on
+  // first re-collision and skip the `collisionStart` event — the
+  // contact handlers would silently miss the hit. Fresh ids force a
+  // brand-new pair, which restores the start-event semantics the rest
+  // of the game depends on. partAxial is re-mapped onto the new part
+  // ids in the same pass.
+  //
+  // Body.setPosition on a compound parent translates all parts by the
+  // delta so the relative axial offsets survive. Body.setAngle rotates
+  // them around the parent CoM back to identity.
+  reset(opts: SpawnOpts): void {
+    this.body.id = Common.nextId();
+    this.partAxial.clear();
+    const parts = this.body.parts;
+    for (let i = 1; i < parts.length; i++) {
+      const p = parts[i]!;
+      p.id = Common.nextId();
+      this.partAxial.set(p.id, this.shape[i - 1]!);
+    }
+    // Scrub the transient physics scratch state that Matter carries on
+    // the body so a pooled reuse starts from the same baseline a fresh
+    // Bodies.polygon would. positionImpulse / constraintImpulse get
+    // populated during constraint resolution and stay non-zero between
+    // steps; deltaTime ratchets down under CCD substeps; force/torque
+    // are zeroed by Engine.update but only for bodies currently in the
+    // world, so a body removed mid-step can leak a residual. The
+    // motion/speed/angularSpeed/totalContacts/sleepCounter fields are
+    // private to Matter's runtime but read by collision + sleep paths;
+    // the cast lets us reach them without modifying matter-js types.
+    const b = this.body;
+    const bAny = b as unknown as {
+      deltaTime: number;
+      positionImpulse: { x: number; y: number };
+      constraintImpulse: { x: number; y: number; angle: number };
+      force: { x: number; y: number };
+      torque: number;
+      totalContacts: number;
+      sleepCounter: number;
+      isSleeping: boolean;
+      motion: number;
+      speed: number;
+      angularSpeed: number;
+    };
+    bAny.deltaTime = 1000 / 60;
+    bAny.positionImpulse.x = 0;
+    bAny.positionImpulse.y = 0;
+    bAny.constraintImpulse.x = 0;
+    bAny.constraintImpulse.y = 0;
+    bAny.constraintImpulse.angle = 0;
+    bAny.force.x = 0;
+    bAny.force.y = 0;
+    bAny.torque = 0;
+    bAny.totalContacts = 0;
+    bAny.sleepCounter = 0;
+    bAny.isSleeping = false;
+    bAny.motion = 0;
+    bAny.speed = 0;
+    bAny.angularSpeed = 0;
+    Body.setPosition(b, { x: opts.x, y: opts.y });
+    Body.setAngle(b, 0);
+    Body.setVelocity(b, { x: 0, y: opts.initialSpeedY });
+    Body.setAngularVelocity(b, opts.initialSpin);
+    this.kind = opts.kind;
+    this.scored = false;
+    this.contacted = false;
+    this.alive = true;
+    this.pulse = Math.random() * Math.PI * 2;
+    this.hintLabel = null;
+    this.targetVy = null;
+    this.posBuf.length = 0;
   }
 
   // Per-instance reusable buffer for partWorldPositions(). At late-game

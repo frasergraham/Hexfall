@@ -1,6 +1,7 @@
 import { Bodies, Body, Composite, Engine, Events, type IEventCollision } from "matter-js";
 import { trackChallengeStart, trackPlayEnd, trackPlayStart } from "./analytics";
 import { blobPalette, COIN_SHAPE, FallingCluster, hintPalette, kindLabel, pickShape } from "./cluster";
+import { ClusterPool } from "./clusterPool";
 import { DebrisHex } from "./debris";
 import {
   ACHIEVEMENT_LIST,
@@ -420,6 +421,9 @@ export class Game {
   private clusters: FallingCluster[] = [];
   private debris: DebrisHex[] = [];
   private clusterByBodyId = new Map<number, FallingCluster>();
+  // Reuses cluster bodies across spawns to avoid the per-spawn Matter
+  // body allocation churn. Bypassed when `?pool=0` is in the URL.
+  private clusterPool!: ClusterPool;
   private pendingContacts: Array<{ cluster: FallingCluster; contact: ContactInfo }> = [];
   private player!: Player;
   // Tracks whether a horizontal slide-to-rotate gesture is currently
@@ -789,6 +793,11 @@ export class Game {
     this.engine = Engine.create({
       gravity: { x: 0, y: 1, scale: 0.0012 },
     });
+
+    // `?pool=0` disables the cluster pool — diagnostic escape hatch.
+    const poolEnabled =
+      new URLSearchParams(window.location.search).get("pool") !== "0";
+    this.clusterPool = new ClusterPool(this.engine.world, poolEnabled);
 
     this.player = new Player({
       centerX: 0,
@@ -2247,23 +2256,34 @@ export class Game {
     this.rafId = requestAnimationFrame(tick);
   }
 
-  // Push the latest frame interval into the 1-second sliding window
-  // and re-render the overlay text at most 4×/sec. Cheap: at 120 Hz
-  // the window holds ~120 entries and the per-frame work is one push
-  // + a couple of shifts.
+  // Push the latest frame interval into a 10-second sliding window
+  // and re-render the overlay text at most 4×/sec. FPS is computed
+  // over the most recent 1s slice (responsive), worst-frame over the
+  // full 10s (catches infrequent hitches that a tight average would
+  // erase). At 120 Hz the buffer caps around 1200 entries — per-frame
+  // work is one push + ~1 shift; per-flush work is two short scans.
   private recordFrame(t: number, rawMs: number): void {
     this.fpsSamples.push({ t, ms: rawMs });
-    while (this.fpsSamples.length > 0 && t - this.fpsSamples[0]!.t > 1000) {
+    while (this.fpsSamples.length > 0 && t - this.fpsSamples[0]!.t > 10000) {
       this.fpsSamples.shift();
     }
     if (t - this.fpsLastFlush < 250) return;
     this.fpsLastFlush = t;
     if (!this.fpsEl) return;
-    const n = this.fpsSamples.length;
-    const span = n > 0 ? t - this.fpsSamples[0]!.t : 0;
-    const fps = span > 0 ? Math.round((n * 1000) / span) : n;
+    let recentCount = 0;
+    let recentSpan = 0;
     let worst = 0;
-    for (const s of this.fpsSamples) if (s.ms > worst) worst = s.ms;
+    for (let i = this.fpsSamples.length - 1; i >= 0; i--) {
+      const s = this.fpsSamples[i]!;
+      if (s.ms > worst) worst = s.ms;
+      if (t - s.t <= 1000) {
+        recentCount++;
+        recentSpan = t - s.t;
+      }
+    }
+    const fps = recentSpan > 0
+      ? Math.round((recentCount * 1000) / recentSpan)
+      : recentCount;
     this.fpsEl.textContent = `${fps} FPS · worst ${worst.toFixed(1)}ms`;
   }
 
@@ -2678,7 +2698,10 @@ export class Game {
     if (active) {
       // Clear menu-mode practice clusters so re-entering play later
       // doesn't inherit a half-tumbled scene.
-      for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+      for (const c of this.clusters) {
+        Composite.remove(this.engine.world, c.body);
+        this.clusterPool.release(c);
+      }
       this.clusters = [];
       this.clusterByBodyId.clear();
       for (const d of this.debris) Composite.remove(this.engine.world, d.body);
@@ -3589,7 +3612,10 @@ export class Game {
     let parsed: ParsedWave;
     try { parsed = parseWaveLine(this.editorDialogWaveLine); } catch { return; }
     // Clear any leftover bodies from the previous loop.
-    for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+    for (const c of this.clusters) {
+      Composite.remove(this.engine.world, c.body);
+      this.clusterPool.release(c);
+    }
     this.clusters = [];
     this.clusterByBodyId.clear();
     for (const d of this.debris) Composite.remove(this.engine.world, d.body);
@@ -3627,7 +3653,10 @@ export class Game {
       return;
     }
     this.editorDialogPreview = null;
-    for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+    for (const c of this.clusters) {
+      Composite.remove(this.engine.world, c.body);
+      this.clusterPool.release(c);
+    }
     this.clusters = [];
     this.clusterByBodyId.clear();
     for (const d of this.debris) Composite.remove(this.engine.world, d.body);
@@ -4934,7 +4963,10 @@ export class Game {
   private resetRunState(initialScore: number): void {
     for (const s of this.sticksInFlight) Composite.remove(this.engine.world, s.body);
     this.sticksInFlight = [];
-    for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+    for (const c of this.clusters) {
+      Composite.remove(this.engine.world, c.body);
+      this.clusterPool.release(c);
+    }
     for (const d of this.debris) Composite.remove(this.engine.world, d.body);
     for (const d of this.drones) Composite.remove(this.engine.world, d.body);
     Composite.remove(this.engine.world, this.player.body);
@@ -5387,6 +5419,7 @@ export class Game {
       if (c.alive) return true;
       Composite.remove(this.engine.world, c.body);
       this.clusterByBodyId.delete(c.body.id);
+      this.clusterPool.release(c);
       return false;
     });
   }
@@ -5839,6 +5872,7 @@ export class Game {
       if (c.alive) return true;
       Composite.remove(this.engine.world, c.body);
       this.clusterByBodyId.delete(c.body.id);
+      this.clusterPool.release(c);
       return false;
     });
     this.debris = this.debris.filter((d) => {
@@ -6886,7 +6920,7 @@ export class Game {
     const initialAngle = (Math.random() - 0.5) * 0.6; // ±~17°
     const initialSpin = (Math.random() - 0.5) * 0.04;
 
-    const cluster = FallingCluster.spawn({
+    const cluster = this.clusterPool.acquire({
       shape,
       x,
       y,
@@ -6914,7 +6948,6 @@ export class Game {
 
     this.clusters.push(cluster);
     this.clusterByBodyId.set(cluster.body.id, cluster);
-    Composite.add(this.engine.world, cluster.body);
   }
 
   private spawnCluster(): void {
@@ -7007,7 +7040,7 @@ export class Game {
       }
     }
 
-    const cluster = FallingCluster.spawn({
+    const cluster = this.clusterPool.acquire({
       shape,
       x,
       y,
@@ -7039,7 +7072,6 @@ export class Game {
 
     this.clusters.push(cluster);
     this.clusterByBodyId.set(cluster.body.id, cluster);
-    Composite.add(this.engine.world, cluster.body);
     if (sideEntryFromLeft !== null) {
       this.sideWarnings.push({ cluster, side: sideEntryFromLeft ? "left" : "right", age: 0, lifetime: 0.7 });
     }
@@ -7367,7 +7399,7 @@ export class Game {
     vy: number,
   ): FallingCluster {
     const speed = Math.max(0.5, Math.hypot(vx, vy));
-    const cluster = FallingCluster.spawn({
+    const cluster = this.clusterPool.acquire({
       shape,
       x,
       y,
@@ -7395,7 +7427,6 @@ export class Game {
     }
     this.clusters.push(cluster);
     this.clusterByBodyId.set(cluster.body.id, cluster);
-    Composite.add(this.engine.world, cluster.body);
     return cluster;
   }
 
@@ -8381,6 +8412,11 @@ export class Game {
     const usableW = Math.max(1, cssW - sideInset * 2);
     const colWidthFor = (size: number) => SQRT3 * size;
     this.hexSize = Math.max(10, usableW / (colWidthFor(1) * BOARD_COLS));
+
+    // Pool bodies are sized for a specific hexSize — drop the cache so
+    // the next acquire builds fresh at the new size. Cheap; only fires
+    // when the canvas actually changes size.
+    if (this.hexSize !== oldHexSize) this.clusterPool?.clear();
 
     this.boardWidth = usableW;
     this.boardHeight = cssH;
