@@ -2282,10 +2282,15 @@ export class Game {
       }
     }
     const fps = recentSpan > 0
-      ? Math.round((recentCount * 1000) / recentSpan)
+      ? Math.floor((recentCount * 1000) / recentSpan)
       : recentCount;
+    // Floor FPS and ceil ms (to 1 decimal) so the readout never papers
+    // over a frame that ran past the 16.667ms 60fps budget — a real
+    // 59.6 FPS shouldn't display as "60", and a 16.71ms frame
+    // shouldn't display as "16.7".
+    const ceil1 = (n: number) => (Math.ceil(n * 10) / 10).toFixed(1);
     this.fpsEl.textContent =
-      `${fps} FPS · ${rawMs.toFixed(1)}ms\nworst ${worst.toFixed(1)}ms (10s)`;
+      `${fps} FPS · ${ceil1(rawMs)}ms\nworst ${ceil1(worst)}ms (10s)`;
   }
 
   private applyFpsVisibility(): void {
