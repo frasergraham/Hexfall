@@ -478,6 +478,32 @@ body.editor-previewing #app {
   display: none;
 }
 
+/* Frame-timing overlay. Toggled by tapping the menu title 5x
+   (persisted at hexrain.debug.fps). Sits below the HUD on the
+   right edge so it doesn't fight the BEST label. */
+.fps-overlay {
+  position: absolute;
+  top: 60px;
+  right: 12px;
+  padding: 4px 8px;
+  background: rgba(13, 15, 28, 0.7);
+  border: 1px solid rgba(91, 139, 255, 0.35);
+  border-radius: 6px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #aab4dc;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+  pointer-events: none;
+  white-space: pre;
+  z-index: 6;
+}
+
+.fps-overlay[hidden] {
+  display: none;
+}
+
 .controls-hint.fading {
   opacity: 0;
 }

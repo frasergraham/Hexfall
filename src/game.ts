@@ -1,6 +1,7 @@
 import { Bodies, Body, Composite, Engine, Events, type IEventCollision } from "matter-js";
 import { trackChallengeStart, trackPlayEnd, trackPlayStart } from "./analytics";
 import { blobPalette, COIN_SHAPE, FallingCluster, hintPalette, kindLabel, pickShape } from "./cluster";
+import { ClusterPool } from "./clusterPool";
 import { DebrisHex } from "./debris";
 import {
   ACHIEVEMENT_LIST,
@@ -330,13 +331,6 @@ interface ContactInfo {
   partId: number;
 }
 
-interface Star {
-  x: number;
-  y: number;
-  r: number;
-  a: number;
-}
-
 interface Floater {
   text: string;
   x: number;
@@ -427,6 +421,9 @@ export class Game {
   private clusters: FallingCluster[] = [];
   private debris: DebrisHex[] = [];
   private clusterByBodyId = new Map<number, FallingCluster>();
+  // Reuses cluster bodies across spawns to avoid the per-spawn Matter
+  // body allocation churn. Bypassed when `?pool=0` is in the URL.
+  private clusterPool!: ClusterPool;
   private pendingContacts: Array<{ cluster: FallingCluster; contact: ContactInfo }> = [];
   private player!: Player;
   // Tracks whether a horizontal slide-to-rotate gesture is currently
@@ -606,9 +603,16 @@ export class Game {
   // horizontal parallax based on the player's x position and a slow
   // downward scroll that gives a sense of moving forward. Density scales
   // up at score 200/400/600.
-  private starsDeep: Star[] = [];
-  private starsBack: Star[] = [];
-  private starsFront: Star[] = [];
+  //
+  // Each plane is prebaked into an offscreen canvas at regeneration
+  // time and drawn with up to 4 wrapped drawImage calls — the previous
+  // implementation re-issued ~635 arc/fill per frame at tier 3 which
+  // dominated WKWebView frame cost.
+  private starsDeep: HTMLCanvasElement | null = null;
+  private starsBack: HTMLCanvasElement | null = null;
+  private starsFront: HTMLCanvasElement | null = null;
+  private starLayerW = 0;
+  private starLayerH = 0;
   private starScrollY = 0;
   private starTier = 0;
 
@@ -700,6 +704,20 @@ export class Game {
   private rafId = 0;
   private unbindInput: (() => void) | null = null;
 
+  // Frame-timing overlay state. Tracks raw rAF frame intervals (in ms)
+  // over a 1-second sliding window so we can surface both average FPS
+  // and the worst single frame — averages alone hide the hitches that
+  // make late-game runs feel choppy. Persisted toggle lives at
+  // STORAGE_KEYS.debugFps; flipped via 5-tap on the menu title since
+  // iOS has no URL-bar to set ?debug=1.
+  private fpsEl: HTMLElement | null = null;
+  private fpsEnabled = false;
+  private fpsSamples: { t: number; ms: number }[] = [];
+  private fpsLastFlush = 0;
+  // Title-tap bookkeeping for the FPS toggle gesture.
+  private titleTapCount = 0;
+  private titleTapLast = 0;
+
   private holds: Record<"left" | "right" | "rotateCw" | "rotateCcw", HoldState> = {
     left: { active: false },
     right: { active: false },
@@ -727,6 +745,9 @@ export class Game {
     this.scoreEl = opts.scoreEl;
     this.bestEl = opts.bestEl;
     this.pauseBtn = document.getElementById("pauseBtn");
+    this.fpsEl = document.getElementById("fpsOverlay");
+    this.fpsEnabled = loadBool(STORAGE_KEYS.debugFps, false);
+    this.applyFpsVisibility();
     // Touchstart fires the pause immediately, even when another finger is
     // already mid-drag on the position slider — click events can be
     // swallowed when a sibling touch sequence is calling preventDefault.
@@ -772,6 +793,11 @@ export class Game {
     this.engine = Engine.create({
       gravity: { x: 0, y: 1, scale: 0.0012 },
     });
+
+    // `?pool=0` disables the cluster pool — diagnostic escape hatch.
+    const poolEnabled =
+      new URLSearchParams(window.location.search).get("pool") !== "0";
+    this.clusterPool = new ClusterPool(this.engine.world, poolEnabled);
 
     this.player = new Player({
       centerX: 0,
@@ -2216,13 +2242,91 @@ export class Game {
   start(): void {
     this.lastTime = performance.now();
     const tick = (t: number) => {
-      const dt = Math.min(0.05, (t - this.lastTime) / 1000);
+      // Track the raw rAF interval before clamping — the 50ms cap below
+      // protects physics from huge dt spikes, but the FPS readout needs
+      // the true frame time so hitches actually register.
+      const rawMs = t - this.lastTime;
+      const dt = Math.min(0.05, rawMs / 1000);
       this.lastTime = t;
       this.update(dt);
       this.render(dt);
+      if (this.fpsEnabled) this.recordFrame(t, rawMs);
       this.rafId = requestAnimationFrame(tick);
     };
     this.rafId = requestAnimationFrame(tick);
+  }
+
+  // Push the latest frame interval into a 10-second sliding window
+  // and re-render the overlay text at most 4×/sec. FPS is computed
+  // over the most recent 1s slice (responsive), worst-frame over the
+  // full 10s (catches infrequent hitches that a tight average would
+  // erase). At 120 Hz the buffer caps around 1200 entries — per-frame
+  // work is one push + ~1 shift; per-flush work is two short scans.
+  private recordFrame(t: number, rawMs: number): void {
+    this.fpsSamples.push({ t, ms: rawMs });
+    while (this.fpsSamples.length > 0 && t - this.fpsSamples[0]!.t > 10000) {
+      this.fpsSamples.shift();
+    }
+    if (t - this.fpsLastFlush < 250) return;
+    this.fpsLastFlush = t;
+    if (!this.fpsEl) return;
+    let recentCount = 0;
+    let recentSpan = 0;
+    let worst = 0;
+    for (let i = this.fpsSamples.length - 1; i >= 0; i--) {
+      const s = this.fpsSamples[i]!;
+      if (s.ms > worst) worst = s.ms;
+      if (t - s.t <= 1000) {
+        recentCount++;
+        recentSpan = t - s.t;
+      }
+    }
+    const fps = recentSpan > 0
+      ? Math.floor((recentCount * 1000) / recentSpan)
+      : recentCount;
+    // Floor FPS and ceil ms (to 1 decimal) so the readout never papers
+    // over a frame that ran past the 16.667ms 60fps budget — a real
+    // 59.6 FPS shouldn't display as "60", and a 16.71ms frame
+    // shouldn't display as "16.7".
+    const ceil1 = (n: number) => (Math.ceil(n * 10) / 10).toFixed(1);
+    this.fpsEl.textContent =
+      `${fps} FPS · ${ceil1(rawMs)}ms\nworst ${ceil1(worst)}ms (10s)`;
+  }
+
+  private applyFpsVisibility(): void {
+    if (!this.fpsEl) return;
+    this.fpsEl.hidden = !this.fpsEnabled;
+    if (!this.fpsEnabled) {
+      this.fpsSamples.length = 0;
+      this.fpsLastFlush = 0;
+      this.fpsEl.textContent = "";
+    }
+  }
+
+  // Re-bind on every renderMenu() since the overlay's innerHTML gets
+  // wholesale replaced — the previous listener is on a detached node.
+  private bindTitleTapToggle(): void {
+    const title = this.overlay.querySelector<HTMLElement>("h1");
+    if (!title) return;
+    title.style.cursor = "default";
+    title.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.handleTitleTap();
+    });
+  }
+
+  // 5 taps on the menu title within a 1.5s rolling window toggles the
+  // FPS overlay. Persisted so testers don't lose it between launches.
+  private handleTitleTap(): void {
+    const now = performance.now();
+    if (now - this.titleTapLast > 1500) this.titleTapCount = 0;
+    this.titleTapLast = now;
+    this.titleTapCount += 1;
+    if (this.titleTapCount < 5) return;
+    this.titleTapCount = 0;
+    this.fpsEnabled = !this.fpsEnabled;
+    saveBool(STORAGE_KEYS.debugFps, this.fpsEnabled);
+    this.applyFpsVisibility();
   }
 
   destroy(): void {
@@ -2383,6 +2487,7 @@ export class Game {
     this.overlay.innerHTML = this.menuOverlayHtml;
     this.overlay.classList.remove("hidden");
     this.debugApplyMenu();
+    this.bindTitleTapToggle();
     this.renderAchievementBadges();
     this.refreshDifficultyButtons();
     this.refreshAudioToggles();
@@ -2599,7 +2704,10 @@ export class Game {
     if (active) {
       // Clear menu-mode practice clusters so re-entering play later
       // doesn't inherit a half-tumbled scene.
-      for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+      for (const c of this.clusters) {
+        Composite.remove(this.engine.world, c.body);
+        this.clusterPool.release(c);
+      }
       this.clusters = [];
       this.clusterByBodyId.clear();
       for (const d of this.debris) Composite.remove(this.engine.world, d.body);
@@ -3510,7 +3618,10 @@ export class Game {
     let parsed: ParsedWave;
     try { parsed = parseWaveLine(this.editorDialogWaveLine); } catch { return; }
     // Clear any leftover bodies from the previous loop.
-    for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+    for (const c of this.clusters) {
+      Composite.remove(this.engine.world, c.body);
+      this.clusterPool.release(c);
+    }
     this.clusters = [];
     this.clusterByBodyId.clear();
     for (const d of this.debris) Composite.remove(this.engine.world, d.body);
@@ -3548,7 +3659,10 @@ export class Game {
       return;
     }
     this.editorDialogPreview = null;
-    for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+    for (const c of this.clusters) {
+      Composite.remove(this.engine.world, c.body);
+      this.clusterPool.release(c);
+    }
     this.clusters = [];
     this.clusterByBodyId.clear();
     for (const d of this.debris) Composite.remove(this.engine.world, d.body);
@@ -4855,7 +4969,10 @@ export class Game {
   private resetRunState(initialScore: number): void {
     for (const s of this.sticksInFlight) Composite.remove(this.engine.world, s.body);
     this.sticksInFlight = [];
-    for (const c of this.clusters) Composite.remove(this.engine.world, c.body);
+    for (const c of this.clusters) {
+      Composite.remove(this.engine.world, c.body);
+      this.clusterPool.release(c);
+    }
     for (const d of this.debris) Composite.remove(this.engine.world, d.body);
     for (const d of this.drones) Composite.remove(this.engine.world, d.body);
     Composite.remove(this.engine.world, this.player.body);
@@ -5308,6 +5425,7 @@ export class Game {
       if (c.alive) return true;
       Composite.remove(this.engine.world, c.body);
       this.clusterByBodyId.delete(c.body.id);
+      this.clusterPool.release(c);
       return false;
     });
   }
@@ -5760,6 +5878,7 @@ export class Game {
       if (c.alive) return true;
       Composite.remove(this.engine.world, c.body);
       this.clusterByBodyId.delete(c.body.id);
+      this.clusterPool.release(c);
       return false;
     });
     this.debris = this.debris.filter((d) => {
@@ -6807,7 +6926,7 @@ export class Game {
     const initialAngle = (Math.random() - 0.5) * 0.6; // ±~17°
     const initialSpin = (Math.random() - 0.5) * 0.04;
 
-    const cluster = FallingCluster.spawn({
+    const cluster = this.clusterPool.acquire({
       shape,
       x,
       y,
@@ -6835,7 +6954,6 @@ export class Game {
 
     this.clusters.push(cluster);
     this.clusterByBodyId.set(cluster.body.id, cluster);
-    Composite.add(this.engine.world, cluster.body);
   }
 
   private spawnCluster(): void {
@@ -6928,7 +7046,7 @@ export class Game {
       }
     }
 
-    const cluster = FallingCluster.spawn({
+    const cluster = this.clusterPool.acquire({
       shape,
       x,
       y,
@@ -6960,7 +7078,6 @@ export class Game {
 
     this.clusters.push(cluster);
     this.clusterByBodyId.set(cluster.body.id, cluster);
-    Composite.add(this.engine.world, cluster.body);
     if (sideEntryFromLeft !== null) {
       this.sideWarnings.push({ cluster, side: sideEntryFromLeft ? "left" : "right", age: 0, lifetime: 0.7 });
     }
@@ -7288,7 +7405,7 @@ export class Game {
     vy: number,
   ): FallingCluster {
     const speed = Math.max(0.5, Math.hypot(vx, vy));
-    const cluster = FallingCluster.spawn({
+    const cluster = this.clusterPool.acquire({
       shape,
       x,
       y,
@@ -7316,7 +7433,6 @@ export class Game {
     }
     this.clusters.push(cluster);
     this.clusterByBodyId.set(cluster.body.id, cluster);
-    Composite.add(this.engine.world, cluster.body);
     return cluster;
   }
 
@@ -8303,6 +8419,11 @@ export class Game {
     const colWidthFor = (size: number) => SQRT3 * size;
     this.hexSize = Math.max(10, usableW / (colWidthFor(1) * BOARD_COLS));
 
+    // Pool bodies are sized for a specific hexSize — drop the cache so
+    // the next acquire builds fresh at the new size. Cheap; only fires
+    // when the canvas actually changes size.
+    if (this.hexSize !== oldHexSize) this.clusterPool?.clear();
+
     this.boardWidth = usableW;
     this.boardHeight = cssH;
     this.boardOriginX = sideInset;
@@ -8392,33 +8513,38 @@ export class Game {
     // adds another layer of richness that peaks at score 600.
     const tierMul = 1 + this.starTier * 0.45;
     const area = cssW * cssH;
-    this.starsDeep = generateStars(
+    this.starLayerW = cssW;
+    this.starLayerH = cssH;
+    this.starsDeep = bakeStarLayer(
       cssW,
       cssH,
       Math.round((area / 2200) * tierMul),
       0.25,
       0.6,
       0.15,
+      "#5b6da0",
     );
-    this.starsBack = generateStars(
+    this.starsBack = bakeStarLayer(
       cssW,
       cssH,
       Math.round((area / 3600) * tierMul),
       0.4,
       1.0,
       0.4,
+      "#9fb4e6",
     );
-    this.starsFront = generateStars(
+    this.starsFront = bakeStarLayer(
       cssW,
       cssH,
       Math.round((area / 9000) * tierMul),
       0.9,
       1.9,
       0.7,
+      "#ffffff",
     );
   }
 
-  private drawStarfield(canvasW: number, canvasH: number): void {
+  private drawStarfield(): void {
     const ctx = this.ctx;
     // Parallax driver: how far the player is from the centre of the rail,
     // normalised to [-1, 1]. Negative = left, positive = right.
@@ -8433,15 +8559,19 @@ export class Game {
     ctx.rect(this.boardOriginX, this.boardOriginY, this.boardWidth, this.boardHeight);
     ctx.clip();
 
-    drawStarLayer(
-      ctx,
-      this.starsDeep,
-      canvasW,
-      canvasH,
-      -offset * PARALLAX_DEEP,
-      this.starScrollY * STAR_SCROLL_DEEP,
-      "#5b6da0",
-    );
+    const layerW = this.starLayerW;
+    const layerH = this.starLayerH;
+
+    if (this.starsDeep) {
+      drawStarLayer(
+        ctx,
+        this.starsDeep,
+        layerW,
+        layerH,
+        -offset * PARALLAX_DEEP,
+        this.starScrollY * STAR_SCROLL_DEEP,
+      );
+    }
 
     // Nebula sits between the deep + back planes so foreground stars still
     // sparkle on top of it. Drawn twice so the tile wraps smoothly.
@@ -8457,24 +8587,26 @@ export class Game {
       ctx.restore();
     }
 
-    drawStarLayer(
-      ctx,
-      this.starsBack,
-      canvasW,
-      canvasH,
-      -offset * PARALLAX_BACK,
-      this.starScrollY * STAR_SCROLL_BACK,
-      "#9fb4e6",
-    );
-    drawStarLayer(
-      ctx,
-      this.starsFront,
-      canvasW,
-      canvasH,
-      -offset * PARALLAX_FRONT,
-      this.starScrollY * STAR_SCROLL_FRONT,
-      "#ffffff",
-    );
+    if (this.starsBack) {
+      drawStarLayer(
+        ctx,
+        this.starsBack,
+        layerW,
+        layerH,
+        -offset * PARALLAX_BACK,
+        this.starScrollY * STAR_SCROLL_BACK,
+      );
+    }
+    if (this.starsFront) {
+      drawStarLayer(
+        ctx,
+        this.starsFront,
+        layerW,
+        layerH,
+        -offset * PARALLAX_FRONT,
+        this.starScrollY * STAR_SCROLL_FRONT,
+      );
+    }
 
     ctx.restore();
   }
@@ -8485,7 +8617,7 @@ export class Game {
     ctx.clearRect(0, 0, rect.width, rect.height);
 
     // Two-plane parallax starfield, drawn first so everything else covers it.
-    this.drawStarfield(rect.width, rect.height);
+    this.drawStarfield();
 
     // Board background — translucent so the starfield (and nebula at
     // higher scores) reads through the play area rather than being a
@@ -8826,24 +8958,38 @@ function paintCellOnCanvas(
 
 // difficultyTint moved to src/ui/components/blockIcon.ts in Phase 2.
 
-function generateStars(
-  w: number,
-  h: number,
+// Bake a starfield plane straight into an offscreen canvas at native
+// pixel density. Cheaper at draw time than holding a Star[] array and
+// re-issuing per-star arc/fill every frame — at tier 3 (score ≥ 600)
+// the previous path issued ~635 arc/fill + alpha writes per frame.
+function bakeStarLayer(
+  cssW: number,
+  cssH: number,
   count: number,
   minR: number,
   maxR: number,
   minA: number,
-): Star[] {
-  const out: Star[] = [];
+  color: string,
+): HTMLCanvasElement {
+  const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.ceil(cssW * dpr));
+  c.height = Math.max(1, Math.ceil(cssH * dpr));
+  const cx = c.getContext("2d");
+  if (!cx) return c;
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cx.fillStyle = color;
   for (let i = 0; i < count; i++) {
-    out.push({
-      x: Math.random() * w,
-      y: Math.random() * h,
-      r: minR + Math.random() * (maxR - minR),
-      a: minA + Math.random() * (1 - minA),
-    });
+    const x = Math.random() * cssW;
+    const y = Math.random() * cssH;
+    const r = minR + Math.random() * (maxR - minR);
+    const a = minA + Math.random() * (1 - minA);
+    cx.globalAlpha = a;
+    cx.beginPath();
+    cx.arc(x, y, r, 0, Math.PI * 2);
+    cx.fill();
   }
-  return out;
+  return c;
 }
 
 // Pre-render a tile of soft coloured nebula blobs into an offscreen canvas.
@@ -8877,27 +9023,22 @@ function generateNebula(w: number, h: number): HTMLCanvasElement {
 
 function drawStarLayer(
   ctx: CanvasRenderingContext2D,
-  stars: Star[],
-  canvasW: number,
-  canvasH: number,
+  layer: HTMLCanvasElement,
+  layerW: number,
+  layerH: number,
   shiftX: number,
   shiftY: number,
-  color: string,
 ): void {
-  ctx.save();
-  ctx.fillStyle = color;
-  for (const s of stars) {
-    // Wrap horizontally + vertically so stars never disappear off one edge
-    // as the parallax / scroll moves them past it; positive modulo trick
-    // handles negative shifts.
-    const sx = ((s.x + shiftX) % canvasW + canvasW) % canvasW;
-    const sy = ((s.y + shiftY) % canvasH + canvasH) % canvasH;
-    ctx.globalAlpha = s.a;
-    ctx.beginPath();
-    ctx.arc(sx, sy, s.r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  ctx.restore();
+  // Toroidal wrap via 4 tiles at most. shiftX is bounded by the parallax
+  // constants (±22 px) and shiftY accumulates monotonically — both get
+  // folded into [0, layerW) / [0, layerH) before the tile draws, so any
+  // visible parallax offset is covered. Browsers cull the tiles that
+  // land fully off-screen for ~free.
+  const sx = ((shiftX % layerW) + layerW) % layerW;
+  const sy = ((shiftY % layerH) + layerH) % layerH;
+  ctx.drawImage(layer, sx - layerW, sy - layerH, layerW, layerH);
+  ctx.drawImage(layer, sx, sy - layerH, layerW, layerH);
+  ctx.drawImage(layer, sx - layerW, sy, layerW, layerH);
+  ctx.drawImage(layer, sx, sy, layerW, layerH);
 }
 
