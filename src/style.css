@@ -4026,3 +4026,693 @@ body:not(.in-play) #touchbar {
 .report-submit {
   padding: 8px 18px;
 }
+/* ===================================================================
+   DESIGN SYSTEM — Safe refinement (handoff 2026-05-12)
+   Unifies button hierarchy (primary/secondary/ghost/danger), one card
+   pattern (.scard with blue/violet/teal/gold accents), one pill system,
+   and a segmented control. Implemented as a stylesheet overlay that
+   re-skins existing class names so legacy templates pick up the new
+   look without restructuring every render function.
+   =================================================================== */
+
+/* --- shared primitives (new) --- */
+
+.ds-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scard-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #7fe89c;
+  font-weight: 700;
+}
+.scard-eyebrow.dim { color: #6f7aa6; }
+.scard-eyebrow.violet { color: #c9a4ff; }
+.scard-eyebrow.teal { color: #7ce0d8; }
+
+.scard-meta {
+  font-size: 11px;
+  color: #aab4dc;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.scard-meta .dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #3a4170;
+  display: inline-block;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 700;
+  line-height: 1;
+}
+.pill.blue   { background: rgba(91,139,255,.16); color: #aac4ff; border: 1px solid rgba(91,139,255,.35); }
+.pill.violet { background: rgba(170,100,220,.14); color: #c9a4ff; border: 1px solid rgba(170,100,220,.35); }
+.pill.teal   { background: rgba(70,200,200,.14); color: #7ce0d8; border: 1px solid rgba(70,200,200,.35); }
+.pill.green  { background: rgba(127,232,156,.12); color: #7fe89c; border: 1px solid rgba(127,232,156,.35); }
+.pill.gold   { background: rgba(255,200,100,.12); color: #ffd86b; border: 1px solid rgba(255,200,100,.4); }
+.pill.ghost  { background: rgba(31,36,64,.55); color: #aab4dc; border: 1px solid rgba(91,139,255,.18); }
+.pill.solid-gold {
+  background: linear-gradient(180deg,#ffd86b,#ff9c4a);
+  color: #1a0f00;
+  border: 0;
+}
+
+.iconbtn {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(31,36,64,.55);
+  border: 1px solid rgba(91,139,255,.3);
+  border-radius: 10px;
+  color: #d2d9f5;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* --- restyle: difficulty row as a segmented control --------------- */
+
+.difficulty-buttons {
+  display: flex;
+  gap: 0;
+  width: 340px;
+  margin: 0;
+  padding: 4px;
+  background: rgba(20, 24, 44, 0.55);
+  border: 1px solid rgba(91, 139, 255, 0.16);
+  border-radius: 12px;
+}
+.difficulty-buttons button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 9px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #aab4dc;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: none;
+  transform: none;
+  transition: background 120ms, color 120ms;
+  -webkit-tap-highlight-color: transparent;
+}
+.difficulty-buttons button:hover {
+  color: #e8ecff;
+  border-color: transparent;
+}
+.difficulty-buttons button.active {
+  background: rgba(91, 139, 255, 0.22);
+  color: #fff;
+  border: 0;
+  box-shadow: none;
+  transform: none;
+}
+.difficulty-buttons button[data-difficulty="hardcore"] {
+  color: #ff8c97;
+  border: 0;
+}
+.difficulty-buttons button[data-difficulty="hardcore"]:hover {
+  color: #ffd4cd;
+  border: 0;
+}
+.difficulty-buttons button[data-difficulty="hardcore"].active {
+  background: rgba(196, 60, 77, 0.22);
+  color: #ffd4cd;
+  border: 0;
+  box-shadow: none;
+}
+.difficulty-buttons button.locked {
+  color: #6f7aa6;
+  background: transparent;
+  border: 0;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+/* --- restyle: play / secondary / tertiary buttons ---------------- */
+
+.play-btn {
+  width: 340px;
+  padding: 13px 0;
+  background: #5b8bff;
+  color: #06070d;
+  border: 0;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.24em;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgba(91, 139, 255, 0.28);
+  transition: background 120ms, transform 120ms, box-shadow 120ms;
+  -webkit-tap-highlight-color: transparent;
+}
+.play-btn:hover,
+.play-btn:active {
+  background: #7aa0ff;
+  box-shadow: 0 10px 28px rgba(91, 139, 255, 0.4);
+  transform: scale(1.01);
+  border-color: transparent;
+}
+.play-btn-secondary {
+  background: rgba(31, 36, 64, 0.7);
+  color: #e8ecff;
+  border: 1px solid rgba(91, 139, 255, 0.4);
+  box-shadow: none;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  padding: 11px 0;
+}
+.play-btn-secondary:hover,
+.play-btn-secondary:active {
+  background: rgba(50, 60, 100, 0.85);
+  border-color: rgba(91, 139, 255, 0.7);
+  box-shadow: none;
+  transform: none;
+}
+.play-btn-tertiary {
+  background: transparent;
+  color: #aab4dc;
+  border: 1px solid rgba(91, 139, 255, 0.18);
+  box-shadow: none;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  padding: 9px 0;
+  font-weight: 700;
+}
+.play-btn-tertiary:hover,
+.play-btn-tertiary:active {
+  background: rgba(31, 36, 64, 0.55);
+  color: #e8ecff;
+  border-color: rgba(91, 139, 255, 0.35);
+  box-shadow: none;
+  transform: none;
+}
+
+/* Menu structure: tighter gaps & smaller play-group, footer reads
+   as tertiary chrome (small, muted, low contrast). */
+.overlay h1 {
+  font-size: clamp(34px, 9.5vw, 54px);
+  letter-spacing: -0.01em;
+  margin: 0 0 4px;
+}
+.overlay .tagline {
+  font-size: 10px;
+  letter-spacing: 0.32em;
+  color: #6f7aa6;
+  margin: 0 0 16px;
+}
+.play-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  margin-top: 14px;
+}
+.challenge-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 340px;
+  margin-top: 10px;
+}
+.challenge-group .play-btn-secondary {
+  width: auto;
+  padding: 12px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+}
+
+.menu-footer {
+  margin-top: 14px;
+  gap: 6px 8px;
+}
+.audio-toggle,
+.reset-hints {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px solid rgba(91, 139, 255, 0.14);
+  color: #6f7aa6;
+  border-radius: 999px;
+}
+.audio-toggle:hover,
+.reset-hints:hover {
+  color: #aab4dc;
+  border-color: rgba(91, 139, 255, 0.3);
+}
+.audio-toggle[aria-pressed="true"] {
+  color: #aab4dc;
+  border-color: rgba(91, 139, 255, 0.3);
+}
+.audio-toggle[aria-pressed="false"] {
+  opacity: 0.4;
+  text-decoration: none;
+}
+.credits-link {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: #6f7aa6;
+  text-transform: uppercase;
+  text-decoration: none;
+  padding: 5px 4px;
+}
+.credits-link:hover {
+  color: #aab4dc;
+}
+
+/* Achievements box becomes a slimmer hero card on the menu. */
+.achievements {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: rgba(20, 24, 44, 0.7);
+  border: 1px solid rgba(91, 139, 255, 0.16);
+  border-radius: 14px;
+  width: min(340px, 100%);
+}
+.achievements h2 {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: #6f7aa6;
+  margin: 0 0 6px;
+}
+
+/* --- IAP demoted: smaller pill, no megabar glow ------------------ */
+
+.iap-banner {
+  display: flex;
+  gap: 8px;
+  padding: 4px 4px;
+  margin-top: 2px;
+  justify-content: flex-end;
+}
+.iap-buy {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  padding: 6px 12px;
+  background: linear-gradient(180deg, #ffd86b, #ff9c4a);
+  color: #1a0f00;
+  border: 0;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  gap: 6px;
+}
+.iap-buy:hover,
+.iap-buy:active {
+  background: linear-gradient(180deg, #ffe28a, #ffb070);
+  border: 0;
+}
+.iap-title {
+  letter-spacing: 0.16em;
+  font-size: 10px;
+}
+.iap-price {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: #1a0f00;
+  text-shadow: none;
+  font-weight: 800;
+  padding-left: 6px;
+  margin-left: 4px;
+  border-left: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+/* --- challenge cards adopt the scard look ----------------------- */
+
+.challenge-card {
+  background: rgba(20, 24, 44, 0.7);
+  border: 1px solid rgba(91, 139, 255, 0.32);
+  border-radius: 14px;
+  box-shadow: none;
+}
+.challenge-card:hover,
+.challenge-card:active {
+  background: rgba(30, 36, 64, 0.78);
+  border-color: rgba(91, 139, 255, 0.55);
+  box-shadow: none;
+  transform: none;
+}
+.challenge-card.completed {
+  background: rgba(20, 36, 28, 0.55);
+  border-color: rgba(127, 232, 156, 0.35);
+}
+.challenge-card.locked {
+  background: rgba(15, 17, 30, 0.55);
+  border-color: rgba(60, 64, 96, 0.32);
+  opacity: 0.55;
+}
+.challenge-card-id {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: #aab4dc;
+}
+.challenge-card.completed .challenge-card-id {
+  color: #7fe89c;
+}
+.challenge-card-new {
+  font-size: 8px;
+  padding: 2px 6px;
+  letter-spacing: 0.16em;
+  background: rgba(255, 200, 100, 0.12);
+  color: #ffd86b;
+  border: 1px solid rgba(255, 200, 100, 0.4);
+  border-radius: 999px;
+  box-shadow: none;
+}
+.challenge-card-new.updated {
+  background: rgba(70, 200, 200, 0.14);
+  color: #7ce0d8;
+  border: 1px solid rgba(70, 200, 200, 0.35);
+  box-shadow: none;
+}
+
+/* Block headers: cleaner type, low-contrast meta. */
+.challenge-block {
+  background: transparent;
+  border: 0;
+  padding: 4px 4px 12px;
+}
+.challenge-block-header {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: #aab4dc;
+  font-weight: 700;
+}
+.challenge-block.locked .challenge-block-header {
+  color: #6f7aa6;
+}
+.challenge-block-lock {
+  background: rgba(20, 24, 44, 0.55);
+  border: 1px dashed rgba(91, 139, 255, 0.22);
+  border-radius: 14px;
+  padding: 14px 16px;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.challenge-block-lock-icon {
+  width: 36px;
+  height: 40px;
+  font-size: 18px;
+  background: rgba(91, 139, 255, 0.1);
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6f7aa6;
+}
+.challenge-block-lock p {
+  margin: 0;
+  font-size: 12px;
+  color: #8089b3;
+  text-align: left;
+}
+
+/* Collapsible section header: thinner, matches design system. */
+.challenge-official-header {
+  background: rgba(20, 24, 44, 0.7);
+  border: 1px solid rgba(91, 139, 255, 0.16);
+  border-radius: 14px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  padding: 12px 16px;
+  color: #aab4dc;
+}
+.challenge-official-header:hover,
+.challenge-official-header:active {
+  background: rgba(30, 36, 64, 0.78);
+}
+.challenge-official-chevron { color: #6f7aa6; }
+.challenge-official-title { color: #e8ecff; }
+.challenge-official-header .progress {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #7fe89c;
+}
+
+.challenge-back {
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgba(31, 36, 64, 0.55);
+  border: 1px solid rgba(91, 139, 255, 0.3);
+  color: #d2d9f5;
+}
+.challenge-back:hover,
+.challenge-back:active {
+  background: rgba(50, 60, 100, 0.75);
+  border-color: rgba(91, 139, 255, 0.5);
+}
+
+/* --- editor-home rows: align with the violet "Mine" scard look --- */
+
+.editor-home-row {
+  background: rgba(20, 24, 44, 0.7);
+  border: 1px solid rgba(170, 100, 220, 0.32);
+  border-radius: 14px;
+}
+.editor-home-row.editor-home-row-remix-source {
+  border-color: rgba(91, 139, 255, 0.22);
+}
+.editor-home-row.editor-home-row-remix-community {
+  border-color: rgba(70, 200, 200, 0.32);
+}
+.editor-home-row-published {
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  background: rgba(127, 232, 156, 0.12);
+  color: #7fe89c;
+  border: 1px solid rgba(127, 232, 156, 0.35);
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+
+.editor-home-add {
+  background: rgba(170, 100, 220, 0.14);
+  border: 1px dashed rgba(170, 100, 220, 0.45);
+  color: #c9a4ff;
+  border-radius: 14px;
+}
+.editor-home-add:hover {
+  background: rgba(170, 100, 220, 0.22);
+  border-color: rgba(170, 100, 220, 0.7);
+}
+
+/* --- editor-row buttons: trim chrome, share a single look ------- */
+
+.editor-row-btn {
+  padding: 6px 10px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  border-radius: 8px;
+  background: rgba(31, 36, 64, 0.7);
+  border: 1px solid rgba(91, 139, 255, 0.3);
+  color: #e8ecff;
+  font-weight: 700;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.editor-row-btn:hover {
+  background: rgba(50, 60, 100, 0.85);
+}
+.editor-row-btn-play {
+  background: #5b8bff;
+  color: #06070d;
+  border: 0;
+}
+.editor-row-btn-play:hover {
+  background: #7aa0ff;
+}
+.editor-row-btn-edit {
+  background: rgba(31, 36, 64, 0.7);
+  border: 1px solid rgba(91, 139, 255, 0.3);
+  color: #e8ecff;
+}
+.editor-row-btn-delete {
+  background: rgba(196, 60, 77, 0.18);
+  border: 1px solid rgba(196, 60, 77, 0.5);
+  color: #ff8c97;
+}
+.editor-row-btn-publish {
+  background: rgba(127, 232, 156, 0.12);
+  color: #7fe89c;
+  border: 1px solid rgba(127, 232, 156, 0.35);
+}
+.editor-row-btn-unpublish {
+  background: rgba(196, 60, 77, 0.18);
+  border: 1px solid rgba(196, 60, 77, 0.5);
+  color: #ff8c97;
+}
+
+/* --- editor-edit: flipped layout (Spawn ↓), add-buttons at top --- */
+
+/* Waves fall downward in-game, so the editor mirrors that: add-row at
+   top, newest wave just below it, wave 1 (first to play) at the bottom.
+   Achieved via flex-direction:column-reverse — the add-row is the last
+   DOM child so it renders first visually, and the wave rows render in
+   reverse chronological order without touching the render function. */
+.editor-edit .editor-wave-list {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+}
+.editor-edit .editor-wave-list::before {
+  /* ::before is the first DOM child → renders at the BOTTOM with
+     column-reverse, marking where the first wave to play lands. */
+  content: "↓ first wave";
+  display: block;
+  text-align: right;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: #7c87b3;
+  text-transform: uppercase;
+  font-weight: 700;
+  font-family: ui-monospace, Menlo, monospace;
+  padding: 6px 4px 0;
+  margin-top: 4px;
+}
+.editor-edit .editor-add-wave-row { margin: 0; }
+.editor-add-wave {
+  background: rgba(31, 36, 64, 0.7);
+  border: 1px solid rgba(91, 139, 255, 0.4);
+  color: #e8ecff;
+  border-radius: 10px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+}
+.editor-add-wave:hover {
+  background: rgba(50, 60, 100, 0.85);
+  color: #fff;
+}
+.editor-add-wave-custom {
+  border-color: rgba(170, 100, 220, 0.45);
+  color: #c9a4ff;
+}
+.editor-add-wave-custom:hover {
+  background: rgba(170, 100, 220, 0.16);
+}
+
+/* --- community body: sort chips + teal-bordered cards ------------ */
+
+.community-sort-row {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  margin: 0 0 12px;
+  background: rgba(20, 24, 44, 0.55);
+  border: 1px solid rgba(91, 139, 255, 0.16);
+  border-radius: 12px;
+}
+.community-sort-chip {
+  flex: 1 1 0;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 8px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #aab4dc;
+  border-radius: 8px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.community-sort-chip:hover { color: #e8ecff; }
+.community-sort-chip.selected {
+  background: rgba(70, 200, 200, 0.18);
+  color: #7ce0d8;
+}
+.challenge-card.challenge-card-community {
+  border-color: rgba(70, 200, 200, 0.32);
+}
+.challenge-card.challenge-card-community:hover,
+.challenge-card.challenge-card-community:active {
+  border-color: rgba(70, 200, 200, 0.55);
+}
+.challenge-card-installed {
+  background: rgba(127, 232, 156, 0.12);
+  color: #7fe89c;
+  border: 1px solid rgba(127, 232, 156, 0.35);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.community-card-btn {
+  padding: 7px 14px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  border-radius: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-family: inherit;
+}
+.community-card-btn-install {
+  background: #5b8bff;
+  color: #06070d;
+  border: 0;
+}
+.community-card-btn-install:hover { background: #7aa0ff; }
+.community-card-btn-play {
+  background: rgba(127, 232, 156, 0.18);
+  color: #7fe89c;
+  border: 1px solid rgba(127, 232, 156, 0.4);
+}
+.community-card-btn-play:hover {
+  background: rgba(127, 232, 156, 0.28);
+}
+.community-card-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid rgba(91, 139, 255, 0.18);
+  color: #aab4dc;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.community-card-icon-btn:hover {
+  border-color: rgba(91, 139, 255, 0.4);
+  color: #e8ecff;
+}
+.community-card-icon-btn.filled-like {
+  color: #ff8aae;
+  border-color: rgba(255, 138, 174, 0.4);
+}
