@@ -1038,6 +1038,21 @@ body.editor-previewing #app {
   z-index: 10;
 }
 
+/* Shared title + right-side spacer for the sticky top nav. Every
+   scrolling menu page (challenge select, editor home, editor edit,
+   unlock shop, blocks guide, single challenge) uses this trio so the
+   header reads identically and changes happen in one place. */
+.challenge-select-title {
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #aab4dc;
+}
+.challenge-select-spacer {
+  width: 60px;
+  flex: 0 0 60px;
+}
+
 .challenge-back {
   font-family: inherit;
   font-size: 13px;

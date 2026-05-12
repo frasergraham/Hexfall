@@ -129,8 +129,8 @@ export function renderChallengeSelect(props: ChallengeSelectProps): string {
     <div class="challenge-select">
       <div class="challenge-select-top">
         <button type="button" class="challenge-back" data-action="challenge-back">← Back</button>
-        <span style="font-size:13px; letter-spacing:0.18em; text-transform:uppercase; color:#aab4dc;">Challenges</span>
-        <span style="width:60px"></span>
+        <span class="challenge-select-title">Challenges</span>
+        <span class="challenge-select-spacer" aria-hidden="true"></span>
       </div>
       ${sections.join("")}
     </div>

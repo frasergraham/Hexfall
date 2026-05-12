@@ -54,8 +54,8 @@ export function renderEditorHome(props: EditorHomeProps): string {
     <div class="editor-home">
       <div class="challenge-select-top">
         <button type="button" class="challenge-back" data-action="editor-home-back">← Back</button>
-        <span style="font-size:13px; letter-spacing:0.18em; text-transform:uppercase; color:#aab4dc;">Challenge Editor</span>
-        <span style="width:60px"></span>
+        <span class="challenge-select-title">Challenge Editor</span>
+        <span class="challenge-select-spacer" aria-hidden="true"></span>
       </div>
       <section class="challenge-block">
         <header class="challenge-block-header">

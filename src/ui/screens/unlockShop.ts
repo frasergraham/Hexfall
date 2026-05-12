@@ -22,8 +22,8 @@ export const UnlockShop: Screen<UnlockShopProps> = {
       <div class="unlock-shop">
         <div class="challenge-select-top">
           <button type="button" class="challenge-back" data-action="unlock-shop-back">← Back</button>
-          <span style="font-size:13px; letter-spacing:0.18em; text-transform:uppercase; color:#aab4dc;">Unlock everything</span>
-          <span style="width:60px"></span>
+          <span class="challenge-select-title">Unlock everything</span>
+          <span class="challenge-select-spacer" aria-hidden="true"></span>
         </div>
         <h1 class="unlock-shop-title">UNLOCK EVERYTHING</h1>
         <ul class="unlock-shop-list">

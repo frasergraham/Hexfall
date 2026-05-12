@@ -43,8 +43,8 @@ export const BlocksGuide: Screen<void> = {
       <div class="blocks-guide">
         <div class="challenge-select-top">
           <button type="button" class="challenge-back" data-action="close-blocks">← Back</button>
-          <span style="font-size:13px; letter-spacing:0.18em; text-transform:uppercase; color:#aab4dc;">Blocks</span>
-          <span style="width:60px"></span>
+          <span class="challenge-select-title">Blocks</span>
+          <span class="challenge-select-spacer" aria-hidden="true"></span>
         </div>
         <div class="blocks-list">
           ${cards}
