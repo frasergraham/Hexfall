@@ -7278,7 +7278,12 @@ export class Game {
     const colWidth = SQRT3 * this.hexSize;
     const insetCols = this.projectedWallInsetPx() / Math.max(1, colWidth);
     const halfActive = Math.max(1, Math.floor(halfFull - insetCols));
-    const colStep = -halfActive + Math.round((slot.col / 9) * (halfActive * 2));
+    // Map the editor's 10 slot columns (0..9) evenly across the active
+     // rail. Rounding to an integer colStep would collapse cols 4 and 5
+     // onto the centre column, so a diagonal drawn one slot per row
+     // would visibly stutter at the middle. The float mapping matches
+     // wavePreview.ts and lets diagonals play as authored.
+    const colStep = -halfActive + (slot.col / 9) * (halfActive * 2);
     const railLeft = this.currentRailLeft();
     const railRight = this.currentRailRight();
     const railCenter = (railLeft + railRight) / 2;
