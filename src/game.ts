@@ -5094,6 +5094,7 @@ export class Game {
     this.overlay.classList.remove("hidden");
     this.renderAchievementBadges();
     this.refreshDifficultyButtons();
+    this.refreshLeaderboardMenuButton();
   }
 
   private onInput(action: InputAction, pressed: boolean): void {

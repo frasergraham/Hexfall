@@ -64,6 +64,7 @@ export const GameOver: Screen<GameOverProps> = {
       <div class="play-group">
         ${DIFFICULTY_BUTTONS_HTML}
         <button type="button" class="play-btn" data-action="play">PLAY AGAIN</button>
+        <button type="button" class="play-btn play-btn-tertiary" data-action="open-endless-leaderboard" hidden>LEADERBOARD</button>
       </div>
       <button type="button" class="challenge-back" data-action="challenge-menu">Main menu</button>
       <section class="achievements">
