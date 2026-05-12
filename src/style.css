@@ -2227,7 +2227,13 @@ body:not(.in-play) .hud-right {
 
 .editor-wave-list {
   display: flex;
-  flex-direction: column;
+  /* Waves fall downward in-game, so the editor mirrors that: + Reg /
+     + Custom sit at the top, the most recently added wave drops in
+     just below them, and wave 1 (first to play) lands at the bottom.
+     column-reverse leaves the chronological array order untouched so
+     the engine, drag-to-reorder, and play-from-here logic still work
+     against the same indices. */
+  flex-direction: column-reverse;
   gap: 8px;
   padding: 0 12px;
 }
