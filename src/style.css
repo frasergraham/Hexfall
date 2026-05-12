@@ -694,6 +694,45 @@ body.editor-previewing #app {
   font-weight: 700;
 }
 
+/* Personal best for the active difficulty, shown on the main menu
+   above the difficulty picker. Mirrors the .achievements box chrome
+   so the two read as a pair. The in-game top-right HUD BEST is
+   suppressed on the menu (see body.in-play rule below) so the player
+   isn't seeing the same number twice. */
+.menu-best {
+  margin-top: 10px;
+  padding: 8px 10px 12px;
+  border: 1px solid #2a3057;
+  border-radius: 10px;
+  background: rgba(15, 18, 36, 0.5);
+  width: min(340px, 100%);
+  text-align: center;
+}
+.menu-best h2 {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: #6f7aa6;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.menu-best-value {
+  margin-top: 2px;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #e8ecff;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Suppress the top-right HUD BEST while the player is on a menu /
+   editor / challenge-select screen. Reappears as soon as a run
+   starts so the in-game high score still tracks live. */
+body:not(.in-play) .hud-right {
+  visibility: hidden;
+}
+
 .menu-footer {
   display: flex;
   flex-wrap: wrap;
