@@ -1875,17 +1875,10 @@ body:not(.in-play) .hud-right {
   gap: 14px;
 }
 
-/* Editor variants: the title bar scrolls off normally rather than
-   sticking to the top — the back button + title aren't needed once
-   the user is reading rows further down, and the floating-action
-   buttons sit lower in the viewport when content has scrolled. */
-.editor-home .challenge-select-top,
-.editor-edit .challenge-select-top {
-  position: static;
-  background: transparent;
-  backdrop-filter: none;
-  z-index: auto;
-}
+/* Editor variants share the same sticky top-nav as challenge select —
+   the back button is the only escape hatch in the editor, so keeping
+   it pinned within thumb reach matters more than reclaiming a strip
+   of vertical space. */
 
 .editor-home-empty {
   text-align: center;
