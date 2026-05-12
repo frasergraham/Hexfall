@@ -694,6 +694,45 @@ body.editor-previewing #app {
   font-weight: 700;
 }
 
+/* Personal best for the active difficulty, shown on the main menu
+   above the difficulty picker. Mirrors the .achievements box chrome
+   so the two read as a pair. The in-game top-right HUD BEST is
+   suppressed on the menu (see body.in-play rule below) so the player
+   isn't seeing the same number twice. */
+.menu-best {
+  margin-top: 10px;
+  padding: 8px 10px 12px;
+  border: 1px solid #2a3057;
+  border-radius: 10px;
+  background: rgba(15, 18, 36, 0.5);
+  width: min(340px, 100%);
+  text-align: center;
+}
+.menu-best h2 {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: #6f7aa6;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.menu-best-value {
+  margin-top: 2px;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #e8ecff;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Suppress the top-right HUD BEST while the player is on a menu /
+   editor / challenge-select screen. Reappears as soon as a run
+   starts so the in-game high score still tracks live. */
+body:not(.in-play) .hud-right {
+  visibility: hidden;
+}
+
 .menu-footer {
   display: flex;
   flex-wrap: wrap;
@@ -1036,6 +1075,21 @@ body.editor-previewing #app {
      sticky header keeps the title bar + back button on top while
      content scrolls underneath. */
   z-index: 10;
+}
+
+/* Shared title + right-side spacer for the sticky top nav. Every
+   scrolling menu page (challenge select, editor home, editor edit,
+   unlock shop, blocks guide, single challenge) uses this trio so the
+   header reads identically and changes happen in one place. */
+.challenge-select-title {
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #aab4dc;
+}
+.challenge-select-spacer {
+  width: 60px;
+  flex: 0 0 60px;
 }
 
 .challenge-back {
@@ -1821,17 +1875,10 @@ body.editor-previewing #app {
   gap: 14px;
 }
 
-/* Editor variants: the title bar scrolls off normally rather than
-   sticking to the top — the back button + title aren't needed once
-   the user is reading rows further down, and the floating-action
-   buttons sit lower in the viewport when content has scrolled. */
-.editor-home .challenge-select-top,
-.editor-edit .challenge-select-top {
-  position: static;
-  background: transparent;
-  backdrop-filter: none;
-  z-index: auto;
-}
+/* Editor variants share the same sticky top-nav as challenge select —
+   the back button is the only escape hatch in the editor, so keeping
+   it pinned within thumb reach matters more than reclaiming a strip
+   of vertical space. */
 
 .editor-home-empty {
   text-align: center;
@@ -2180,7 +2227,13 @@ body.editor-previewing #app {
 
 .editor-wave-list {
   display: flex;
-  flex-direction: column;
+  /* Waves fall downward in-game, so the editor mirrors that: + Reg /
+     + Custom sit at the top, the most recently added wave drops in
+     just below them, and wave 1 (first to play) lands at the bottom.
+     column-reverse leaves the chronological array order untouched so
+     the engine, drag-to-reorder, and play-from-here logic still work
+     against the same indices. */
+  flex-direction: column-reverse;
   gap: 8px;
   padding: 0 12px;
 }
@@ -4026,3 +4079,88 @@ body:not(.in-play) #touchbar {
 .report-submit {
   padding: 8px 18px;
 }
+/* ===================================================================
+   DESIGN SYSTEM — shared primitives
+   New screens / future refactors should reach for these instead of
+   inventing fresh chrome:
+     .pill (blue/violet/teal/green/gold/ghost/solid-gold) — status
+     .iconbtn                                             — small icon buttons
+     .scard-eyebrow / .scard-meta                         — card labels + meta rows
+     .ds-card-row                                         — label-left / value-right rows
+   Legacy classes (.play-btn, .challenge-card, .iap-banner, etc.) are
+   left alone — they're the source of truth for the current menu look.
+   =================================================================== */
+
+.ds-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scard-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #7fe89c;
+  font-weight: 700;
+}
+.scard-eyebrow.dim { color: #6f7aa6; }
+.scard-eyebrow.violet { color: #c9a4ff; }
+.scard-eyebrow.teal { color: #7ce0d8; }
+
+.scard-meta {
+  font-size: 11px;
+  color: #aab4dc;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.scard-meta .dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #3a4170;
+  display: inline-block;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 700;
+  line-height: 1;
+}
+.pill.blue   { background: rgba(91,139,255,.16); color: #aac4ff; border: 1px solid rgba(91,139,255,.35); }
+.pill.violet { background: rgba(170,100,220,.14); color: #c9a4ff; border: 1px solid rgba(170,100,220,.35); }
+.pill.teal   { background: rgba(70,200,200,.14); color: #7ce0d8; border: 1px solid rgba(70,200,200,.35); }
+.pill.green  { background: rgba(127,232,156,.12); color: #7fe89c; border: 1px solid rgba(127,232,156,.35); }
+.pill.gold   { background: rgba(255,200,100,.12); color: #ffd86b; border: 1px solid rgba(255,200,100,.4); }
+.pill.ghost  { background: rgba(31,36,64,.55); color: #aab4dc; border: 1px solid rgba(91,139,255,.18); }
+.pill.solid-gold {
+  background: linear-gradient(180deg,#ffd86b,#ff9c4a);
+  color: #1a0f00;
+  border: 0;
+}
+
+.iconbtn {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(31,36,64,.55);
+  border: 1px solid rgba(91,139,255,.3);
+  border-radius: 10px;
+  color: #d2d9f5;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  -webkit-tap-highlight-color: transparent;
+}
+

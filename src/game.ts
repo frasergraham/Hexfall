@@ -788,7 +788,7 @@ export class Game {
 
     this.difficulty = this.loadDifficulty();
     this.best = this.loadBestFor(this.difficulty);
-    this.bestEl.textContent = String(this.best);
+    this.syncBestDisplays();
 
     this.engine = Engine.create({
       gravity: { x: 0, y: 1, scale: 0.0012 },
@@ -2490,6 +2490,7 @@ export class Game {
     this.bindTitleTapToggle();
     this.renderAchievementBadges();
     this.refreshDifficultyButtons();
+    this.syncBestDisplays();
     this.refreshAudioToggles();
     this.refreshChallengeEditorLock();
     this.refreshLeaderboardMenuButton();
@@ -5093,6 +5094,7 @@ export class Game {
     this.overlay.classList.remove("hidden");
     this.renderAchievementBadges();
     this.refreshDifficultyButtons();
+    this.refreshLeaderboardMenuButton();
   }
 
   private onInput(action: InputAction, pressed: boolean): void {
@@ -7276,7 +7278,12 @@ export class Game {
     const colWidth = SQRT3 * this.hexSize;
     const insetCols = this.projectedWallInsetPx() / Math.max(1, colWidth);
     const halfActive = Math.max(1, Math.floor(halfFull - insetCols));
-    const colStep = -halfActive + Math.round((slot.col / 9) * (halfActive * 2));
+    // Map the editor's 10 slot columns (0..9) evenly across the active
+     // rail. Rounding to an integer colStep would collapse cols 4 and 5
+     // onto the centre column, so a diagonal drawn one slot per row
+     // would visibly stutter at the middle. The float mapping matches
+     // wavePreview.ts and lets diagonals play as authored.
+    const colStep = -halfActive + (slot.col / 9) * (halfActive * 2);
     const railLeft = this.currentRailLeft();
     const railRight = this.currentRailRight();
     const railCenter = (railLeft + railRight) / 2;
@@ -7773,12 +7780,34 @@ export class Game {
     return this.cfg().dangerSize;
   }
 
+  // Push the current best score + difficulty into both the in-game
+  // top-right HUD value and the BEST · {difficulty} card on the main
+  // menu. The HUD value drives gameplay readback; the menu card is
+  // shown above the difficulty picker (and hides the HUD copy while
+  // the player is on a menu screen, per CSS).
+  private syncBestDisplays(): void {
+    const text = String(this.best);
+    this.bestEl.textContent = text;
+    const valueEl = document.getElementById("menuBestValue");
+    if (valueEl) valueEl.textContent = text;
+    const labelEl = document.getElementById("menuBestDifficulty");
+    if (labelEl) {
+      const labels: Record<Difficulty, string> = {
+        easy: "EASY",
+        medium: "MEDIUM",
+        hard: "HARD",
+        hardcore: "PAINFUL",
+      };
+      labelEl.textContent = labels[this.difficulty];
+    }
+  }
+
   private setDifficulty(d: Difficulty): void {
     if (d === this.difficulty) return;
     this.difficulty = d;
     saveString(DIFFICULTY_STORAGE_KEY, d);
     this.best = this.loadBestFor(d);
-    this.bestEl.textContent = String(this.best);
+    this.syncBestDisplays();
     // The gameover overlay bakes "Best {n}" into its innerHTML; re-render
     // so it picks up the new difficulty's high score without the player
     // having to play and die again to see it update.
@@ -8314,7 +8343,7 @@ export class Game {
       // are debug "skip-ahead" runs and the score isn't earned cleanly.
       this.best = this.score;
       this.saveBestFor(this.difficulty, this.best);
-      this.bestEl.textContent = String(this.best);
+      this.syncBestDisplays();
     }
     if (this.gameMode === "endless" && !this.debugRun) trackPlayEnd(this.difficulty, this.score);
     if (this.gameMode === "endless") void gcSubmitScore(this.score, this.difficulty);

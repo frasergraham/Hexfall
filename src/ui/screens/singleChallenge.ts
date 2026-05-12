@@ -91,8 +91,8 @@ export const SingleChallenge: Screen<SingleChallengeProps> = {
       <div class="single-challenge">
         <div class="challenge-select-top">
           <button type="button" class="challenge-back" data-action="single-back">← Back</button>
-          <span style="font-size:13px; letter-spacing:0.18em; text-transform:uppercase; color:#aab4dc;">Shared</span>
-          <span style="width:60px"></span>
+          <span class="challenge-select-title">Shared</span>
+          <span class="challenge-select-spacer" aria-hidden="true"></span>
         </div>
         ${body}
       </div>

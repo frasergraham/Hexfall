@@ -35,8 +35,8 @@ export function renderEditorEdit(props: EditorEditProps): string {
     <div class="editor-edit">
       <div class="challenge-select-top">
         <button type="button" class="challenge-back" data-action="editor-edit-back">← Save</button>
-        <span style="font-size:13px; letter-spacing:0.18em; text-transform:uppercase; color:#aab4dc;">Edit Challenge</span>
-        <span style="width:60px"></span>
+        <span class="challenge-select-title">Edit Challenge</span>
+        <span class="challenge-select-spacer" aria-hidden="true"></span>
       </div>
       <button type="button" class="play-btn editor-edit-play-big" data-action="editor-edit-play">PLAY</button>
       <div class="editor-edit-meta">
